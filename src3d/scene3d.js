@@ -1,0 +1,740 @@
+/* =====================================================================
+   JCOE 3D — 공정 흐름도의 입체화
+   2D 다이어그램 좌표(1600×900)를 그대로 3D 월드에 투영.
+     world.x = (x2d - 800)/12      world.z = (y2d - 460)/12
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const fmtT = s => { const d=new Date(s*1000), p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+const S = 12;
+const wx = x => (x - 800) / S;
+const wz = y => (y - 460) / S;
+const NW = 118 / S, ND = 6.2;                      // 설비 폭 / 깊이
+
+const COL = {
+  idle:0x2ea043, proc:0x2b7fff, setup:0xe3b341, bneck:0xf05252, off:0x4a5260,
+  dec:0x9b6dff, buf:0x2fa6a6, body:0x6b7684, dark:0x39414f, deck:0x2a3140,
+  accent:0x58a6ff
+};
+
+let scene, camera, renderer, raycaster, pickables = [];
+let SIM=null, CFG=null, animT=0, evIdx=0, playing=false, speed=3600, completed=0, started=0;
+const nodeState={}, logs=[], node3d={}, EDGE_CURVE={}, EDGE_PATH={};
+let pipePool=[], pipeUsed=0, selected=null;
+
+/* ---------------- 카메라 컨트롤 (자체 구현) ---------------- */
+const cam = { tx:0, ty:1, tz:1, dist:88, yaw:Math.PI/2, pitch:0.66 };
+function applyCam(){
+  const cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+  camera.position.set(
+    cam.tx + cam.dist*cp*Math.cos(cam.yaw),
+    cam.ty + cam.dist*sp,
+    cam.tz + cam.dist*cp*Math.sin(cam.yaw));
+  camera.lookAt(cam.tx, cam.ty, cam.tz);
+}
+function initControls(dom){
+  let drag=null, px=0, py=0;
+  dom.addEventListener('pointerdown', e=>{ drag = (e.button===2||e.shiftKey)?'pan':'orbit'; px=e.clientX; py=e.clientY; dom.setPointerCapture(e.pointerId); });
+  dom.addEventListener('pointerup',   e=>{ drag=null; try{dom.releasePointerCapture(e.pointerId);}catch(_){} });
+  dom.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY;
+    if(drag==='orbit'){
+      cam.yaw += dx*0.006;
+      cam.pitch = Math.max(0.08, Math.min(1.52, cam.pitch + dy*0.005));
+    } else {
+      const k=cam.dist*0.0016;
+      cam.tx -= (dx*Math.sin(cam.yaw) - dy*Math.cos(cam.yaw))*k*0.9;
+      cam.tz += (dx*Math.cos(cam.yaw) + dy*Math.sin(cam.yaw))*k*0.9;
+    }
+    applyCam();
+  });
+  dom.addEventListener('wheel', e=>{ e.preventDefault();
+    cam.dist = Math.max(18, Math.min(260, cam.dist * (1 + Math.sign(e.deltaY)*0.09))); applyCam(); }, {passive:false});
+  dom.addEventListener('contextmenu', e=>e.preventDefault());
+}
+const VIEWS = {
+  all:   {tx:0,   ty:1, tz:1,   dist:88,  yaw:Math.PI/2, pitch:0.66},
+  top:   {tx:0,   ty:0, tz:0,   dist:92,  yaw:Math.PI/2, pitch:1.47},
+  form:  {tx:-6,  ty:0, tz:-24, dist:50,  yaw:Math.PI/2-0.22, pitch:0.62},
+  exp:   {tx:4,   ty:0, tz:-6,  dist:50,  yaw:Math.PI/2+0.20, pitch:0.58},
+  insp:  {tx:-2,  ty:0, tz:20,  dist:56,  yaw:Math.PI/2-0.14, pitch:0.56},
+};
+function goView(k){ const v=VIEWS[k]; Object.assign(cam, v); applyCam(); }
+
+/* ---------------- 라벨 스프라이트 ---------------- */
+function labelSprite(text, sub, w){
+  const cv=document.createElement('canvas'), S2=3;
+  const lines=text.split('\n');
+  cv.width=340*S2; cv.height=(sub?96:72)*S2;
+  const c=cv.getContext('2d'); c.scale(S2,S2);
+  c.fillStyle='rgba(13,17,23,0.82)';
+  c.beginPath(); c.roundRect(6,6,328,(sub?84:60),12); c.fill();
+  c.strokeStyle='rgba(88,166,255,0.45)'; c.lineWidth=1.5; c.stroke();
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillStyle='#ffffff'; c.font='700 27px "Malgun Gothic","Segoe UI",sans-serif';
+  lines.forEach((l,i)=>c.fillText(l,170, (sub?32:36) + (i-(lines.length-1)/2)*29));
+  if(sub){ c.fillStyle='#8b949e'; c.font='19px "Malgun Gothic","Segoe UI",sans-serif'; c.fillText(sub,170,72); }
+  const tex=new THREE.CanvasTexture(cv); tex.colorSpace=THREE.SRGBColorSpace;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false, transparent:true}));
+  const ww = w||10.5; sp.scale.set(ww, ww*(sub?96:72)/340, 1);
+  sp.renderOrder = 20;
+  return sp;
+}
+function zoneLabel(text, color){
+  const cv=document.createElement('canvas'); cv.width=1024; cv.height=96;
+  const c=cv.getContext('2d');
+  c.textAlign='left'; c.textBaseline='middle';
+  c.fillStyle=color; c.font='700 52px "Malgun Gothic","Segoe UI",sans-serif';
+  c.fillText(text, 8, 52);
+  const tex=new THREE.CanvasTexture(cv); tex.colorSpace=THREE.SRGBColorSpace;
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(1024/22, 96/22),
+    new THREE.MeshBasicMaterial({map:tex, transparent:true, depthWrite:false}));
+  m.rotation.x=-Math.PI/2; return m;
+}
+
+/* 호기별 Z 오프셋 */
+function unitZ(n){
+  const cap=n.cap||1; if(cap<=1) return [0];
+  const sp = cap===2 ? 5.2 : 3.5;
+  return Array.from({length:cap},(_,i)=>(i-(cap-1)/2)*sp);
+}
+/* ---------------- 설비 형상 빌더 ---------------- */
+const MAT = {};
+function mat(color, opts){ const k=color+JSON.stringify(opts||{});
+  if(!MAT[k]) MAT[k]=new THREE.MeshStandardMaterial(Object.assign({color, roughness:0.62, metalness:0.35}, opts));
+  return MAT[k]; }
+function bx(w,h,d,color,x,y,z,o){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat(color,o));
+  m.position.set(x||0,y||0,z||0); m.castShadow=true; m.receiveShadow=true; return m; }
+function cy(r1,r2,h,color,x,y,z,rot){ const m=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,20), mat(color));
+  m.position.set(x||0,y||0,z||0); if(rot) m.rotation.set(rot[0]||0,rot[1]||0,rot[2]||0); m.castShadow=true; return m; }
+
+function rollerBed(g, len, y){
+  const bed = bx(len, 0.5, ND*0.78, COL.dark, 0, y||0.55, 0); g.add(bed);
+  for(let i=-Math.floor(len/2)+1; i<len/2; i+=1.5)
+    g.add(cy(0.28,0.28,ND*0.72, 0x8b95a5, i, (y||0.55)+0.42, 0, [Math.PI/2,0,0]));
+}
+function gantry(g, w, h, color){
+  g.add(bx(0.7, h, 0.7, COL.body, -w/2, h/2, 0));
+  g.add(bx(0.7, h, 0.7, COL.body,  w/2, h/2, 0));
+  g.add(bx(w+1.2, 0.8, 1.4, color, 0, h, 0));
+}
+/* 각 공정별 형상 */
+const SHAPE = {
+  EdgeMiller(g,c){ rollerBed(g, NW, 0.5);
+    g.add(bx(NW*0.5, 1.6, ND*0.95, COL.body, 0, 1.6, 0));
+    [-1,1].forEach(s=>g.add(cy(1.0,1.0,0.55,0xb9c2d0, s*NW*0.22, 2.7, 0, [0,0,Math.PI/2])));
+    g.add(bx(NW*0.55,0.5,1.2,c,0,3.2,0)); },
+  PreBender(g,c){ rollerBed(g,NW,0.5); gantry(g,NW*0.55,3.4,c);
+    g.add(bx(NW*0.4,1.0,2.2,COL.body,0,2.4,0)); },
+  PressBender(g,c){ rollerBed(g,NW,0.5); gantry(g,NW*0.62,4.0,c);
+    g.add(bx(NW*0.5,1.5,2.6,COL.body,0,2.6,0));
+    g.add(bx(NW*0.3,0.6,1.6,0xd0d6e0,0,1.9,0)); },
+  GapPress(g,c){ rollerBed(g,NW,0.5); gantry(g,NW*0.5,3.6,c);
+    [-1,1].forEach(s=>g.add(cy(0.55,0.55,1.8,0xb9c2d0, s*NW*0.3, 1.7, 0)));
+    g.add(bx(NW*0.35,1.0,2.0,COL.body,0,2.3,0)); },
+  Weld(g,c){ rollerBed(g,NW,0.5); gantry(g,NW*0.5,3.2,c);
+    g.add(bx(1.6,1.1,1.6,COL.body,0,2.6,0));
+    g.add(cy(0.14,0.06,1.3,0xffd76a,0,1.6,0));
+    g.add(cy(0.55,0.55,0.5,0xd0d6e0,-1.6,3.5,0,[0,0,Math.PI/2])); },
+  Conveyor(g,c){ rollerBed(g,NW,0.5);
+    g.add(cy(0.75,0.75,ND*0.8,c, NW*0.12, 1.5, 0, [Math.PI/2,0,0]));
+    g.add(bx(NW*0.3,0.4,ND*0.9,COL.dark,NW*0.12,2.3,0)); },
+  Scan(g,c){ rollerBed(g,NW,0.5);
+    const t=new THREE.Mesh(new THREE.TorusGeometry(2.1,0.4,10,22), mat(c));
+    t.position.set(0,2.1,0); t.rotation.y=Math.PI/2; g.add(t);
+    g.add(bx(1.8,2.6,ND*0.7,COL.body,-NW*0.34,1.3,0)); },
+  Expander(g,c){ rollerBed(g,NW,0.5);
+    g.add(bx(NW*0.72,2.2,ND*1.05,COL.body,0,1.7,0));
+    g.add(cy(0.5,0.5,NW*0.9,0xd0d6e0,0,1.9,0,[0,0,Math.PI/2]));   // 드로바
+    [-1,1].forEach(s=>g.add(cy(1.35,1.35,1.1,c, s*NW*0.26, 1.9, 0, [0,0,Math.PI/2])));
+    g.add(bx(NW*0.8,0.45,1.4,c,0,3.1,0)); },
+  Lathe(g,c){ rollerBed(g,NW,0.5);
+    g.add(bx(NW*0.3,2.0,ND*0.95,COL.body,-NW*0.28,1.6,0));
+    g.add(cy(1.3,1.3,0.9,c,-NW*0.1,1.7,0,[0,0,Math.PI/2]));
+    g.add(bx(NW*0.3,2.0,ND*0.95,COL.body, NW*0.28,1.6,0));
+    g.add(cy(1.3,1.3,0.9,c, NW*0.1,1.7,0,[0,0,Math.PI/2])); },
+  Vessel(g,c){ rollerBed(g,NW,0.5);
+    g.add(cy(1.7,1.7,NW*0.7,c,0,2.0,0,[0,0,Math.PI/2]));
+    [-1,1].forEach(s=>g.add(cy(1.9,1.9,0.7,COL.body, s*NW*0.38, 2.0, 0, [0,0,Math.PI/2])));
+    g.add(bx(1.0,1.6,1.0,COL.dark,0,3.6,0)); },
+  Pack(g,c){ rollerBed(g,NW,0.5); gantry(g,NW*0.5,3.0,c);
+    for(let i=0;i<3;i++) for(let j=0;j<=i;j++)
+      g.add(cy(0.42,0.42,NW*0.55, 0xa9b3c4, (j-i/2)*0.95, 1.35+ (2-i)*0.8, 0, [0,0,Math.PI/2]));
+  },
+  Buffer(g,c){ g.add(bx(NW*1.05,0.4,ND*1.15,COL.deck,0,0.2,0));
+    [-1,1].forEach(s=>{ g.add(bx(0.5,3.2,0.5,COL.body, s*NW*0.46, 1.6, -ND*0.4));
+                        g.add(bx(0.5,3.2,0.5,COL.body, s*NW*0.46, 1.6,  ND*0.4)); });
+    for(let i=0;i<4;i++) for(let j=0;j<=i;j++)
+      g.add(cy(0.4,0.4,NW*0.85, c, (j-i/2)*0.92, 0.85+(3-i)*0.78, 0, [0,0,Math.PI/2]));
+  },
+  Free(g,c){ g.add(bx(NW*0.9,0.4,ND*0.95,COL.deck,0,0.2,0));
+    g.add(bx(NW*0.55,1.8,ND*0.7,COL.body,0,1.3,0));
+    g.add(bx(NW*0.35,0.4,1.2,c,0,2.4,0)); },
+};
+const SHAPE_OF = {
+  EdgeMiller:'EdgeMiller', PreBender:'PreBender', PressBender:'PressBender', GapPress:'GapPress',
+  TackWelder:'Weld', InsideWelder:'Weld', OutsideWelder:'Weld', OuterBead:'Conveyor',
+  FirstUT:'Scan', FinalUT:'Scan', RT:'Scan', Expander:'Expander',
+  EndFacing:'Lathe', HydroTest:'Vessel', Packing:'Pack',
+};
+
+/* ---------------- 씬 구성 ---------------- */
+function buildScene(){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0e15);
+  scene.fog = new THREE.Fog(0x0a0e15, 165, 320);
+
+  camera = new THREE.PerspectiveCamera(46, 1, 0.5, 800);
+  const wrap = $('c3d');
+  renderer = new THREE.WebGLRenderer({antialias:true, canvas:$('gl')});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  scene.add(new THREE.HemisphereLight(0x9ec5ff, 0x0b0f16, 1.15));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.5);
+  dl.position.set(40, 90, 30); dl.castShadow=true;
+  dl.shadow.mapSize.set(2048,2048);
+  const d=95; Object.assign(dl.shadow.camera,{left:-d,right:d,top:d,bottom:-d,near:1,far:260});
+  dl.shadow.camera.updateProjectionMatrix();
+  scene.add(dl);
+  scene.add(new THREE.DirectionalLight(0x6d8cff, 0.45).translateX(-60).translateY(40).translateZ(-50));
+
+  /* 바닥 */
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(168,115),
+    new THREE.MeshStandardMaterial({color:0x141a24, roughness:0.95, metalness:0.0}));
+  floor.rotation.x=-Math.PI/2; floor.position.y=-0.02; floor.receiveShadow=true; scene.add(floor);
+  const grid = new THREE.GridHelper(168, 34, 0x2b3444, 0x1c2331);
+  grid.position.y=0; scene.add(grid);
+
+  /* 구역 슬래브 */
+  const zones = [
+    [45,48,1360,240,'조관 (Forming) — JCOE', 0x1f6feb, '#4d94ff'],
+    [45,296,1520,190,'확관 (Expansion) — 병목 공정', 0x8957e5, '#a77bff'],
+    [45,498,1520,372,'검사 · 보수 · 출하 (Inspection & Shipping)', 0x238636, '#3fbf5c'],
+  ];
+  for(const [x,y,w,h,t,c,cs] of zones){
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w/S, 0.16, h/S),
+      new THREE.MeshStandardMaterial({color:c, transparent:true, opacity:0.13, roughness:1}));
+    m.position.set(wx(x+w/2), 0.03, wz(y+h/2)); scene.add(m);
+    const e=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(w/S,0.16,h/S)),
+      new THREE.LineBasicMaterial({color:c, transparent:true, opacity:0.55}));
+    e.position.copy(m.position); scene.add(e);
+    const lb=zoneLabel(t, cs); lb.position.set(wx(x)+11.5, 0.14, wz(y)+1.4); scene.add(lb);
+  }
+
+  /* 연결선 (튜브 컨베이어) */
+  for(const e of EDGES){
+    const pts2 = edgePath2D(e);
+    EDGE_PATH[e[0]+'>'+e[1]] = pts2;
+    const v = pts2.map(p=>new THREE.Vector3(wx(p[0]), 1.15, wz(p[1])));
+    if(v.length<2) continue;
+    const curve = new THREE.CatmullRomCurve3(v, false, 'catmullrom', 0.12);
+    EDGE_CURVE[e[0]+'>'+e[1]] = curve;
+    const bypass = /By-pass|재검사|재확관/.test(e[2]);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.max(20,v.length*14), bypass?0.09:0.16, 8, false),
+      new THREE.MeshStandardMaterial({color: bypass?0x5a6472:0x7d8899, roughness:0.5, metalness:0.5,
+        transparent:bypass, opacity:bypass?0.55:1}));
+    tube.castShadow=!bypass; scene.add(tube);
+    if(!bypass){   // 롤러 컨베이어 느낌
+      const n=Math.max(4, Math.floor(curve.getLength()/2.2));
+      const rg=new THREE.CylinderGeometry(0.3,0.3,1.5,10), rm=mat(0x59647a);
+      const im=new THREE.InstancedMesh(rg, rm, n); const M=new THREE.Matrix4(), q=new THREE.Quaternion();
+      for(let i=0;i<n;i++){ const t0=(i+0.5)/n; const p=curve.getPointAt(t0), tg=curve.getTangentAt(t0);
+        q.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(-tg.z,0,tg.x).normalize());
+        M.compose(new THREE.Vector3(p.x,0.85,p.z), q, new THREE.Vector3(1,1,1)); im.setMatrixAt(i,M); }
+      im.castShadow=true; scene.add(im);
+    }
+    if(e[2]){
+      const mid = curve.getPointAt(0.5);
+      const sp = labelSprite(e[2],'',Math.min(7.2, 1.8+e[2].length*0.34));
+      sp.position.set(mid.x, 2.6, mid.z); sp.material.opacity=0.88; scene.add(sp);
+    }
+  }
+
+  /* 노드 */
+  for(const n of NODES){
+    const g = new THREE.Group();
+    g.position.set(wx(n.x + (n.kind==='dec'?52:59)), 0, wz(n.y + (n.kind==='dec'?35:29)));
+    let statusMesh=null, lamp=null, units=null, h=3.2;
+    if(n.kind==='dec'){
+      const oc=new THREE.Mesh(new THREE.OctahedronGeometry(1.9),
+        new THREE.MeshStandardMaterial({color:COL.dec, emissive:COL.dec, emissiveIntensity:0.35,
+          roughness:0.3, metalness:0.4, transparent:true, opacity:0.9}));
+      oc.position.y=2.6; oc.castShadow=true; g.add(oc);
+      g.add(bx(2.2,0.25,2.2,COL.deck,0,0.12,0));
+      statusMesh=oc; h=4.9;
+    } else if(n.kind==='buf'){
+      SHAPE.Buffer(g, COL.buf); h=4.6;
+    } else {
+      const shp = n.free ? 'Free' : (SHAPE_OF[n.st] || 'Free');
+      h = shp==='Free'?2.9 : shp==='PressBender'?4.6 : 4.2;
+      const cap = n.cap||1;
+      units = [];
+      const zs = unitZ(n);
+      const zsc = cap>2 ? 0.5 : (cap===2 ? 0.78 : 1);
+      for(let i=0;i<cap;i++){
+        const ug=new THREE.Group(); ug.position.z=zs[i]; ug.scale.z=zsc;
+        SHAPE[shp](ug, COL.idle);
+        const sm = ug.children.find(c=>c.material && c.material.color && c.material.color.getHex()===COL.idle) || null;
+        if(sm) sm.material = sm.material.clone();                        // 캐시 공유 방지
+        const lp = new THREE.Mesh(new THREE.SphereGeometry(0.4,14,10),
+          new THREE.MeshStandardMaterial({color:COL.idle, emissive:COL.idle, emissiveIntensity:1.2}));
+        lp.position.set(NW*0.42, h+0.2, 0); lp.scale.z=1/zsc; ug.add(lp);
+        g.add(ug);
+        units.push({ g:ug, statusMesh:sm, lamp:lp, z:zs[i] });
+        if(cap>1){                                                        // 호기 번호
+          const tag = labelSprite(n.id==='EXP' ? ('#'+(i+1)+'호기') : ('#'+(i+1)), '', 3.4);
+          tag.position.set(-NW*0.52, 1.9, zs[i]); g.add(tag);
+        }
+      }
+      statusMesh = units[0].statusMesh; lamp = units[0].lamp;
+      if(n.bottleneck){
+        const r=new THREE.Mesh(new THREE.TorusGeometry(NW*0.66,0.09,8,44),
+          new THREE.MeshBasicMaterial({color:0xf05252, transparent:true, opacity:0.7}));
+        r.rotation.x=-Math.PI/2; r.position.y=0.1; r.scale.z = (cap>1? (Math.abs(zs[0])*2+ND*zsc)/ (NW*1.32) *1.6 : 1); g.add(r);
+      }
+    }
+    const sp = labelSprite(n.label, n.sub||'', 9.6);
+    sp.position.set(0, h+1.9, 0); g.add(sp);
+    /* 클릭 판정용 투명 박스 */
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(NW*1.05, h+1, ND*1.2),
+      new THREE.MeshBasicMaterial({visible:false}));
+    hit.position.y=(h+1)/2; hit.userData.node=n; g.add(hit); pickables.push(hit);
+    scene.add(g);
+    node3d[n.id]={g, statusMesh, lamp, units, sp, h, badge:null};
+  }
+
+  buildStockMeshes();
+  buildYards();
+  raycaster = new THREE.Raycaster();
+  applyCam();
+}
+
+/* ================================================================
+   자재(부품) 인스턴스 — 후판 / 성형중(U·O) / 강관
+   ================================================================ */
+const STOCK = {};
+const PL_LEN = NW*0.72;                         // 자재 길이(파이프 축 = X)
+function buildStockMeshes(){
+  const defs = {
+    plate: { geo: new THREE.BoxGeometry(PL_LEN, 0.24, 1.85),            n: 1400, col:0x93a3b8 },
+    open:  { geo: (()=>{ const g=new THREE.CylinderGeometry(0.95,0.95,PL_LEN,16,1,true,0,Math.PI);
+               g.rotateZ(Math.PI/2); return g; })(),                     n: 500,  col:0xa8b6c6 },
+    pipe:  { geo: (()=>{ const g=new THREE.CylinderGeometry(0.62,0.62,PL_LEN,16); g.rotateZ(Math.PI/2); return g; })(),
+                                                                          n: 2200, col:0xb6c4d4 },
+  };
+  for(const k in defs){
+    const d=defs[k];
+    const m=new THREE.InstancedMesh(d.geo,
+      new THREE.MeshStandardMaterial({color:d.col, roughness:0.42, metalness:0.72,
+        side: k==='open'?THREE.DoubleSide:THREE.FrontSide}), d.n);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.castShadow=true; m.receiveShadow=true; m.count=0; m.frustumCulled=false;
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(d.n*3), 3);
+    scene.add(m); STOCK[k]={mesh:m, used:0, cap:d.n};
+  }
+}
+const _M=new THREE.Matrix4(), _Q=new THREE.Quaternion(), _V=new THREE.Vector3(), _S=new THREE.Vector3(1,1,1), _C=new THREE.Color();
+function resetStock(){ for(const k in STOCK) STOCK[k].used=0; }
+function putStock(kind,x,y,z,hue,sat,lig,scl){
+  const S0=STOCK[kind]; if(!S0||S0.used>=S0.cap) return;
+  _V.set(x,y,z); _S.set(scl||1,scl||1,scl||1);
+  _M.compose(_V,_Q,_S); S0.mesh.setMatrixAt(S0.used,_M);
+  _C.setHSL(hue,sat,lig); S0.mesh.setColorAt(S0.used,_C);
+  S0.used++;
+}
+function flushStock(){
+  for(const k in STOCK){ const S0=STOCK[k];
+    S0.mesh.count=S0.used; S0.mesh.instanceMatrix.needsUpdate=true;
+    if(S0.mesh.instanceColor) S0.mesh.instanceColor.needsUpdate=true; }
+}
+/* 공정별 자재 형태 */
+const STOCK_KIND = {
+  EM12:'plate', EM18:'plate', PB12:'plate', PB18:'plate',
+  PR12:'open',  PR18:'open',  GAP:'open',   TACK:'open',
+};
+const kindAt = id => STOCK_KIND[id] || 'pipe';
+
+/* 설비 앞 적치 (대기 자재) — 앞쪽(+Z)으로 쌓임 */
+function stackAt(node, n, kind, hue, onSelf){
+  if(n<=0) return;
+  const g=node3d[node.id].g, ox=g.position.x;
+  const cap=node.cap||1, span = cap>1 ? Math.abs(unitZ(node)[0])+ND*(cap>2?0.3:0.45) : ND*0.95;
+  const oz=g.position.z + (onSelf ? 0 : span+1.2);
+  if(kind==='plate'){                       // 후판: 켜켜이 적층
+    const max=Math.min(n, 90);
+    for(let i=0;i<max;i++){
+      const lay=i%15, row=Math.floor(i/15)%3, blk=Math.floor(i/45);
+      putStock('plate', ox+blk*0.5, 0.32+lay*0.26, oz+row*2.15, hue,0.10,0.58+lay*0.006);
+    }
+  } else {                                  // 강관: 피라미드형 야적
+    const per=5, lay=7, max=Math.min(n, per*lay*2);
+    for(let i=0;i<max;i++){
+      const L=Math.floor(i/per)%lay, c=i%per, blk=Math.floor(i/(per*lay));
+      putStock(kind, ox, 0.72+L*1.04,
+        oz + (c-(per-1)/2)*1.34 + (L%2)*0.67 + blk*7.6, hue,0.11,0.60);
+    }
+  }
+}
+/* 설비 위에서 가공 중인 자재 (진행률에 따라 이동) */
+function onMachine(node, frac, kind, hue, slot, cap){
+  const o=node3d[node.id], g=o.g;
+  const uz = (o.units && o.units[slot]) ? o.units[slot].z : 0;
+  const zsc = (o.units && o.units[slot]) ? (o.units[slot].g.scale.z||1) : 1;
+  putStock(kind, g.position.x + (frac-0.5)*NW*0.5, 1.42, g.position.z + uz + ND*0.46*zsc, hue,0.42,0.72, 1.12);
+}
+
+/* ================================================================
+   원자재 야드 / 완제품 야드
+   ================================================================ */
+const YARD = { raw:{x:0,z:0}, fin:{x:0,z:0} };
+function buildYards(){
+  const mk=(x2,y2,label,col)=>{
+    const p={x:wx(x2), z:wz(y2)};
+    const pad=new THREE.Mesh(new THREE.BoxGeometry(18,0.18,16),
+      new THREE.MeshStandardMaterial({color:col, transparent:true, opacity:0.16, roughness:1}));
+    pad.position.set(p.x,0.05,p.z); scene.add(pad);
+    const ed=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(18,0.18,16)),
+      new THREE.LineBasicMaterial({color:col, transparent:true, opacity:0.6}));
+    ed.position.copy(pad.position); scene.add(ed);
+    const sp=labelSprite(label,'',9.2); sp.position.set(p.x, 7.4, p.z); scene.add(sp);
+    return p;
+  };
+  YARD.raw = mk(-70, 165, '원자재 야드\n(후판)', 0x6b7684);
+  YARD.fin = mk(1345, 640, '완제품 야드\n(출하 대기)', 0x2ea043);
+}
+function drawYard(pos, count, kind, hue){
+  if(count<=0) return 1;
+  /* 패드 18×16 안에 들어가는 최대 글리프 수 */
+  const capG = kind==='plate' ? (16*4*2) : (6*8*2);
+  const unit = Math.max(1, Math.ceil(count/capG));
+  const g = Math.min(capG, Math.ceil(count/unit));
+  for(let i=0;i<g;i++){
+    if(kind==='plate'){
+      const lay=i%16, row=Math.floor(i/16)%4, blk=Math.floor(i/64);
+      putStock('plate', pos.x-3.9+blk*7.8, 0.32+lay*0.26, pos.z-3.4+row*2.25, hue,0.09,0.56+lay*0.006);
+    } else {
+      const L=Math.floor(i/6)%8, c=i%6, blk=Math.floor(i/48);
+      putStock('pipe', pos.x-3.9+blk*7.8, 0.72+L*1.04,
+        pos.z-3.4+(c-2.5)*1.34+(L%2)*0.67, hue,0.10,0.60);
+    }
+  }
+  return unit;
+}
+
+/* 2D 경로 계산 (flow.js 의 NODES/EDGES 사용) */
+const BW=118, BH=46, DW=104, DH=70;
+function box2(n){ return n.kind==='dec' ? {x:n.x,y:n.y,w:DW,h:DH} : {x:n.x,y:n.y,w:BW,h:n.sub?BH+12:BH}; }
+function anc(n,s){ const b=box2(n); return s==='l'?[b.x,b.y+b.h/2]:s==='r'?[b.x+b.w,b.y+b.h/2]
+  :s==='t'?[b.x+b.w/2,b.y]:[b.x+b.w/2,b.y+b.h]; }
+function edgePath2D(e){
+  const [a,b,,mode,opt]=e, A=NODE[a], B=NODE[b];
+  if(mode==='C') return [anc(A,opt.a), ...opt.pts, anc(B,opt.b)];
+  const ba=box2(A), bb=box2(B);
+  const ac=[ba.x+ba.w/2, ba.y+ba.h/2], bc=[bb.x+bb.w/2, bb.y+bb.h/2];
+  let p0,p1,mid=[];
+  if(mode==='h'){ const r=bc[0]>ac[0]; p0=anc(A,r?'r':'l'); p1=anc(B,r?'l':'r');
+    if(Math.abs(p0[1]-p1[1])>4) mid=[[(p0[0]+p1[0])/2,p0[1]],[(p0[0]+p1[0])/2,p1[1]]]; }
+  else if(mode==='v'){ const d=bc[1]>ac[1]; p0=anc(A,d?'b':'t'); p1=anc(B,d?'t':'b');
+    if(Math.abs(p0[0]-p1[0])>4) mid=[[p0[0],(p0[1]+p1[1])/2],[p1[0],(p0[1]+p1[1])/2]]; }
+  else if(mode==='hv'){ const r=bc[0]>ac[0]; p0=anc(A,r?'r':'l'); p1=anc(B,bc[1]>ac[1]?'t':'b'); mid=[[p1[0],p0[1]]]; }
+  else { const d=bc[1]>ac[1]; p0=anc(A,d?'b':'t'); p1=anc(B,bc[0]>ac[0]?'l':'r'); mid=[[p0[0],p1[1]]]; }
+  return [p0,...mid,p1];
+}
+/* 라우팅(분기 경유) 논리 경로 → 커브 */
+function buildLogicalCurves(){
+  const adj={}; for(const e of EDGES) (adj[e[0]]=adj[e[0]]||[]).push(e[1]);
+  const procIds = NODES.filter(n=>n.kind==='proc').map(n=>n.id);
+  for(const a of procIds) for(const b of procIds){
+    const key=a+'>'+b; if(a===b||EDGE_CURVE[key]) continue;
+    const q=[[a,[]]], seen=new Set([a]);
+    let found=null;
+    while(q.length && !found){
+      const [cur,path]=q.shift(); if(path.length>4) continue;
+      for(const nx of (adj[cur]||[])){
+        const np=path.concat([[cur,nx]]);
+        if(nx===b){ found=np; break; }
+        const nn=NODE[nx];
+        if(nn&&(nn.kind==='dec'||nn.kind==='buf')&&!seen.has(nx)){ seen.add(nx); q.push([nx,np]); }
+      }
+    }
+    if(!found) continue;
+    let pts=[]; found.forEach((sg,i)=>{ const sp=EDGE_PATH[sg[0]+'>'+sg[1]]||[]; pts=pts.concat(i?sp.slice(1):sp); });
+    if(pts.length<2) continue;
+    EDGE_CURVE[key]=new THREE.CatmullRomCurve3(pts.map(p=>new THREE.Vector3(wx(p[0]),1.6,wz(p[1]))),false,'catmullrom',0.12);
+  }
+}
+
+/* ---------------- 시뮬레이션 연동 ---------------- */
+let PLAN3 = null;
+function readCfg(){ return {
+  startDate:'2026-03-02', shifts:+$('cfgShifts').value, netHoursPerShift:7.5,
+  skipWeekend:false, useRB:$('cfgRB').checked, useCP:false, processingFinalUT:false,
+  holdSec:60, changeover:$('cfgCO').checked, freeStationSec:300, eventCap:1e9,
+  dispatchRule: ($('cfgRule')||{}).value || 'EAT', sameODConcurrency:true, useM3:false,
+  applyOptSeq:true, plan:PLAN3 }; }
+const CO_BACKUP = JSON.stringify(CHANGEOVER);
+function runSim(){
+  CFG=readCfg();
+  if(CFG.dispatchRule==='OPT' && !PLAN3){ PLAN3=optimizeExpander(ORDERS, CFG, {iters:24000}); CFG.plan=PLAN3; }
+  if(!CFG.changeover) for(const k in CHANGEOVER) CHANGEOVER[k]={od:0,t:0,L:0};
+  else Object.assign(CHANGEOVER, JSON.parse(CO_BACKUP));
+  SIM = simulate(ORDERS, CFG);
+  SIM.events.sort((a,b)=>a.s-b.s);
+  SIM.byR = SIM.events.slice().sort((a,b)=>a.r-b.r);
+  animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
+  for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+  $('simInfo').textContent = `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
+    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`;
+  buildStat(); updateStat(); refreshVisual();
+}
+const _oc={};
+function orderHue(no){ if(_oc[no]===undefined) _oc[no]=(Object.keys(_oc).length*53)%360; return _oc[no]; }
+
+function step(dt){
+  if(!SIM) return;
+  animT += dt*speed;
+  if(animT>SIM.tEnd){ animT=SIM.tEnd; playing=false; $('btnPlay').textContent='▶'; }
+  const ev=SIM.events;
+  for(const n of NODES){ const s=nodeState[n.id]; s.active=[]; s.q=0; }
+  let lo=0,hi=ev.length-1,st=ev.length;
+  while(lo<=hi){ const m=(lo+hi)>>1; if(ev[m].s>=animT-864000){st=m;hi=m-1;} else lo=m+1; }
+  for(let i=Math.max(0,st-4000);i<ev.length && ev[i].cs<=animT;i++){
+    const e=ev[i];
+    if(e.e>animT){
+      nodeState[e.n].active.push({u:e.u, setup:animT<e.s, o:e.o, s:e.s, e2:e.e, both:e.both});
+      if(e.both) nodeState[e.n].active.push({u:e.u===0?1:0, setup:animT<e.s, o:e.o, s:e.s, e2:e.e, both:true, mirror:true});
+    }
+  }
+  /* 대기 자재 집계 */
+  const bR=SIM.byR; let l2=0,h2=bR.length-1,iR=bR.length;
+  while(l2<=h2){ const m=(l2+h2)>>1; if(bR[m].r>animT){iR=m;h2=m-1;} else l2=m+1; }
+  _qHue={};
+  for(let i=iR-1;i>=0 && i>iR-12000;i--){
+    const e=bR[i]; if(e.cs<=animT) continue;
+    nodeState[e.n].q++;
+    if(_qHue[e.n]===undefined) _qHue[e.n]=orderHue(e.o)/360;
+  }
+
+  while(evIdx<ev.length && ev[evIdx].s<=animT){
+    const e=ev[evIdx]; nodeState[e.n].done++;
+    if(e.n==='EM12'||e.n==='EM18') started++;
+    if(e.n==='PACK') completed++;
+    if(logs.length<200){
+      if(e.co>0) logs.unshift(`${fmtT(e.cs)}  ⚙ 설비 전환 ${NODE[e.n].label.replace('\n',' ')} ${(e.co/60).toFixed(0)}분 → 오더 ${e.o}`);
+      else if(e.n==='PACK'&&e.k%10===0) logs.unshift(`${fmtT(e.s)}  ✔ 포장 완료 오더 ${e.o} #${e.k}`);
+      else if(e.n==='EXP'&&e.k%25===0) logs.unshift(`${fmtT(e.s)}  ▸ 확관 #${e.u+1}호기 착수 오더 ${e.o} #${e.k}`);
+    }
+    evIdx++;
+  }
+  $('simClock').textContent=fmtT(animT);
+  $('simProg').style.width=((animT-SIM.t0)/(SIM.tEnd-SIM.t0)*100).toFixed(2)+'%';
+  $('doneCnt').textContent=completed.toLocaleString();
+  $('logBody').innerHTML=logs.slice(0,40).map(l=>`<div class="lg">${l}</div>`).join('');
+  updateStat(); refreshVisual();
+}
+function offShift(){ if(!SIM) return false;
+  const d=new Date(animT*1000), h=d.getHours()+d.getMinutes()/60;
+  return !SIM.cal.wins.some(w=>h>=w[0]&&h<w[1]); }
+function refreshVisual(){
+  const off=offShift();
+  drawStock();
+  for(const n of NODES){
+    const o=node3d[n.id], s=nodeState[n.id]||{active:[],q:0};
+    if(!o||n.kind==='dec'||n.kind==='buf'||!o.units) continue;
+    const busy = s.q>=8;
+    o.units.forEach((U,i)=>{
+      const a = s.active.find(x=>x.u===i);
+      let c = a ? (a.setup?COL.setup:COL.proc) : (busy?COL.bneck : (off?COL.off:COL.idle));
+      const zs = 1/(U.g.scale.z||1);
+      if(U.lamp){ U.lamp.material.color.setHex(c); U.lamp.material.emissive.setHex(c);
+        U.lamp.material.emissiveIntensity = a?1.9:0.75;
+        U.lamp.scale.set(a?1.35:1, a?1.35:1, (a?1.35:1)*zs); }
+      if(U.statusMesh && U.statusMesh.material){
+        U.statusMesh.material.color.setHex(c);
+        if(U.statusMesh.material.emissive){ U.statusMesh.material.emissive.setHex(c);
+          U.statusMesh.material.emissiveIntensity = a?0.55:0.12; }
+      }
+    });
+  }
+}
+
+/* ---------------- 자재 렌더링 & 배지 ---------------- */
+const AT_MACHINE_Q = 8;                 // 설비 앞에 직접 쌓아 보여줄 최대 수
+function drawStock(){
+  if(!SIM) return;
+  resetStock();
+  let bufN = 0, bufHue = 0.35;
+  for(const n of NODES){
+    if(n.kind!=='proc') continue;
+    const st=nodeState[n.id]; if(!st) continue;
+    const kind=kindAt(n.id), hue=(qHueOf(n.id));
+    /* 확관 대기분은 10번 문(Buffer)에 적치 */
+    let q=st.q;
+    if(n.id==='EXP'||n.id==='RB'){ const over=Math.max(0,q-AT_MACHINE_Q); bufN+=over; bufHue=hue; q-=over; }
+    stackAt(n, q, kind, hue);
+    /* 설비 위 가공 중 자재 */
+    const cap=n.cap||1;
+    st.active.forEach((a)=>{
+      const fr = a.setup ? 0 : Math.max(0, Math.min(1,(animT-a.s)/Math.max(1,a.e2-a.s)));
+      onMachine(n, fr, kind, orderHue(a.o)/360, a.u, cap);
+    });
+  }
+  /* Buffer 랙 */
+  if(bufN>0){ const b=NODE['BUF']; stackAt(b, bufN, 'pipe', bufHue, true); }
+  nodeState['BUF'].q = bufN;
+  /* 야드 */
+  const total=ORDERS.reduce((a,o)=>a+o.qty,0);
+  YARD.rawUnit = drawYard(YARD.raw, Math.max(0,total-started), 'plate', 0.58);
+  YARD.finUnit = drawYard(YARD.fin, completed, 'pipe', 0.33);
+  flushStock();
+  updateBadges();
+}
+let _qHue={};
+function qHueOf(id){ return _qHue[id]!==undefined?_qHue[id]:0.35; }
+
+/* HTML 배지 오버레이 (대기 수량 / 야드 재고) */
+const badgeEls={};
+function initBadges(){
+  const box=$('badges');
+  const add=(k,cls)=>{ const d=document.createElement('div'); d.className='bdg '+(cls||''); box.appendChild(d); badgeEls[k]=d; };
+  for(const n of NODES) if(n.kind==='proc'||n.kind==='buf') add(n.id);
+  add('__raw','yard'); add('__fin','yard fin');
+}
+const _pv=new THREE.Vector3();
+function project(x,y,z){
+  _pv.set(x,y,z).project(camera);
+  const w=renderer.domElement.clientWidth, h=renderer.domElement.clientHeight;
+  return {x:(_pv.x*0.5+0.5)*w, y:(-_pv.y*0.5+0.5)*h, vis:_pv.z<1};
+}
+function setBadge(k, x,y,z, txt, cls){
+  const d=badgeEls[k]; if(!d) return;
+  if(!txt){ d.style.display='none'; return; }
+  const p=project(x,y,z);
+  if(!p.vis){ d.style.display='none'; return; }
+  const W=renderer.domElement.clientWidth, H=renderer.domElement.clientHeight;
+  d.style.display='block';
+  d.style.left=Math.max(56, Math.min(W-56, p.x))+'px';
+  d.style.top=Math.max(12, Math.min(H-12, p.y))+'px';
+  d.textContent=txt; d.className='bdg '+(cls||'');
+}
+function updateBadges(){
+  for(const n of NODES){
+    if(n.kind!=='proc'&&n.kind!=='buf') continue;
+    const st=nodeState[n.id]||{q:0}; const g=node3d[n.id].g;
+    let q=st.q;
+    if(n.id==='EXP'||n.id==='RB') q=Math.min(q, AT_MACHINE_Q);
+    const lbl = n.kind==='buf' ? (q>0?('적재 '+q+'본'):'') : (q>0?('대기 '+q):'');
+    setBadge(n.id, g.position.x, 0.6, g.position.z+ND*1.15+2.6, lbl,
+      n.kind==='buf' ? 'buf' : (q>=15?'hot':q>=6?'warm':''));
+  }
+  const total=ORDERS.reduce((a,o)=>a+o.qty,0);
+  const ru=YARD.rawUnit||1, fu=YARD.finUnit||1;
+  setBadge('__raw', YARD.raw.x, 0.4, YARD.raw.z+9.4,
+    `후판 재고 ${(total-started).toLocaleString()}매` + (ru>1?`  (1단 = ${ru}매)`:''), 'yard');
+  setBadge('__fin', YARD.fin.x, 0.4, YARD.fin.z+9.4,
+    `출하 대기 ${completed.toLocaleString()}본` + (fu>1?`  (1단 = ${fu}본)`:''), 'yard fin');
+}
+
+/* ---------------- 사이드 패널 ---------------- */
+function statsByFlow(){ const o=NODES.map(n=>n.id);
+  return SIM.stats.slice().sort((a,b)=>o.indexOf(a.id)-o.indexOf(b.id)); }
+function buildStat(){
+  $('statBars').innerHTML = statsByFlow().map(s=>`<div class="sr"><span class="sn">${s.label.replace('\n',' ')}</span>
+    <div class="sb"><div class="sf" id="sf_${s.id}"></div><span class="sv" id="sv_${s.id}">0%</span></div>
+    <span class="sc">×${s.cap}</span></div>`).join('');
+}
+function updateStat(){
+  if(!SIM) return;
+  const useOverall = animT<=SIM.t0+1;
+  const win=Math.max(3600, Math.min(86400*3, animT-SIM.t0));
+  const busy={};
+  if(!useOverall){ const ev=SIM.events;
+    let lo=0,hi=ev.length-1,st=ev.length;
+    while(lo<=hi){const m=(lo+hi)>>1; if(ev[m].e>=animT-win){st=m;hi=m-1;} else lo=m+1;}
+    for(let i=Math.max(0,st-2000);i<ev.length&&ev[i].s<=animT;i++){
+      const e=ev[i], a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
+      if(b>a) busy[e.n]=(busy[e.n]||0)+(b-a); } }
+  for(const s of SIM.stats){
+    const el=$('sf_'+s.id); if(!el) continue;
+    const u = useOverall ? Math.min(100,s.util)
+      : Math.min(100,(busy[s.id]||0)/(win*s.cap*(SIM.cal.dayCap/86400))*100);
+    el.style.width=u.toFixed(0)+'%';
+    el.style.background = u>=85?'#f05252':u>=60?'#e3b341':'#2ea043';
+    $('sv_'+s.id).textContent=u.toFixed(0)+'%';
+  }
+  if(useOverall) $('simClock').textContent=fmtT(SIM.t0);
+}
+
+/* ---------------- 클릭 → 설비 정보 ---------------- */
+function pick(mx,my){
+  const r=renderer.domElement.getBoundingClientRect();
+  const v=new THREE.Vector2(((mx-r.left)/r.width)*2-1, -((my-r.top)/r.height)*2+1);
+  raycaster.setFromCamera(v, camera);
+  const hit=raycaster.intersectObjects(pickables,false)[0];
+  selected = hit ? hit.object.userData.node : null;
+  showInfo();
+}
+function showInfo(){
+  const p=$('infoPanel');
+  if(!selected){ p.classList.remove('on'); return; }
+  const n=selected, st=SIM&&SIM.stats.find(x=>x.id===n.id), s=nodeState[n.id]||{q:0,done:0,active:[]};
+  let html=`<h4>${n.label.replace('\n',' ')}<button id="infoX">✕</button></h4>`;
+  if(n.sub) html+=`<div class="isub">${n.sub}</div>`;
+  if(st){
+    html+=`<div class="ir"><span>설비 대수</span><b>${st.cap}대</b></div>
+      <div class="ir"><span>누적 처리</span><b>${st.jobs.toLocaleString()}본</b></div>
+      <div class="ir"><span>가공 시간</span><b>${st.busyH.toFixed(1)}h</b></div>
+      <div class="ir"><span>설비 전환</span><b>${st.setupH.toFixed(1)}h (${(st.setupH/(st.busyH+st.setupH)*100||0).toFixed(1)}%)</b></div>
+      <div class="ir"><span>전체 가동률</span><b>${st.util.toFixed(1)}%</b></div>
+      <div class="ir"><span>현재 가동 / 대기</span><b>${s.active.length} / ${s.q}</b></div>`;
+    if(st.units.length>1) html+=st.units.map((u,i)=>`<div class="ir sm"><span>${n.id==='EXP'?('확관 #'+(i+1)+'호기'):u.id}</span><b>${u.jobs}본 · ${u.busyH.toFixed(1)}h</b></div>`).join('');
+    if(n.id==='EXP'){
+      html+=`<div class="ir"><span>배분 규칙</span><b>${DISPATCH_RULES[CFG.dispatchRule].label}</b></div>`;
+      html+=`<div class="ifx"><b>공정 제약</b><br>#1호기 14m 이상 불가 · #2호기 12.8m 이상 불가<br>
+        <span>12.8~14m → #1호기 전용 · 14m 초과 → #1·#2 동시 가동(소요=max)</span></div>`;
+    }
+    if(n.st){
+      const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,rtType:'450kV'};
+      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2') : STD[n.st](A,'12M',1);
+      html+=`<div class="ifx"><b>표준시간 산출식</b><br>${r.expr}<br><span>기준 OD914×t9.3×12.8m → ${r.sec.toFixed(1)}s</span></div>`;
+    }
+  } else if(n.kind==='dec') html+=`<div class="ifx">분기 조건 (Decision Node)</div>`;
+  else if(n.kind==='buf') html+=`<div class="ifx">버퍼 · 최대 4,000톤 적재</div>`;
+  else html+=`<div class="ifx">표준시간 측정 대상 외 공정</div>`;
+  p.innerHTML=html; p.classList.add('on');
+  $('infoX').onclick=()=>{ selected=null; p.classList.remove('on'); };
+}
+
+/* ---------------- 루프 & 부트 ---------------- */
+function resize(){
+  const w=$('c3d').clientWidth, h=$('c3d').clientHeight;
+  renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+let last=null;
+function loop(ts){
+  if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
+  if(playing) step(Math.min(dt,0.1)); else if(SIM) updateBadges();
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);
+}
+function boot(){
+  buildScene(); buildLogicalCurves(); initBadges(); initControls(renderer.domElement);
+  resize(); window.addEventListener('resize', resize);
+  renderer.domElement.addEventListener('click', e=>pick(e.clientX,e.clientY));
+  $('btnPlay').onclick=()=>{ playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
+  $('btnReset').onclick=()=>{ animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
+    for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+    updateStat(); refreshVisual(); };
+  $('spd').oninput=e=>{ speed=[600,3600,18000,86400,259200][+e.target.value];
+    $('spdL').textContent=['10분/s','1시간/s','5시간/s','1일/s','3일/s'][+e.target.value]; };
+  document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>goView(b.dataset.view));
+  $('cfgRule').innerHTML=Object.entries(DISPATCH_RULES).map(([k,v])=>
+    `<option value="${k}">${v.label.replace(/\s*\(.*\)/,'')}</option>`).join('');
+  $('cfgShifts').onchange=runSim; $('cfgRB').onchange=runSim; $('cfgCO').onchange=runSim;
+  $('cfgRule').onchange=runSim;
+  runSim(); requestAnimationFrame(loop);
+}

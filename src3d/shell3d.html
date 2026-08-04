@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>세아제강 JCOE 3D 공정 시뮬레이터</title>
+<style>
+:root{--bg:#0a0e15;--pnl:#131924;--ln:#26303f;--tx:#e6edf3;--dim:#8b949e;--acc:#58a6ff;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:'Segoe UI','Malgun Gothic',sans-serif;height:100vh;overflow:hidden;font-size:13px}
+#app{display:flex;flex-direction:column;height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:0 16px;height:50px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0}
+header h1{font-size:15px;font-weight:700;color:var(--acc);white-space:nowrap}
+header h1 small{color:var(--dim);font-weight:400;font-size:11px;margin-left:8px}
+#simInfo{margin-left:auto;font-size:11px;color:var(--dim);text-align:right;flex-shrink:0}
+#bar{display:flex;align-items:center;gap:12px;padding:7px 16px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0;flex-wrap:wrap}
+button{background:#1f6feb;border:none;color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+button.g{background:#2a3444}
+button.g:hover{background:#36435a}
+#btnPlay,#btnReset{width:32px;height:32px;border-radius:50%;padding:0}
+#btnReset{background:#2a3444}
+#spd{width:120px;accent-color:#1f6feb}
+#spdL{font-size:11px;color:var(--acc);width:46px}
+#progWrap{width:160px;height:5px;background:#202a38;border-radius:3px;overflow:hidden}
+#simProg{height:100%;width:0;background:linear-gradient(90deg,#1f6feb,#58a6ff)}
+#simClock{margin-left:auto;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.lgnd{display:flex;gap:10px;font-size:10.5px;color:var(--dim)}
+.lgnd i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:3px}
+.sep{width:1px;height:20px;background:var(--ln)}
+.ck{display:flex;align-items:center;gap:4px;font-size:11.5px;color:var(--dim)}
+select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radius:6px;padding:4px 7px;font-size:12px}
+#body{flex:1;display:grid;grid-template-columns:1fr 244px;grid-template-rows:1fr 108px;overflow:hidden;min-height:0}
+#c3d{position:relative;overflow:hidden}
+#gl{display:block;width:100%;height:100%}
+#hintbar{position:absolute;left:12px;bottom:10px;font-size:10.5px;color:#6e7a8c;background:#0a0e15b0;padding:5px 10px;border-radius:6px}
+#side{background:var(--pnl);border-left:1px solid var(--ln);overflow-y:auto;padding:11px}
+#side h2{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+.sr{display:flex;align-items:center;gap:5px;margin-bottom:4px}
+.sn{width:84px;font-size:10.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb{flex:1;height:12px;background:#202a38;border-radius:3px;position:relative;overflow:hidden}
+.sf{height:100%;width:0;border-radius:3px;transition:width .3s}
+.sv{position:absolute;right:4px;top:0;line-height:12px;font-size:9.5px;font-weight:600;color:#fff}
+.sc{font-size:9.5px;color:var(--dim);width:20px;text-align:right}
+#doneCnt{font-size:28px;font-weight:700;color:#2ea043;text-align:center;margin:12px 0 2px}
+#doneLbl{font-size:10.5px;color:var(--dim);text-align:center}
+#logPanel{grid-column:1/-1;background:var(--pnl);border-top:1px solid var(--ln);overflow-y:auto;padding:6px 16px}
+.lg{font-family:Consolas,monospace;font-size:10.5px;color:#9198a1;padding:1px 0}
+#badges{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.bdg{position:absolute;transform:translate(-50%,-50%);background:#0d1117d9;border:1px solid #3d4756;border-radius:11px;
+  padding:2px 8px;font-size:10.5px;font-weight:600;color:#cbd5e1;white-space:nowrap;border-color:#3d4756}
+.bdg.warm{background:#463109e0;border-color:#a97c1a;color:#ffd76a}
+.bdg.hot{background:#4a1414e6;border-color:#c04040;color:#ff9a92}
+.bdg.buf{background:#0d2b2be6;border-color:#2fa6a6;color:#7fe3e3}
+.bdg.yard{background:#131924e6;border-color:#4a5568;color:#e6edf3;font-size:11px}
+.bdg.yard.fin{border-color:#2ea043;color:#7ee787}
+#infoPanel{position:absolute;right:14px;top:14px;width:300px;background:#0d1117ee;border:1px solid var(--ln);border-radius:10px;padding:13px 15px;display:none;backdrop-filter:blur(6px)}
+#infoPanel.on{display:block}
+#infoPanel h4{font-size:13.5px;color:var(--acc);margin-bottom:3px;display:flex;justify-content:space-between;align-items:center}
+#infoPanel h4 button{background:none;color:var(--dim);padding:0 2px;font-size:13px}
+.isub{font-size:10.5px;color:var(--dim);margin-bottom:9px}
+.ir{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);padding:2.5px 0;border-bottom:1px solid #1b2431}
+.ir b{color:#fff;font-variant-numeric:tabular-nums}
+.ir.sm{font-size:10.5px;color:#6e7a8c}
+.ifx{margin-top:9px;font-size:10.5px;color:var(--dim);font-family:Consolas,monospace;line-height:1.6;background:#161d29;border-radius:6px;padding:8px 10px}
+.ifx b{color:var(--acc);font-family:inherit}
+.ifx span{color:#7ee787}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>세아제강 JCOE 3D 공정 시뮬레이터<small>POSTECH × 세아제강 · 표준시간 기준 25.12.18</small></h1>
+  <div id="simInfo"></div>
+</header>
+<div id="bar">
+  <button id="btnPlay">▶</button><button id="btnReset">↺</button>
+  <span style="font-size:11px;color:var(--dim)">배속</span>
+  <input type="range" id="spd" min="0" max="4" step="1" value="1"><span id="spdL">1시간/s</span>
+  <div id="progWrap"><div id="simProg"></div></div>
+  <div class="sep"></div>
+  <button class="g" data-view="all">전체</button>
+  <button class="g" data-view="top">평면</button>
+  <button class="g" data-view="form">조관</button>
+  <button class="g" data-view="exp">확관</button>
+  <button class="g" data-view="insp">검사·출하</button>
+  <div class="sep"></div>
+  <span class="ck">교대
+    <select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></span>
+  <span class="ck"><input type="checkbox" id="cfgCO" checked>전환시간</span>
+  <span class="ck"><input type="checkbox" id="cfgRB" checked>RB라인</span>
+  <span class="ck">확관 배분<select id="cfgRule"></select></span>
+  <div class="lgnd">
+    <span><i style="background:#2ea043"></i>대기</span>
+    <span><i style="background:#2b7fff"></i>가공중</span>
+    <span><i style="background:#e3b341"></i>전환</span>
+    <span><i style="background:#f05252"></i>병목</span>
+    <span><i style="background:#4a5260"></i>비가동</span>
+  </div>
+  <div id="simClock">--</div>
+</div>
+<div id="body">
+  <div id="c3d">
+    <canvas id="gl"></canvas>
+    <div id="hintbar">좌 드래그 = 회전 · 우 드래그(또는 Shift) = 이동 · 휠 = 확대/축소 · 설비 클릭 = 상세</div>
+    <div id="badges"></div>
+    <div id="infoPanel"></div>
+  </div>
+  <div id="side">
+    <h2>공정별 가동률</h2><div id="statBars"></div>
+    <div id="doneCnt">0</div><div id="doneLbl">포장 완료 (본)</div>
+  </div>
+  <div id="logPanel"><div id="logBody"></div></div>
+</div>
+</div>
+<script>__THREE__</script>
+<script>
+const T = __TABLES__;
+const ORDERS = __ORDERS__;
+</script>
+<script>__ENGINE__</script>
+<script>__FLOW__</script>
+<script>__SCENE__</script>
+<script>boot();</script>
+</body>
+</html>

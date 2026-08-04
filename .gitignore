@@ -1,0 +1,13 @@
+# 원자료 (사내 자료 — 저장소에 포함하지 않음)
+*.xlsx
+*.xlsm
+*.pptx
+
+# 빌드/실행 부산물
+node_modules/
+__pycache__/
+*.pyc
+*.tgz
+*.png.tmp
+.DS_Store
+Thumbs.db

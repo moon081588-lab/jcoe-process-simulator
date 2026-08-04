@@ -1,0 +1,1841 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>세아제강 JCOE 공정 시뮬레이터</title>
+<style>
+:root{--bg:#0d1117;--pnl:#161b22;--pnl2:#1c2128;--ln:#30363d;--tx:#e6edf3;--dim:#8b949e;--acc:#58a6ff;--red:#da3633;--yel:#d29922;--grn:#2ea043;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:'Segoe UI','Malgun Gothic',-apple-system,sans-serif;height:100vh;overflow:hidden;font-size:13px}
+#app{display:flex;flex-direction:column;height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:0 16px;height:52px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0}
+header h1{font-size:15px;font-weight:700;color:var(--acc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
+header h1 small{color:var(--dim);font-weight:400;font-size:11px;margin-left:8px}
+.tabs{display:flex;gap:3px;margin-left:8px;flex-shrink:0}
+.tab{white-space:nowrap;flex-shrink:0;padding:7px 13px;border-radius:7px;background:transparent;border:1px solid transparent;color:var(--dim);cursor:pointer;font-size:12.5px;font-weight:600}
+.tab:hover{color:var(--tx);background:#ffffff0a}
+.tab.on{background:#1f6feb22;border-color:#1f6feb66;color:var(--acc)}
+#simInfo{margin-left:auto;font-size:11px;color:var(--dim);text-align:right;line-height:1.45;flex-shrink:0;max-width:330px}
+main{flex:1;position:relative;overflow:hidden}
+.pane{position:absolute;inset:0;display:none;overflow:auto}
+.pane.on{display:flex}
+/* ---------- 흐름 탭 ---------- */
+#pFlow{flex-direction:column;overflow:hidden}
+#flowbar{display:flex;align-items:center;gap:14px;padding:8px 18px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0}
+#btnPlay,#btnReset{width:34px;height:34px;border-radius:50%;border:none;background:#1f6feb;color:#fff;font-size:13px;cursor:pointer}
+#btnReset{background:#30363d}
+#spd{width:130px;accent-color:#1f6feb}
+#simClock{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;color:#fff;margin-left:auto}
+#progWrap{width:180px;height:6px;background:#21262d;border-radius:3px;overflow:hidden}
+#simProg{height:100%;width:0;background:linear-gradient(90deg,#1f6feb,#58a6ff)}
+.lgnd{display:flex;gap:11px;font-size:10.5px;color:var(--dim)}
+.lgnd i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:3px}
+#flowbody{flex:1;display:grid;grid-template-columns:1fr 250px;grid-template-rows:1fr 128px;overflow:hidden;min-height:0}
+#cvwrap{position:relative;overflow:hidden;background:var(--bg)}
+#cv{display:block}
+#side{background:var(--pnl);border-left:1px solid var(--ln);overflow-y:auto;padding:12px}
+#side h2{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:9px}
+.sr{display:flex;align-items:center;gap:5px;margin-bottom:5px}
+.sn{width:88px;font-size:10.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb{flex:1;height:13px;background:#21262d;border-radius:3px;position:relative;overflow:hidden}
+.sf{height:100%;width:0;border-radius:3px;transition:width .3s}
+.sv{position:absolute;right:4px;top:0;line-height:13px;font-size:9.5px;font-weight:600;color:#fff}
+.sc{font-size:9.5px;color:var(--dim);width:20px;text-align:right}
+#doneCnt{font-size:30px;font-weight:700;color:var(--grn);text-align:center;margin:14px 0 2px}
+#doneLbl{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:12px}
+#logPanel{grid-column:1/-1;background:var(--pnl);border-top:1px solid var(--ln);overflow-y:auto;padding:7px 16px}
+.lg{font-family:Consolas,monospace;font-size:10.5px;color:#9198a1;padding:1px 0}
+/* ---------- 공통 ---------- */
+.pane>.inner{padding:18px 22px;width:100%}
+h3{font-size:13.5px;margin:18px 0 9px;color:var(--acc)}
+h3:first-child{margin-top:0}
+.kpis{display:flex;gap:11px;flex-wrap:wrap;margin-bottom:14px}
+.kpi{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:11px 16px;min-width:135px}
+.kpi b{display:block;font-size:19px;color:#fff;font-weight:700}
+.kpi span{font-size:10.5px;color:var(--dim)}
+.kpi.bn{border-color:#da363366;background:#da363314}
+.kpi.bn b{color:#ff7b72}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--pnl2);color:var(--dim);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:7px 9px;text-align:left;border-bottom:1px solid var(--ln);position:sticky;top:0;z-index:5}
+td{padding:6px 9px;border-bottom:1px solid #21262d}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.fx{font-family:Consolas,monospace;font-size:10.5px;color:var(--dim)}
+td.bar{width:130px}
+td.bar div{height:11px;border-radius:3px}
+td.hi2{color:#e3b341;font-weight:600}
+tr.bnrow{background:#da363318}tr.bnrow td{color:#ff9a92}
+tr.sk td{color:#6e7681;font-style:italic}
+tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
+.tag{background:var(--red);color:#fff;border-radius:4px;padding:1px 5px;font-size:9px;margin-left:5px}
+/* ---------- 계산기 ---------- */
+#calcForm{display:flex;flex-wrap:wrap;gap:11px;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:13px 15px;margin-bottom:15px}
+.f{display:flex;flex-direction:column;gap:3px}
+.f label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+.f input,.f select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radius:6px;padding:5px 8px;font-size:12px;width:110px}
+.f.ck{flex-direction:row;align-items:center;gap:5px;align-self:flex-end;padding-bottom:5px}
+.f.ck label{text-transform:none;font-size:11.5px;color:var(--tx)}
+#calcTerms{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.tc,.uc{background:var(--pnl);border:1px solid var(--ln);border-radius:8px;padding:10px 12px}
+.tc h4,.uc h4{font-size:11.5px;color:var(--acc);margin-bottom:6px;display:flex;justify-content:space-between}
+.tc h4 span{color:#fff}
+.tr2{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);padding:1.5px 0}
+.tr2 b{color:var(--tx);font-variant-numeric:tabular-nums}
+/* ---------- 간트 ---------- */
+#gantt{font-size:11px}
+.ghdr,.gr{display:flex;align-items:stretch}
+.ghdr{position:sticky;top:0;background:var(--bg);z-index:6;border-bottom:1px solid var(--ln)}
+.gl{width:250px;flex-shrink:0;padding:3px 8px;border-right:1px solid var(--ln)}
+.gl b{color:#fff;font-size:11px}.gl span{display:block;color:var(--dim);font-size:9.5px}
+.gt{flex:1;position:relative;height:30px;background:#0f141a}
+.gd{position:absolute;top:0;height:22px;font-size:9px;color:var(--dim);border-left:1px solid #21262d;padding-left:2px;overflow:hidden}
+.gd.we{background:#da363310}
+.gr:hover{background:#ffffff08}
+.gb{position:absolute;top:5px;height:20px;border-radius:4px;opacity:.9}
+.gb:hover{opacity:1;outline:1px solid #fff}
+#bnUnits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+/* ---------- 설정 ---------- */
+#cfgBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:15px}
+#btnRun,#btnCalc{background:#1f6feb;border:none;color:#fff;border-radius:7px;padding:7px 17px;font-size:12.5px;font-weight:600;cursor:pointer}
+.note{font-size:11px;color:var(--dim);line-height:1.65;background:var(--pnl);border-left:3px solid var(--acc);border-radius:0 7px 7px 0;padding:10px 14px;margin-top:12px}
+.note b{color:var(--tx)}
+@media (max-width:1500px){ header h1 small{display:none} .tab{padding:7px 10px;font-size:12px} #simInfo{max-width:250px} }
+@media (max-width:1200px){ #simInfo{display:none} }
+
+.toolbar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:13px}
+.toolbar .f input,.toolbar .f select{width:auto;min-width:110px}
+.hint{font-size:11px;color:var(--dim);padding-bottom:6px;max-width:520px;line-height:1.5}
+button.ghost{background:#2a3444}
+h3 .sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:8px}
+h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase;letter-spacing:.5px}
+.tblwrap{max-height:none;overflow:auto;border:1px solid var(--ln);border-radius:9px}
+.mdl{font-size:11.5px;color:var(--tx);background:#12182099;border:1px solid var(--ln);border-radius:9px;padding:10px 14px;margin:11px 0;line-height:1.9}
+.mdl b{color:var(--acc)}.mdl span{color:var(--dim);font-size:11px}
+.warn{font-size:11.5px;background:#3a1d1de0;border-left:3px solid var(--red);border-radius:0 7px 7px 0;padding:9px 13px;margin-bottom:12px;color:#ffc9c4;line-height:1.6}
+.warn b{color:#ff9a92}
+.ok{font-size:11.5px;background:#132a1ae0;border-left:3px solid var(--grn);border-radius:0 7px 7px 0;padding:9px 13px;margin-bottom:12px;color:#a5e6b6}
+.mseq{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:11px}
+.mcard{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:11px 13px}
+.mcard h5{font-size:12px;color:var(--acc);margin-bottom:8px;display:flex;justify-content:space-between}
+.mcard h5 span{color:var(--dim);font-weight:400}
+.mseqbar{display:flex;height:22px;border-radius:4px;overflow:hidden;margin-bottom:7px}
+.mseqbar div{height:100%}
+.mrow{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);padding:1.5px 0;border-bottom:1px solid #1b222c}
+.mrow b{color:var(--tx);font-variant-numeric:tabular-nums;font-weight:500}
+.mrow i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;font-style:normal}
+.imp{color:#7ee787;font-weight:600}
+.wors{color:#ff9a92;font-weight:600}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>세아제강 JCOE 공정 시뮬레이터<small>POSTECH × 세아제강 · 표준시간 기준 25.12.18</small></h1>
+  <div class="tabs">
+    <div class="tab on" data-p="pFlow">공정 흐름</div>
+    <div class="tab" data-p="pCalc">표준시간 계산기</div>
+    <div class="tab" data-p="pIO">In / Out 시간표</div>
+    <div class="tab" data-p="pOpt">확관 배분 · 최적화</div>
+    <div class="tab" data-p="pGantt">오더 스케줄</div>
+    <div class="tab" data-p="pBn">병목 분석</div>
+    <div class="tab" data-p="pCfg">시뮬레이션 설정</div>
+  </div>
+  <div id="simInfo"></div>
+</header>
+<main>
+  <!-- ========== 공정 흐름 ========== -->
+  <section class="pane on" id="pFlow">
+    <div id="flowbar">
+      <button id="btnPlay">▶</button><button id="btnReset">↺</button>
+      <span style="font-size:11px;color:var(--dim)">배속</span>
+      <input type="range" id="spd" min="0" max="4" step="1" value="1"><span id="spdL" style="font-size:11px;color:var(--acc);width:48px">10분/s</span>
+      <div id="progWrap"><div id="simProg"></div></div>
+      <div class="lgnd">
+        <span><i style="background:#238636"></i>대기(Idle)</span>
+        <span><i style="background:#1f6feb"></i>가공중</span>
+        <span><i style="background:#d29922"></i>설비 전환</span>
+        <span><i style="background:#da3633"></i>병목</span>
+        <span><i style="background:#3d444d"></i>비가동</span>
+        <span><i style="background:#8957e5"></i>분기</span>
+      </div>
+      <div id="simClock">--</div>
+    </div>
+    <div id="flowbody">
+      <div id="cvwrap"><canvas id="cv"></canvas></div>
+      <div id="side">
+        <h2>공정별 가동률 (최근 3일)</h2><div id="statBars"></div>
+        <div id="doneCnt">0</div><div id="doneLbl">포장 완료 (본)</div>
+      </div>
+      <div id="logPanel"><div id="logBody"></div></div>
+    </div>
+  </section>
+
+  <!-- ========== 계산기 ========== -->
+  <section class="pane" id="pCalc"><div class="inner">
+    <div id="calcForm">
+      <div class="f"><label>외경 OD (mm)</label><input type="number" id="cOD" value="914" step="1"></div>
+      <div class="f"><label>두께 t (mm)</label><input type="number" id="cT" value="9.3" step="0.1"></div>
+      <div class="f"><label>길이 L (m)</label><input type="number" id="cL" value="12.802" step="0.001"></div>
+      <div class="f"><label>수량 (본)</label><input type="number" id="cQ" value="70"></div>
+      <div class="f"><label>재질</label><select id="cGrade"><option value="normal">일반 (X65 이하)</option><option value="high">고강도 (X70 이상)</option><option value="hiMn">고망간강</option></select></div>
+      <div class="f"><label>확관기</label><select id="cExp"><option value="M2">#2호기</option><option value="M1">#1호기</option><option value="RB">RB 라인</option></select></div>
+      <div class="f"><label>RT 종류</label><select id="cRT"><option>450kV</option><option>320kV</option><option>End-RT</option></select></div>
+      <div class="f"><label>수압 유지(초)</label><input type="number" id="cHold" value="60"></div>
+      <div class="f"><label>마킹 사양수</label><select id="cMS"><option value="1">1 (내면 or 외면)</option><option value="2" selected>2 (내/외면)</option></select></div>
+      <div class="f"><label>마킹 관단수</label><select id="cME"><option value="1">1 (선단 or 후단)</option><option value="2" selected>2 (선/후단)</option></select></div>
+      <div class="f"><label>RT 불량 개소</label><input type="number" id="cDF" value="0"></div>
+      <div class="f ck"><input type="checkbox" id="cAPI" checked><label for="cAPI">API 5L (라인 파이프)</label></div>
+      <button id="btnCalc">재계산</button>
+    </div>
+    <div class="kpis" id="calcSum"></div>
+    <h3>공정별 표준 생산시간 (1본 기준, Net Time)</h3>
+    <table><thead><tr><th>공정</th><th style="text-align:right">초</th><th style="text-align:right">분</th><th>상대 부하</th><th>산출식</th></tr></thead>
+    <tbody id="calcRows"></tbody></table>
+    <h3>산출식 항목별 분해</h3>
+    <div id="calcTerms"></div>
+    <div class="note">
+      <b>NOTE (원자료 기재사항)</b><br>
+      1) 본 공정별 생산 표준 시간은 가동률을 고려하지 않은 <b>Net Time</b> 측정 결과임<br>
+      2) 25T 초과 제품은 면취기에서 목표 시간당 생산 PCS를 만족하지 못하나, Multi Pass 용접으로 인한 Bottle Neck 으로 후처리 Cycle Time 에 영향을 미치지 않음<br>
+      3) Full Length X-RAY 는 1대 운영 기준 Cycle Time (Line Balance 에 따라 Max. 3대까지 운영 가능)<br>
+      4) 수압 미시행 Pipe 는 관단 변형 등을 이유로 충수 후 가압하지 않고 수압 완료<br>
+      5) U.T Calibration 시간: 2.5min/회 &nbsp;|&nbsp; 6) 동일 Size 다회 측정 Pipe 는 1개 결과만 표기
+    </div>
+  </div></section>
+
+  <!-- ========== In/Out 시간표 ========== -->
+  <section class="pane" id="pIO"><div class="inner">
+    <div id="ioBar" class="toolbar">
+      <div class="f"><label>설비 / 호기</label><select id="ioStation"></select></div>
+      <div class="f"><label>오더</label><select id="ioOrder"></select></div>
+      <div class="f"><label>단위</label><select id="ioUnit">
+        <option value="order">오더 단위 (설비별 요약)</option>
+        <option value="pipe">본 단위 (상세)</option></select></div>
+      <div class="f"><label>표시 행수</label><select id="ioLimit">
+        <option>200</option><option selected>500</option><option>2000</option><option value="999999">전체</option></select></div>
+      <button id="btnIO">조회</button>
+      <button id="btnIOCsv" class="ghost">CSV 내보내기</button>
+    </div>
+    <div class="kpis" id="ioSum"></div>
+    <div class="tblwrap"><table id="ioTable"><thead id="ioHead"></thead><tbody id="ioBody"></tbody></table></div>
+    <div class="note"><b>Input</b> = 직전 공정 완료(설비 도착) 시각 · <b>착수</b> = 설비 점유 시작 · <b>Output</b> = 가공 완료 시각.<br>
+      <b>대기</b> = Input → 착수(전환 포함) 사이의 정체 시간, <b>전환</b> = 직전 제품과 규격이 달라 발생한 설비 전환 시간.</div>
+  </div></section>
+
+  <!-- ========== 확관 배분 · 최적화 ========== -->
+  <section class="pane" id="pOpt"><div class="inner">
+    <h3>① 확관기 공정 제약 (적격집합 ℰ)</h3>
+    <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:110px">설비</th><th>공정 제약 (자료 원문)</th><th style="width:210px">모델 반영</th></tr></thead><tbody>
+      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td><td>L &lt; 14.0m 단독 가능</td></tr>
+      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td><td>L &lt; 12.8m 단독 가능</td></tr>
+      <tr><td>확관 3호기</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입</td><td>L &lt; 12.8m (선택 시 포함)</td></tr>
+    </tbody></table></div>
+    <div class="ok" style="margin-bottom:12px">위 제약을 그대로 풀면 다이어그램 주석과 정확히 일치합니다 —
+      <b>12.8M~14M 제품은 #2·#3호기가 불가하므로 “Only #1 Expander 가동”</b>,
+      <b>14M 초과 제품은 어느 호기도 단독 불가하므로 “#1·#2 Expander 동시 가동”</b> (소요시간 = max(#1, #2)).</div>
+    <div class="toolbar">
+      <div class="f ck"><input type="checkbox" id="optSameOD" checked><label for="optSameOD">동시 작업 시 동일 외경 제품만 (1호기 제약)</label></div>
+      <div class="f ck"><input type="checkbox" id="optM3"><label for="optM3">확관 3호기 포함 (제약표 기재 · 공정 다이어그램에는 2라인)</label></div>
+      <div class="hint">체크를 바꾸면 즉시 재시뮬레이션합니다.</div>
+    </div>
+    <div id="eligWarn"></div>
+
+    <h3>② 배분 규칙 — 두 호기 다 가능한 오더를 어디로 보낼 것인가</h3>
+    <div class="toolbar">
+      <div class="f" style="min-width:280px"><label>배분 규칙</label><select id="optRule"></select></div>
+      <div id="ruleDesc" class="hint"></div>
+      <div class="f ck"><input type="checkbox" id="optApplySeq" checked><label for="optApplySeq">최적화 투입 순서까지 적용</label></div>
+      <button id="btnApplyRule">규칙 적용 · 재시뮬</button>
+    </div>
+
+    <h3>③ 최적화 엔진 <span class="sub">병렬설비 + 순서의존 전환시간 스케줄링</span></h3>
+    <div class="toolbar">
+      <div class="f"><label>Makespan 가중치</label><input type="number" id="wCmax" value="1" step="0.1"></div>
+      <div class="f"><label>전환시간 가중치</label><input type="number" id="wSetup" value="1.4" step="0.1"></div>
+      <div class="f"><label>호기 편차 가중치</label><input type="number" id="wBal" value="0.25" step="0.05"></div>
+      <div class="f"><label>SA 반복수</label><select id="optIters"><option>8000</option><option selected>24000</option><option>60000</option><option>150000</option></select></div>
+      <button id="btnOpt">최적화 엔진 실행</button>
+    </div>
+    <div class="kpis" id="optSum"></div>
+    <div class="mdl"><b>모델</b>&nbsp; min ① &nbsp;s.t.&nbsp; ② Σ<sub>m∈ℳ</sub> z<sub>j,m</sub> = 1 (∀j∈𝒥) &nbsp;·&nbsp;
+      ③ z<sub>j,m</sub> = 0 (∀(j,m)∉ℰ) &nbsp;·&nbsp;
+      ④ S<sub>j</sub> ≥ C<sub>i</sub> + s<sub>ij</sub> − M(1−x<sub>ij</sub>) &nbsp;(∀m∈ℳ, ∀i,j∈𝒥<sub>m</sub>)<br>
+      <span>목적함수 ① = w₁·Makespan + w₂·Σ설비전환시간 + w₃·호기간 부하편차 — 가중치로 조정</span></div>
+    <h4 class="sh">호기별 배정 시퀀스 (최적해)</h4>
+    <div id="optSeq"></div>
+
+    <h3>④ 사후분석 — 배분 규칙별 비교</h3>
+    <div class="toolbar"><button id="btnCmp">전체 규칙 비교 실행</button>
+      <div class="hint">규칙 5종을 각각 시뮬레이션해 Makespan · 전환시간 · 호기 부하를 비교합니다.</div></div>
+    <div class="tblwrap"><table><thead><tr><th>배분 규칙</th><th style="text-align:right">Makespan</th>
+      <th style="text-align:right">확관 전환(h)</th><th style="text-align:right">총 전환(h)</th>
+      <th style="text-align:right">확관 가동률</th><th style="text-align:right">#1호기(본)</th><th style="text-align:right">#2호기(본)</th>
+      <th style="text-align:right">부하 편차(h)</th><th>확관 전환시간 비교</th></tr></thead><tbody id="cmpBody">
+      <tr><td colspan="9" style="color:#6e7681">「전체 규칙 비교 실행」을 누르면 결과가 표시됩니다.</td></tr></tbody></table></div>
+    <div id="cmpNote"></div>
+  </div></section>
+
+  <!-- ========== 간트 ========== -->
+  <section class="pane" id="pGantt"><div class="inner">
+    <h3>오더별 생산 스케줄</h3><div id="gantt"></div>
+  </div></section>
+
+  <!-- ========== 병목 ========== -->
+  <section class="pane" id="pBn"><div class="inner">
+    <div class="kpis" id="bnCall"></div>
+    <h3>공정별 부하 · 가동률</h3>
+    <table><thead><tr><th>공정</th><th style="text-align:right">대수</th><th style="text-align:right">처리 본수</th>
+      <th style="text-align:right">가공(h)</th><th style="text-align:right">전환(h)</th><th style="text-align:right">전환비율</th>
+      <th>부하</th><th style="text-align:right">가동률</th></tr></thead><tbody id="bnTable"></tbody></table>
+    <h3>병렬 설비 유닛별 부하</h3><div id="bnUnits"></div>
+    <h3>확관기별 공정 제약 (설비 전환 제약)</h3>
+    <table><thead><tr><th style="width:130px">설비</th><th>공정 제약</th></tr></thead><tbody>
+      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td></tr>
+      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td></tr>
+      <tr><td>확관 3호기</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입</td></tr>
+      <tr><td>RB 라인</td><td>투입 조건(전부 만족): 두께 25T 이하 · 외경 24" 이하 · 병목 발생 시</td></tr>
+    </tbody></table>
+    <div class="note">제품 규격(외경·두께·길이) 변경 시 <b>설비 전환 시간</b>이 발생하며, 확관 공정은 타 공정 대비 전환 시간이 길어 전체 공정의 병목을 유발합니다.
+      동일 규격 오더를 묶어 투입하면 전환 손실을 줄일 수 있습니다 — 위 <b>전환비율</b> 컬럼이 개선 여지를 나타냅니다.</div>
+  </div></section>
+
+  <!-- ========== 설정 ========== -->
+  <section class="pane" id="pCfg"><div class="inner">
+    <h3>시뮬레이션 파라미터</h3>
+    <div id="cfgBar">
+      <div class="f"><label>시작일</label><input type="date" id="cfgStart" value="2026-03-02"></div>
+      <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></div>
+      <div class="f"><label>실가동 h/Shift</label><input type="number" id="cfgNetH" value="7.5" step="0.5"></div>
+      <div class="f"><label>수압 유지(초)</label><input type="number" id="cfgHold" value="60"></div>
+      <div class="f ck"><input type="checkbox" id="cfgWeekend"><label for="cfgWeekend">주말 비가동</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgCO" checked><label for="cfgCO">설비 전환시간 반영</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgRB" checked><label for="cfgRB">RB 라인 활용</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgCP"><label for="cfgCP">Calibration Press 투입</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgPFUT"><label for="cfgPFUT">프로세싱 파이프 Final U.T</label></div>
+      <button id="btnRun">시뮬레이션 실행</button>
+    </div>
+    <div class="note">
+      <b>모델 구조</b> — 파이프 1본 단위 FIFO 디스패치 시뮬레이션.<br>
+      · 라우팅: 길이 &gt; 13m → 18M 라인 / 이하 → 12M 라인. 두께 25T 초과 → Gap Press 투입.
+      단일 오더 API 5L 또는 50PCS 이상 → 1차 U.T, 그 외 By-pass.<br>
+      · 확관: #1호기(14m 이상 불가 제약 반영) / #2호기 중 가장 빨리 비는 설비에 배정. RB 라인 조건 충족 시 우회.<br>
+      · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
+      · 전환시간: 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.
+    </div>
+    <h3>제품군</h3>
+    <table><thead><tr><th style="width:200px">제품군</th><th>특징</th></tr></thead><tbody>
+      <tr><td>프로세싱 파이프</td><td>A671 / A672 — Final U.T 는 별도 요청 시에만 진행, 관단 X-ray By-pass</td></tr>
+      <tr><td>라인 파이프 (API 5L)</td><td>열처리 공정 없음 — Final U.T + 관단 X-ray 필수, 1차 U.T 대상</td></tr>
+    </tbody></table>
+  </div></section>
+</main>
+</div>
+<script>
+const T = {"tackWeld": [[0.0, 8.7, 66.6667, 1], [8.71, 11.1, 66.6667, 1], [11.11, 13.5, 66.6667, 1], [13.51, 15.100000000000001, 66.6667, 1], [15.11, 16.7, 66.6667, 1], [16.71, 18.3, 66.6667, 1], [18.31, 20.65, 66.6667, 1], [20.66, 23.799999999999997, 66.6667, 1], [23.81, 27.0, 61.6667, 1], [27.1, 30.200000000000003, 58.3333, 1], [30.21, 34.95, 58.3333, 1], [34.96, 41.55, 58.3333, 1], [42.56, 47.5, 58.3333, 1], [47.51, 99.0, 50.0, 1]], "insideWeld": [[0.0, 8.3, 21.6667, 1], [8.31, 9.1, 21.6667, 1], [9.11, 9.9, 21.6667, 1], [9.91, 10.7, 21.6667, 1], [10.71, 11.5, 21.6667, 1], [11.51, 12.3, 21.6667, 1], [12.31, 13.5, 21.6667, 1], [13.51, 14.7, 21.6667, 1], [14.71, 15.5, 21.6667, 1], [15.51, 16.7, 21.6667, 1], [16.71, 17.85, 21.6667, 1], [17.86, 18.65, 20.8333, 1], [18.66, 19.85, 20.0, 1], [19.86, 21.4, 16.6667, 1], [21.41, 22.6, 16.6667, 1], [22.61, 23.4, 16.6667, 1], [23.41, 24.6, 15.8333, 1], [24.61, 25.799999999999997, 15.8333, 1], [25.81, 26.6, 8.7302, 2], [26.61, 27.8, 8.3125, 2], [27.81, 29.0, 8.7302, 2], [29.1, 35.1, 8.9535, 2], [35.11, 50.0, 6.1111, 3]], "outsideWeld": [[0.0, 8.3, 23.3333, 1], [8.31, 9.1, 21.6667, 1], [9.11, 9.9, 21.6667, 1], [9.91, 10.7, 21.6667, 1], [10.71, 11.5, 21.6667, 1], [11.51, 12.3, 21.6667, 1], [12.31, 13.5, 21.6667, 1], [13.51, 14.7, 26.6667, 1], [14.71, 15.5, 26.6667, 1], [15.51, 16.7, 26.6667, 1], [16.71, 17.85, 26.6667, 1], [17.86, 18.65, 26.6667, 1], [18.66, 19.85, 26.6667, 1], [19.86, 21.4, 26.6667, 1], [21.41, 22.6, 26.6667, 1], [22.61, 23.4, 25.0, 1], [23.41, 24.6, 23.3333, 1], [24.61, 25.799999999999997, 21.6667, 1], [25.81, 26.6, 10.2564, 2], [26.61, 27.8, 10.2564, 2], [27.81, 29.0, 10.0, 2], [29.1, 35.1, 10.0, 2], [35.11, 50.0, 8.3333, 3]], "utCut": [[0.01, 10.0, 750.0], [10.01, 12.0, 700.0], [12.01, 15.0, 550.0], [15.01, 20.0, 500.0], [20.01, 28.0, 448.0], [28.01, 32.0, 300.0], [32.01, 38.0, 195.0], [38.01, 44.0, 120.0], [44.01, 99.0, 75.0]], "emSpeed": [{"tmin": 0, "tmax": 18, "normal": 5, "high": 3}, {"tmin": 18.001, "tmax": 100, "normal": 4, "high": 2}], "emFeed": [[0, 12.9, 15250], [13, 16, 17250], [16.1, 19, 19250]], "preBenderPitch": [[8, 25.4, 1450], [25.401, 99, 800]], "pressX1": {"20": 7, "22": 7, "24": 7, "26": 7, "28": 8, "30": 8, "32": 10, "34": 10, "36": 12, "38": 10, "40": 12, "42": 12, "44": 12, "46": 12, "48": 14, "50": 14, "52": 14, "54": 16, "56": 16, "58": 16, "60": 18, "62": 20, "64": 20}, "endFacing": [[18, 8.0, 15.0, 173.78], [18, 15.0, 30.0, 173.78], [18, 30.0, 999.0, 173.78], [20, 8.0, 15.0, 143.63], [20, 15.0, 30.0, 158.42], [20, 30.0, 999.0, 187.35], [22, 8.0, 15.0, 182.3], [22, 15.0, 30.0, 237.0], [22, 30.0, 999.0, 323.18], [24, 8.0, 15.0, 172.82], [24, 15.0, 30.0, 216.96], [24, 30.0, 999.0, 225.64], [26, 8.0, 15.0, 183.06], [26, 15.0, 30.0, 198.88], [26, 30.0, 999.0, 235.04], [28, 8.0, 15.0, 184.67], [28, 15.0, 30.0, 206.24], [28, 30.0, 999.0, 258.54], [30, 8.0, 15.0, 203.68], [30, 15.0, 30.0, 208.5], [30, 30.0, 999.0, 395.73], [32, 8.0, 15.0, 222.52], [32, 15.0, 30.0, 261.15], [32, 30.0, 999.0, 289.28], [34, 8.0, 15.0, 209.29], [34, 15.0, 30.0, 261.62], [34, 30.0, 999.0, 325.57], [36, 8.0, 15.0, 221.61], [36, 15.0, 30.0, 344.72], [36, 30.0, 999.0, 415.51], [38, 8.0, 15.0, 233.92], [38, 15.0, 30.0, 363.87], [38, 30.0, 999.0, 438.6], [40, 8.0, 15.0, 246.23], [40, 15.0, 30.0, 383.02], [40, 30.0, 999.0, 461.68], [42, 8.0, 15.0, 235.04], [42, 15.0, 30.0, 291.9], [42, 30.0, 999.0, 468.05], [44, 8.0, 15.0, 246.23], [44, 15.0, 30.0, 305.8], [44, 30.0, 999.0, 490.34], [46, 8.0, 15.0, 257.42], [46, 15.0, 30.0, 319.7], [46, 30.0, 999.0, 512.62], [48, 8.0, 15.0, 277.01], [48, 15.0, 30.0, 323.18], [48, 30.0, 999.0, 400.32], [50, 8.0, 15.0, 288.55], [50, 15.0, 30.0, 336.64], [50, 30.0, 999.0, 417.0], [52, 8.0, 15.0, 300.09], [52, 15.0, 30.0, 350.11], [52, 30.0, 999.0, 433.68], [54, 8.0, 15.0, 311.63], [54, 15.0, 30.0, 363.57], [54, 30.0, 999.0, 450.36], [56, 8.0, 15.0, 323.18], [56, 15.0, 30.0, 377.04], [56, 30.0, 999.0, 467.04], [58, 8.0, 15.0, 315.03], [58, 15.0, 30.0, 378.67], [58, 30.0, 999.0, 468.6], [60, 8.0, 15.0, 325.89], [60, 15.0, 30.0, 391.73], [60, 30.0, 999.0, 484.76], [62, 8.0, 15.0, 336.75], [62, 15.0, 30.0, 404.79], [62, 30.0, 999.0, 500.92], [64, 8.0, 15.0, 347.62], [64, 15.0, 30.0, 417.84], [64, 30.0, 999.0, 517.08]], "endFacingTC": {"클램프 교체(외경 변화)": 60, "우레탄 면판 교체": 30, "카트리지 교체": 10, "팁 교체": 5}, "hydroFill": {"18": 35.0, "20": 35.0, "22": 40.0, "24": 40.0, "26": 50.0, "28": 65.0, "30": 75.0, "32": 75.0, "34": 85.0, "36": 85.0, "38": 95.0, "40": 105.0, "42": 110.0, "44": 115.0, "46": 115.0, "48": 135.0, "50": 135.0, "52": 145.0, "54": 145.0, "56": 145.0, "58": 170.0, "60": 170.0, "62": 180.0, "64": 180.0}, "hydroConst": {"pressureRise": 30, "deflate2nd": 180, "airVent": 120, "deflate2nd_36up": 300, "airVent_36up": 180, "faceplateChangeMin": 50}, "expanderDie": {"18": [[12.7, 550], [19.1, 350]], "20": [[9.0, 170], [12.7, 150], [22.0, 150], [31.0, 140], [37.5, 110]], "21": [[15.9, 180], [25.4, 350], [34.0, 150]], "22": [[9.0, 600], [14.3, 150], [25.4, 200], [38.0, 150]], "24": [[9.0, 550], [12.7, 550], [22.0, 500], [28.0, 250], [34.0, 250]], "26": [[9.0, 550], [12.7, 650], [19.1, 650], [25.4, 350]], "28": [[9.0, 300], [12.7, 300], [22.0, 650], [34.0, 350]], "30": [[9.0, 650], [19.0, 700], [25.4, 400], [34.0, 300], [43.0, 110]], "32": [[9.0, 700], [14.3, 700], [25.4, 500], [34.0, 700], [44.0, 300]], "34": [[9.0, 700], [25.4, 600], [34.0, 260], [43.0, 190]], "36": [[9.0, 700], [14.3, 700], [25.4, 460], [34.0, 350], [44.4, 250]], "38": [[9.0, 700], [14.3, 680], [25.4, 200], [34.0, 250], [44.0, 170]], "40": [[9.0, 825], [14.3, 350], [25.4, 700], [34.0, 700], [44.0, 300]], "42": [[9.0, 825], [14.3, 700], [18.0, 400], [25.4, 350], [34.0, 300]], "44": [[14.3, 650], [25.4, 450], [34.0, 200], [44.0, 700]], "46": [[19.0, 650], [28.0, 300], [34.0, 200], [44.0, 130]], "48": [[9.0, 870], [14.3, 700], [25.4, 700], [36.0, 250], [44.0, 250], [44.0, 700]], "50": [[14.3, 300], [25.4, 300], [34.0, 240], [44.0, 125]], "52": [[14.3, 300], [25.4, 300], [30.0, 550], [44.0, 250]], "54": [[14.3, 650], [27.0, 250], [34.0, 230], [44.0, 120]], "56": [[14.3, 650], [25.4, 650], [34.0, 350], [44.0, 115]], "58": [[19.0, 650], [25.4, 300], [34.0, 220], [44.0, 115]], "60": [[14.3, 700], [25.4, 650], [34.0, 200], [44.0, 700]], "62": [[14.3, 600], [25.4, 305], [34.0, 210], [44.0, 110]], "64": [[14.3, 650], [25.4, 300], [30.0, 550], [44.0, 110]]}, "packingMarking": {"markSpec": {"내면": 1, "외면": 1, "내/외면": 2}, "markEnd": {"선단": 1, "후단": 1, "선/후단": 2}}};
+const ORDERS = [{"no": "1094024", "od": 914.0, "t": 9.3, "L": 12802.0, "qty": 70, "start": "2026-03-02 08:00"}, {"no": "357236", "od": 762.0, "t": 24.9, "L": 12802.0, "qty": 19, "start": "2026-03-02 18:45"}, {"no": "357237", "od": 762.0, "t": 31.2, "L": 12802.0, "qty": 24, "start": "2026-03-02 21:42"}, {"no": "357238", "od": 762.0, "t": 37.3, "L": 12802.0, "qty": 20, "start": "2026-03-03 10:26"}, {"no": "359230", "od": 762.0, "t": 10.3, "L": 11800.0, "qty": 1, "start": "2026-03-04 08:00"}, {"no": "359222", "od": 762.0, "t": 17.45, "L": 11800.0, "qty": 1, "start": "2026-03-04 08:07"}, {"no": "350264", "od": 762.0, "t": 12.4, "L": 12802.0, "qty": 40, "start": "2026-03-04 08:15"}, {"no": "379744", "od": 762.0, "t": 9.3, "L": 12802.0, "qty": 404, "start": "2026-03-05 08:00"}, {"no": "379745", "od": 762.0, "t": 9.3, "L": 12802.0, "qty": 10, "start": "2026-03-09 08:00"}, {"no": "350894", "od": 762.0, "t": 20.25, "L": 18288.0, "qty": 270, "start": "2026-03-09 09:27"}, {"no": "1093605", "od": 762.0, "t": 10.9, "L": 18000.0, "qty": 10, "start": "2026-03-14 08:00"}, {"no": "352628", "od": 813.0, "t": 12.1, "L": 6000.0, "qty": 2, "start": "2026-03-14 10:09"}, {"no": "359223", "od": 864.0, "t": 19.05, "L": 11800.0, "qty": 1, "start": "2026-03-14 10:53"}, {"no": "380510", "od": 914.0, "t": 9.3, "L": 12802.0, "qty": 2, "start": "2026-03-14 11:31"}, {"no": "357243", "od": 914.0, "t": 9.3, "L": 12802.0, "qty": 25, "start": "2026-03-14 11:48"}, {"no": "359224", "od": 914.0, "t": 11.9, "L": 11800.0, "qty": 1, "start": "2026-03-14 15:28"}, {"no": "350260", "od": 914.0, "t": 12.4, "L": 12802.0, "qty": 70, "start": "2026-03-14 15:35"}, {"no": "355806", "od": 914.0, "t": 12.7, "L": 6000.0, "qty": 2, "start": "2026-03-18 08:00"}, {"no": "352631", "od": 914.0, "t": 13.75, "L": 6000.0, "qty": 2, "start": "2026-03-18 08:13"}, {"no": "354794", "od": 914.0, "t": 18.8, "L": 12802.0, "qty": 29, "start": "2026-03-18 08:26"}, {"no": "350261", "od": 914.0, "t": 21.7, "L": 12802.0, "qty": 20, "start": "2026-03-18 12:56"}, {"no": "357242", "od": 914.0, "t": 21.7, "L": 12802.0, "qty": 34, "start": "2026-03-19 08:00"}, {"no": "357239", "od": 914.0, "t": 31.2, "L": 12802.0, "qty": 24, "start": "2026-03-19 13:17"}, {"no": "356277", "od": 914.0, "t": 31.2, "L": 12802.0, "qty": 7, "start": "2026-03-20 08:00"}, {"no": "357240", "od": 914.0, "t": 37.3, "L": 12802.0, "qty": 29, "start": "2026-03-20 09:05"}, {"no": "359225", "od": 1016.0, "t": 12.7, "L": 11800.0, "qty": 1, "start": "2026-03-21 08:30"}, {"no": "357241", "od": 1067.0, "t": 12.4, "L": 12802.0, "qty": 24, "start": "2026-03-21 09:07"}, {"no": "374477", "od": 1067.0, "t": 12.7, "L": 12000.0, "qty": 4, "start": "2026-03-21 12:38"}, {"no": "374478", "od": 1067.0, "t": 12.7, "L": 12000.0, "qty": 1, "start": "2026-03-21 13:08"}, {"no": "359226", "od": 1067.0, "t": 14.25, "L": 11800.0, "qty": 1, "start": "2026-03-21 13:16"}, {"no": "357244", "od": 1067.0, "t": 31.2, "L": 12802.0, "qty": 24, "start": "2026-03-23 08:00"}, {"no": "359219", "od": 457.0, "t": 9.5, "L": 11800.0, "qty": 1, "start": "2026-03-23 12:13"}, {"no": "359227", "od": 457.0, "t": 9.5, "L": 11800.0, "qty": 1, "start": "2026-03-23 12:21"}, {"no": "359228", "od": 457.0, "t": 9.5, "L": 11800.0, "qty": 1, "start": "2026-03-23 12:28"}, {"no": "374482", "od": 508.0, "t": 9.5, "L": 11500.0, "qty": 17, "start": "2026-03-23 13:06"}, {"no": "374483", "od": 508.0, "t": 9.5, "L": 11500.0, "qty": 5, "start": "2026-03-23 15:13"}, {"no": "350891", "od": 508.0, "t": 20.25, "L": 18288.0, "qty": 35, "start": "2026-03-23 15:50"}, {"no": "350892", "od": 508.0, "t": 20.25, "L": 18288.0, "qty": 35, "start": "2026-03-24 08:00"}, {"no": "359229", "od": 610.0, "t": 12.7, "L": 11800.0, "qty": 1, "start": "2026-03-24 14:50"}, {"no": "359220", "od": 610.0, "t": 17.45, "L": 11800.0, "qty": 1, "start": "2026-03-24 14:57"}, {"no": "359221", "od": 610.0, "t": 17.45, "L": 11800.0, "qty": 2, "start": "2026-03-24 15:05"}, {"no": "355814", "od": 660.4, "t": 8.85, "L": 6000.0, "qty": 12, "start": "2026-03-24 15:50"}, {"no": "357844", "od": 711.0, "t": 9.3, "L": 11800.0, "qty": 2, "start": "2026-03-24 17:38"}, {"no": "352623", "od": 711.0, "t": 10.65, "L": 6000.0, "qty": 40, "start": "2026-03-25 08:00"}, {"no": "380416", "od": 711.2, "t": 8.85, "L": 6000.0, "qty": 4, "start": "2026-03-25 12:21"}, {"no": "359216", "od": 1219.0, "t": 15.85, "L": 11800.0, "qty": 1, "start": "2026-03-25 13:17"}, {"no": "359215", "od": 1219.0, "t": 15.85, "L": 11800.0, "qty": 1, "start": "2026-03-25 13:24"}, {"no": "379095", "od": 1219.0, "t": 18.8, "L": 12802.0, "qty": 5, "start": "2026-03-25 13:32"}, {"no": "379096", "od": 1219.0, "t": 18.8, "L": 12802.0, "qty": 5, "start": "2026-03-25 14:18"}, {"no": "379098", "od": 1219.0, "t": 28.1, "L": 12802.0, "qty": 13, "start": "2026-03-25 15:05"}, {"no": "379100", "od": 1219.0, "t": 31.2, "L": 12802.0, "qty": 1, "start": "2026-03-25 17:06"}, {"no": "379101", "od": 1219.0, "t": 37.95, "L": 12802.0, "qty": 5, "start": "2026-03-25 17:15"}, {"no": "379103", "od": 1372.0, "t": 18.8, "L": 12802.0, "qty": 6, "start": "2026-03-26 08:30"}, {"no": "359217", "od": 1422.0, "t": 17.45, "L": 11800.0, "qty": 1, "start": "2026-03-26 09:55"}, {"no": "359218", "od": 1524.0, "t": 17.45, "L": 11800.0, "qty": 1, "start": "2026-03-26 10:33"}, {"no": "352570", "od": 762.0, "t": 25.0, "L": 11177.0, "qty": 28, "start": "2026-03-26 11:11"}, {"no": "350262", "od": 1067.0, "t": 15.6, "L": 12802.0, "qty": 49, "start": "2026-03-26 15:21"}, {"no": "374399", "od": 1067.0, "t": 37.3, "L": 12802.0, "qty": 1, "start": "2026-03-27 08:00"}];
+</script>
+<script>/* =====================================================================
+   JCOE 표준시간 계산 엔진
+   출처: ★JCOE 공정 생산 표준 시간 분석 - 20251218 (SMART기술팀)
+   모든 시간 단위 = 초(sec).  길이 L: mm 와 m 을 구분해서 사용.
+   ===================================================================== */
+
+const MM_PER_INCH = 25.4;
+const odInch = (od_mm) => od_mm / MM_PER_INCH;
+
+/* 범위 테이블 조회: rows = [[min,max,val,...], ...] */
+function pickRange(rows, x, valIdx = 2) {
+  for (const r of rows) if (x >= r[0] && x <= r[1]) return r[valIdx];
+  // 범위 밖 → 가장 가까운 경계 사용
+  if (x < rows[0][0]) return rows[0][valIdx];
+  return rows[rows.length - 1][valIdx];
+}
+/* 인치 키 테이블 조회 (짝수 인치) — 가장 가까운 값 */
+function pickInch(obj, inch) {
+  const keys = Object.keys(obj).map(Number).sort((a, b) => a - b);
+  let best = keys[0];
+  for (const k of keys) if (Math.abs(k - inch) < Math.abs(best - inch)) best = k;
+  return obj[best];
+}
+const ceil = Math.ceil, floor = Math.floor;
+
+/* --------------------------------------------------------------------
+   공정별 표준시간.  반환: { sec, terms:[{label,val}], expr }
+   spec = { od (mm), t (mm), L (mm), qty, grade:'normal'|'high'|'hiMn',
+            api5l:bool, markSpec:1|2, markEnd:1|2, defects:int,
+            holdSec:number, rtType:'450kV'|'320kV'|'End-RT' }
+   -------------------------------------------------------------------- */
+const STD = {};
+
+/* 1~2. Edge Miller (면취) */
+STD.EdgeMiller = (s, line) => {
+  const L = s.L, Lm = L / 1000;
+  const feed = pickRange(T.emFeed, Lm);
+  const base = line === '18M' ? 348 : 283;
+  if (s.grade === 'hiMn') {
+    const b = line === '18M' ? 2163 : 1810;
+    const sec = b + L * 0.06 + feed / 215.6;
+    return { sec, expr: `${b} + L×0.06 + feed/215.6  (고망간)`,
+      terms: [['기본(고망간)', b], ['길이항 L×0.06', L * 0.06], ['피딩기 feed/215.6', feed / 215.6]] };
+  }
+  const row = T.emSpeed.find(r => s.t >= r.tmin && s.t <= r.tmax) || T.emSpeed[1];
+  const v = s.grade === 'high' ? row.high : row.normal;   // 고속 Setting [m/min]
+  const sec = base - 123 / v + feed / 215.6 + L * (0.06 / v - 0.0016);
+  return { sec, expr: `${base} − 123/v + feed/215.6 + L×(0.06/v − 0.0016), v=${v}m/min, feed=${feed}mm`,
+    terms: [['기본', base], ['−123/v', -123 / v], ['피딩기 feed/215.6', feed / 215.6],
+            ['길이항', L * (0.06 / v - 0.0016)]] };
+};
+
+/* 3~4. Pre Bender */
+STD.PreBender = (s, line) => {
+  const pitch = pickRange(T.preBenderPitch, s.t);
+  const base = line === '18M' ? 46.5 : 30;
+  const n = ceil((s.L - 2200) / pitch);
+  const sec = base + (pitch / 290 + 17.2) * n;
+  return { sec, expr: `${base} + (pitch/290 + 17.2) × ceil((L−2200)/pitch), pitch=${pitch}mm, n=${n}`,
+    terms: [['기본', base], [`성형 ${n}회`, (pitch / 290 + 17.2) * n]] };
+};
+
+/* 5~6. Press Bender */
+STD.PressBender = (s, line) => {
+  const inch = Math.round(odInch(s.od) / 2) * 2;
+  const x1 = pickInch(T.pressX1, inch);
+  const base = line === '18M' ? 203 : 178;
+  const k = line === '18M' ? 32 : 36;
+  const sec = base + (s.L / 1000) / 0.708 - s.od / 170 + x1 * k;
+  return { sec, expr: `${base} + L[m]/0.708 − OD/170 + X1×${k}, X1=${x1}회(${inch}")`,
+    terms: [['기본', base], ['길이항 L/0.708', (s.L / 1000) / 0.708], ['외경 보정 −OD/170', -s.od / 170],
+            [`X1 Side Press ${x1}회`, x1 * k]] };
+};
+
+/* 7. Gap Press  (두께 25T 초과 시에만 투입) */
+STD.GapPress = (s) => {
+  const Lm = s.L / 1000;
+  const seg = ceil(Lm / 6);
+  const hi = s.grade === 'high';          // X70 이상인 경우 [ ]×2 추가 적용
+  const bracket = seg * (45 + 20) * 2 * 2 * (hi ? 2 : 1);
+  const sec = 464 - Lm / 0.3 + bracket;
+  return { sec, expr: `464 − L[m]/0.3 + [ceil(L/6)×65×2]×2${hi ? '×2(X70↑)' : ''}, ceil(L/6)=${seg}`,
+    terms: [['기본', 464], ['길이 보정 −L/0.3', -Lm / 0.3], [`프레스 ${seg}구간`, bracket]] };
+};
+
+/* 8. Tack Welder (태그 웰딩) */
+STD.TackWelder = (s, line) => {
+  const v = pickRange(T.tackWeld, s.t);          // mm/s
+  const base = line === '18M' ? 185 : 200;
+  const sec = base + s.L / v;
+  return { sec, expr: `${base} + L / v,  v=${v.toFixed(1)}mm/s (WPS t=${s.t})`,
+    terms: [['이송·Gap조정', base], ['용접 L/v', s.L / v]] };
+};
+
+/* 9. Inside Welder (내면 SAW) */
+STD.InsideWelder = (s, line) => {
+  const v = pickRange(T.insideWeld, s.t);
+  const p = pickRange(T.insideWeld, s.t, 3);
+  const base = line === '18M' ? 670 : 710;
+  const sec = base + s.L / v;
+  return { sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
+    terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] };
+};
+
+/* 10. Outside Welder (외면 SAW) */
+STD.OutsideWelder = (s, line) => {
+  const v = pickRange(T.outsideWeld, s.t);
+  const p = pickRange(T.outsideWeld, s.t, 3);
+  const base = line === '18M' ? 510 : 550;
+  const sec = base + s.L / v;
+  return { sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
+    terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] };
+};
+
+/* 11. 1st-UT (관단탭 절단 포함) */
+STD.FirstUT = (s) => {
+  const cv = pickRange(T.utCut, s.t);
+  const sec = 240 + s.L / 150 + (9600 / cv) * 2;
+  return { sec, expr: `240 + L/150 + (9600/절단속도)×2, 절단속도=${cv}`,
+    terms: [['기본', 240], ['이송 L/150', s.L / 150], ['탭 절단 ×2', (9600 / cv) * 2]] };
+};
+
+/* 확관 Step Size / 확관 횟수 N */
+function expanderStep(s) {
+  const inch = Math.round(odInch(s.od));
+  const keys = Object.keys(T.expanderDie).map(Number).sort((a, b) => a - b);
+  let best = keys[0];
+  for (const k of keys) if (Math.abs(k - inch) < Math.abs(best - inch)) best = k;
+  const dies = T.expanderDie[best];
+  let die = dies.find(d => d[0] >= s.t) || dies[dies.length - 1];
+  return { step: die[1], dieT: die[0], inch: best };
+}
+function expanderN(s) {
+  const { step } = expanderStep(s);
+  let n = ceil((s.L - 500) / step) + 2;
+  if (n % 2 === 0) n += 1;                 // N은 항상 홀수
+  return n;
+}
+
+/* 12~13. Expander (확관) — 병목 발생지 */
+STD.Expander = (s, machine) => {
+  const n = expanderN(s), d = expanderStep(s);
+  if (machine === 'BOTH') {                 // 14M 초과 → #1·#2호기 동시 가동
+    const a = 177 + n * 12 + (s.L + 3500) / 300, b = 165 + n * 7.5;
+    return { sec: Math.max(a, b),
+      expr: `#1·#2호기 동시 가동: max(#1 ${a.toFixed(0)}s, #2 ${b.toFixed(0)}s),  N=${n}회, step=${d.step}mm`,
+      terms: [['#1호기 소요', a], ['#2호기 소요', b], ['동시 가동 → max 적용', Math.max(a, b)]] };
+  }
+  if (machine === 'RB') {
+    const sec = 234 + (ceil(s.L / d.step) - 2) * 15;
+    return { sec, expr: `RB라인: 234 + (ceil(L/step)−2)×15, step=${d.step}mm`,
+      terms: [['기본', 234], ['확관', (ceil(s.L / d.step) - 2) * 15]] };
+  }
+  if (machine === 'M1') {
+    const sec = 177 + n * 12 + (s.L + 3500) / 300;
+    return { sec, expr: `#1호기: 177 + N×12 + (L+3500)/300,  N=${n}회, step=${d.step}mm`,
+      terms: [['기본', 177], [`확관 ${n}회 ×12s`, n * 12], ['이송 (L+3500)/300', (s.L + 3500) / 300]] };
+  }
+  const sec = 165 + n * 7.5;
+  return { sec, expr: `#2호기: 165 + N×7.5,  N=${n}회(홀수), step=${d.step}mm (${d.inch}" die t${d.dieT})`,
+    terms: [['기본', 165], [`확관 ${n}회 ×7.5s`, n * 7.5]] };
+};
+
+/* 14. End-Facing (면취기) */
+STD.EndFacing = (s) => {
+  const inch = Math.round(odInch(s.od) / 2) * 2;
+  let best = null, bd = 1e9;
+  for (const r of T.endFacing) {
+    if (s.t >= r[1] && s.t < r[2]) { const d = Math.abs(r[0] - inch); if (d < bd) { bd = d; best = r; } }
+  }
+  if (!best) best = T.endFacing[T.endFacing.length - 1];
+  const sec = 363 + best[3];
+  return { sec, expr: `363 + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = 363 + ${best[3]}s`,
+    terms: [['기본', 363], ['저속 절삭(안전계수 K=1.5)', best[3]]] };
+};
+
+/* 15. Outer bead removal (슬러그/비드 제거) */
+STD.OuterBead = (s) => ({
+  sec: 55 + s.L / 20, expr: `55 + L/20  (컨베이어 1.2m/min)`,
+  terms: [['기본', 55], ['이송 L/20', s.L / 20]]
+});
+
+/* 16. Hydraulic Tester (수압) */
+STD.HydroTest = (s) => {
+  const inch = Math.round(odInch(s.od) / 2) * 2;
+  let fill = pickInch(T.hydroFill, inch);
+  if (s.L / 1000 >= 17) fill += 20;                       // 18미터일 시 20초씩 추가
+  const big = inch >= 36;
+  const de = big ? T.hydroConst.deflate2nd_36up : T.hydroConst.deflate2nd;
+  const av = big ? T.hydroConst.airVent_36up : T.hydroConst.airVent;
+  const hold = s.holdSec != null ? s.holdSec : 60;        // MES 제작시방서 조회값
+  const sec = 90 + fill + 30 + hold + de + av;
+  return { sec, expr: `90 + 충수(${fill}s) + 압력상승(30s) + 유지(${hold}s) + 2차압빼기(${de}s) + 에어벤트(${av}s)`,
+    terms: [['기본', 90], [`충수 ${inch}"`, fill], ['압력 상승', 30], ['압력 유지(MES)', hold],
+            ['2차 압빼기', de], ['에어 벤트', av]] };
+};
+
+/* 17. Final-UT */
+STD.FinalUT = (s) => ({
+  sec: 200 + s.L / 216.7, expr: `200 + L/216.7`,
+  terms: [['기본', 200], ['스캔 L/216.7', s.L / 216.7]]
+});
+
+/* 18. RT (X-ray) */
+STD.RT = (s) => {
+  const df = s.defects || 0;
+  if (s.rtType === 'End-RT') {
+    const sec = 240 + (s.L - 280) / 140 + s.L / 180 + df * 60;
+    return { sec, expr: `End-RT: 240 + (L−280)/140 + L/180 + 불량×60`,
+      terms: [['기본', 240], ['(L−280)/140', (s.L - 280) / 140], ['L/180', s.L / 180], [`불량 ${df}개소`, df * 60]] };
+  }
+  const base = s.rtType === '320kV' ? 345 : 325;
+  const shots = ceil(s.L / 140);
+  const sec = base + shots * 7.5 + df * 120;
+  return { sec, expr: `${base} + ceil(L/140)×7.5 + 불량×120,  ${shots}회 촬영`,
+    terms: [['기본', base], [`촬영 ${shots}회`, shots * 7.5], [`불량 ${df}개소`, df * 120]] };
+};
+
+/* 19. 포장 */
+STD.Packing = (s, _l, seq) => {
+  const mk = 30 * (s.markSpec || 2) * (s.markEnd || 2);
+  const extra = (seq && seq % 10 === 0) ? 250 : 0;         // 1/10본마다 추가 검사
+  const sec = 634 + (45000 - s.L) / 270 + mk + extra;
+  return { sec, expr: `634 + (45000−L)/270 + 30×마킹사양(${s.markSpec || 2})×관단(${s.markEnd || 2})${extra ? ' + 250(10본째)' : ''}`,
+    terms: [['기본', 634], ['이송 (45000−L)/270', (45000 - s.L) / 270], ['마킹', mk]].concat(extra ? [['10본째 추가검사', extra]] : []) };
+};
+
+/* --------------------------------------------------------------------
+   설비 전환(Changeover) 시간 [초]  — PPT: "설비 전환 시간을 최소화하도록 스케줄링 필요"
+   -------------------------------------------------------------------- */
+const CHANGEOVER = {
+  EdgeMiller:   { od: 0,    t: 1800, L: 0    },  // X-Tool 교체 30분 (25T 경계)
+  PreBender:    { od: 1800, t: 900,  L: 0    },  // Upper/Lower Tool 교체
+  PressBender:  { od: 3600, t: 0,    L: 0    },  // 상툴 1시간 / 하툴
+  GapPress:     { od: 600,  t: 0,    L: 0    },
+  TackWelder:   { od: 300,  t: 300,  L: 0    },
+  InsideWelder: { od: 600,  t: 900,  L: 0    },  // WPS 변경
+  OutsideWelder:{ od: 600,  t: 900,  L: 0    },
+  FirstUT:      { od: 150,  t: 150,  L: 0    },  // UT Calibration 2.5min
+  Expander:     { od: 5400, t: 1800, L: 3600 },  // 다이/헤드 교체 — 최대 병목
+  EndFacing:    { od: 3600, t: 600,  L: 0    },  // 클램프 교체 60분(외경 변화 시)
+  OuterBead:    { od: 120,  t: 0,    L: 0    },
+  HydroTest:    { od: 3000, t: 0,    L: 0    },  // 수압 면판 교체 40~60분
+  FinalUT:      { od: 150,  t: 150,  L: 0    },
+  RT:           { od: 300,  t: 300,  L: 0    },
+  Packing:      { od: 300,  t: 0,    L: 600  },
+};
+function changeoverSec(station, prev, cur) {
+  if (!prev) return 0;
+  const c = CHANGEOVER[station]; if (!c) return 0;
+  let s = 0;
+  if (Math.abs(prev.od - cur.od) > 0.5) s += c.od;
+  if (Math.abs(prev.t - cur.t) > 0.5) s += c.t;
+  if (Math.abs(prev.L - cur.L) > 1) s += c.L;
+  // Edge Miller 은 25T 경계를 넘을 때만 Tool 교체
+  if (station === 'EdgeMiller' && (prev.t >= 25) === (cur.t >= 25)) s = 0;
+  return s;
+}
+</script>
+<script>/* =====================================================================
+   JCOE 공정 흐름 그래프 — 세아제강 다이어그램(PPT) 기반
+   좌표계 1600 × 860
+   kind: 'proc' | 'dec' | 'buf' | 'end'
+   ===================================================================== */
+const NODES = [
+  /* ---- 조관 라인 (12M / 18M 병렬) ---- */
+  { id:'EM12',  label:'12M E/M',  sub:'Edge Miller', st:'EdgeMiller', line:'12M', kind:'proc', x:80,  y:80,  cap:1 },
+  { id:'EM18',  label:'18M E/M',  sub:'Edge Miller', st:'EdgeMiller', line:'18M', kind:'proc', x:80,  y:165, cap:1 },
+  { id:'PB12',  label:'12M Pre Bender', st:'PreBender', line:'12M', kind:'proc', x:230, y:80,  cap:1 },
+  { id:'PB18',  label:'18M Pre Bender', st:'PreBender', line:'18M', kind:'proc', x:230, y:165, cap:1 },
+  { id:'PR12',  label:'12M Press Bender', st:'PressBender', line:'12M', kind:'proc', x:390, y:80,  cap:1 },
+  { id:'PR18',  label:'18M Press Bender', st:'PressBender', line:'18M', kind:'proc', x:390, y:165, cap:1 },
+
+  { id:'D1',    label:'후판 두께\n25T 초과', kind:'dec', x:554, y:110 },
+  { id:'GAP',   label:'Gap Press', sub:'25T 초과 시 투입', st:'GapPress', kind:'proc', x:547, y:212, cap:1 },
+
+  { id:'TACK',  label:'태그 웰딩*', sub:'간이 용접 · PCS=후판 수', st:'TackWelder', kind:'proc', x:700, y:110, cap:1 },
+  { id:'ISAW',  label:'내면 SAW*',  sub:'Inside SAW', st:'InsideWelder',  kind:'proc', x:840,  y:110, cap:4 },
+  { id:'SLUG',  label:'슬러그 제거', sub:'Outer bead removal', st:'OuterBead', kind:'proc', x:980,  y:110, cap:1 },
+  { id:'OSAW',  label:'외면 SAW*',  sub:'Outside SAW', st:'OutsideWelder', kind:'proc', x:1120, y:110, cap:4 },
+  { id:'CUT',   label:'관단탭 절단', kind:'proc', st:null, x:1270, y:110, cap:1, free:true },
+
+  /* ---- 확관 라인 (우 → 좌) ---- */
+  { id:'D2',    label:'단일 오더\nAPI 5L or\n50PCS 이상', kind:'dec', x:1418, y:307 },
+  { id:'UT1',   label:'1차 U.T', st:'FirstUT', kind:'proc', x:1265, y:400, cap:1 },
+  { id:'BUF',   label:'10번 문 적재', sub:'Buffer · Max 4,000톤', kind:'buf', x:1085, y:315 },
+  { id:'D3',    label:'RB 라인\n투입 필요', kind:'dec', x:919, y:310 },
+  { id:'RB',    label:'RB 라인 이동', sub:'t≤25T · OD≤24"', st:'Expander', machine:'RB', kind:'proc', x:912, y:405, cap:1 },
+  { id:'EXP',   label:'Expander', sub:'JCOE 병목 공정', st:'Expander', kind:'proc', x:740, y:315, cap:2, bottleneck:true },
+  { id:'D4',    label:'CP\n투입', kind:'dec', x:594, y:310 },
+  { id:'CP',    label:'Calibration Press', kind:'proc', st:null, x:587, y:405, cap:1, free:true },
+  { id:'EF',    label:'면취기', sub:'End-Facing', st:'EndFacing', kind:'proc', x:420, y:315, cap:1 },
+  { id:'HYD',   label:'수압', sub:'Hydraulic Tester', st:'HydroTest', kind:'proc', x:255, y:315, cap:1 },
+
+  /* ---- 검사 · 보수 · 출하 ---- */
+  { id:'D5',    label:'API 5L\n제품', kind:'dec', x:104, y:520 },
+  { id:'FUT',   label:'Final U.T', st:'FinalUT', kind:'proc', x:250, y:620, cap:1 },
+  { id:'XE',    label:'관단 X-ray', st:'RT', kind:'proc', x:400, y:620, cap:1 },
+  { id:'FX',    label:'F-X ray', sub:'Full Length (Max 3대)', st:'RT', kind:'proc', x:560, y:530, cap:2 },
+  { id:'D6',    label:'불량', kind:'dec', x:700, y:528 },
+  { id:'RP',    label:'Repair', kind:'proc', st:null, x:760, y:640, cap:1, free:true },
+  { id:'D7',    label:'용접\n문제', kind:'dec', x:767, y:726 },
+  { id:'RW',    label:'보수 용접', kind:'proc', st:null, x:760, y:810, cap:1, free:true },
+  { id:'EP',    label:'Expander 문제', sub:'★ 병목 발생지', kind:'proc', st:null, x:1000, y:722, cap:1, free:true, bottleneck:true },
+  { id:'PACK',  label:'포장 및 출하', st:'Packing', kind:'proc', x:1130, y:530, cap:1 },
+];
+const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+
+/* 연결선: [from, to, label, routing]  routing: 'h'|'v'|'hv'|'vh' */
+const EDGES = [
+  ['EM12','PB12','','h'], ['PB12','PR12','','h'],
+  ['EM18','PB18','','h'], ['PB18','PR18','','h'],
+  ['PR12','D1','','hv'],  ['PR18','D1','','hv'],
+  ['D1','GAP','Yes','v'], ['GAP','TACK','','hv'], ['D1','TACK','No','h'],
+  ['TACK','ISAW','','h'], ['ISAW','SLUG','','h'], ['SLUG','OSAW','','h'], ['OSAW','CUT','','h'],
+  ['CUT','D2','','vh'],
+  ['D2','UT1','Yes','vh'], ['UT1','BUF','','hv'], ['D2','BUF','No (By-pass)','vh'],
+  ['BUF','D3','','h'],
+  ['D3','RB','Yes','v'], ['D3','EXP','No','h'],
+  ['RB','PACK','','C',{a:'r', b:'t', pts:[[1075,434],[1075,505],[1189,505]]}],
+  ['EXP','D4','','h'],
+  ['D4','CP','Yes','v'], ['CP','EF','','hv'], ['D4','EF','No','h'],
+  ['EF','HYD','','h'], ['HYD','D5','','vh'],
+  ['D5','FUT','Yes','vh'], ['FUT','XE','','h'], ['XE','FX','','hv'],
+  ['D5','FX','By-pass (프로세싱 파이프)','h'],
+  ['FX','D6','','h'], ['D6','PACK','No','h'],
+  ['D6','RP','Yes','vh'], ['RP','D7','','v'],
+  ['D7','RW','Yes','v'], ['D7','EP','No','h'],
+  ['RW','FX','재검사','C',{a:'l', b:'b', pts:[[622,833]]}],
+  ['EP','EXP','재확관','C',{a:'t', b:'b', pts:[[1059,492],[799,492]]}],
+];
+
+/* --------------------------------------------------------------------
+   라우팅: 제품 사양 → 통과 노드 시퀀스
+   -------------------------------------------------------------------- */
+function routeOf(s, cfg) {
+  const Lm = s.L / 1000;
+  const line = Lm > 13 ? '18M' : '12M';
+  const r = [];
+  r.push(line === '18M' ? 'EM18' : 'EM12');
+  r.push(line === '18M' ? 'PB18' : 'PB12');
+  r.push(line === '18M' ? 'PR18' : 'PR12');
+  if (s.t > 25) r.push('GAP');                       // D1: 후판 두께 25T 초과
+  r.push('TACK', 'ISAW', 'SLUG', 'OSAW', 'CUT');
+  if (s.api5l || s.qty >= 50) r.push('UT1');         // D2
+  r.push('BUF');
+  const rbOK = s.t <= 25 && odInch(s.od) <= 24;      // D3: RB 라인 투입 조건
+  r.push(rbOK && cfg.useRB ? 'RB' : 'EXP');
+  if (r[r.length - 1] === 'EXP') {
+    if (cfg.useCP) r.push('CP');                     // D4
+    r.push('EF', 'HYD');
+    if (s.api5l) r.push('FUT', 'XE');                // D5
+    else if (cfg.processingFinalUT) r.push('FUT');
+    r.push('FX');
+  }
+  r.push('PACK');
+  return { route: r, line };
+}
+
+/* --------------------------------------------------------------------
+   교대 캘린더  (Excel: 실 라인 가동 시간 = 7.5H / Shift)
+   -------------------------------------------------------------------- */
+function makeCalendar(cfg) {
+  const shifts = cfg.shifts;                 // 1 | 2 | 3
+  const netH = cfg.netHoursPerShift;         // 7.5
+  const wins = [];
+  if (shifts === 1) wins.push([8, 8 + netH]);
+  else if (shifts === 2) wins.push([8, 8 + netH], [16, 16 + netH]);
+  else wins.push([0, netH], [8, 8 + netH], [16, 16 + netH]);
+  const dayCap = wins.reduce((a, w) => a + (w[1] - w[0]), 0) * 3600;
+  return {
+    wins, dayCap,
+    /* t(sec, epoch) 를 다음 가동 시각으로 이동 */
+    snap(t) {
+      const d = new Date(t * 1000);
+      let h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+      if (cfg.skipWeekend && (d.getDay() === 0 || d.getDay() === 6)) {
+        const nd = new Date(d); nd.setHours(0, 0, 0, 0);
+        nd.setDate(nd.getDate() + (d.getDay() === 6 ? 2 : 1));
+        return this.snap(nd.getTime() / 1000 + wins[0][0] * 3600);
+      }
+      for (const w of wins) { if (h < w[0]) return t + (w[0] - h) * 3600; if (h < w[1]) return t; }
+      const nd = new Date(d); nd.setHours(0, 0, 0, 0); nd.setDate(nd.getDate() + 1);
+      return this.snap(nd.getTime() / 1000 + wins[0][0] * 3600);
+    },
+    /* dur 초를 가동시간 안에서만 소비하며 종료시각 반환 */
+    run(t, dur) {
+      let cur = this.snap(t), left = dur, guard = 0;
+      while (left > 1e-6 && guard++ < 4000) {
+        const d = new Date(cur * 1000);
+        const h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+        const w = wins.find(w => h >= w[0] && h < w[1]);
+        const avail = w ? (w[1] - h) * 3600 : 0;
+        if (avail >= left) return cur + left;
+        left -= avail; cur = this.snap(cur + avail + 1);
+      }
+      return cur;
+    }
+  };
+}
+
+
+/* ====================================================================
+   확관기(Expander) 적격성 · 배분 규칙 · 최적화 엔진
+   PPT「최적화 모델 구성」:
+     min  ①(목적함수)          z(j,m) ∈ {0,1}  작업 j 를 설비 m 에 배정
+     s.t. ② Σ_m z(j,m) = 1      모든 작업은 정확히 한 설비에
+          ③ z(j,m) = 0  ∀(j,m)∉ℰ   적격집합(설비 제약) 밖은 배정 불가
+          ④ S_j ≥ C_i + s_ij − M(1−x_ij)   동일 설비 내 순서변수 x_ij + 전환시간 s_ij
+   ==================================================================== */
+const EXP_MACHINES = [
+  { key:'M1', idx:0, label:'확관 #1호기' },
+  { key:'M2', idx:1, label:'확관 #2호기' },
+  { key:'M3', idx:2, label:'확관 #3호기' },
+];
+
+/* --------------------------------------------------------------------
+   확관기 제약 (자료 그대로)
+     · 확관 1호기 : 14m 이상 작업 불가 / 2호기와 동시 작업 시 동일 외경 제품만 가능
+     · 확관 2호기 : 12.8m 이상 작업 불가 / 외경 48" 이상 & 22" 이하 우선 투입
+     · 확관 3호기 : 12.8m 이상 작업 불가 / 열처리 제품 & 배척 제품 우선 투입
+   ⇒ 다이어그램 주석과 정확히 일치
+     · 12.8M~14M 제품 → #2·#3호기가 불가하므로 Only #1 Expander 가동
+     · 14M 초과 제품  → 어느 호기도 단독 불가 → #1·#2 Expander 동시 가동 (소요=max)
+   -------------------------------------------------------------------- */
+const EXP_LIMIT = { M1: 14.0, M2: 12.8, M3: 12.8 };   // [m] 이상 작업 불가
+
+function expanderMode(spec, cfg) {
+  const Lm = spec.L / 1000;
+  const pool = cfg.useM3 ? ['M1','M2','M3'] : ['M1','M2'];
+  const single = pool.filter(m => Lm < EXP_LIMIT[m]);
+  if (single.length) return { mode:'SINGLE', list:single };
+  if (Lm < EXP_LIMIT.M1 * 2) return { mode:'BOTH', list:['M1','M2'] };   // 동시 가동
+  return { mode:'BOTH', list:['M1','M2'], over:true };
+}
+/* #2호기 우선 투입 규격 (제약표) */
+const M2_PREFERRED = (s) => { const inch = odInch(s.od); return inch >= 48 || inch <= 22; };
+
+const DISPATCH_RULES = {
+  EAT   : { label:'최단 가용 (Earliest Available)', desc:'가장 먼저 비는 호기에 배정 — 현장 기본 가정' },
+  RR    : { label:'균등 배분 (Round-robin)',        desc:'호기 부하를 번갈아 균등하게' },
+  SETUP : { label:'전환 최소 (Setup-aware)',        desc:'직전 작업과 규격이 같은 호기 우선 → 전환시간 회피' },
+  SPEC  : { label:'규격 우선 (Spec-based)',          desc:'외경 48" 이상 · 22" 이하는 #2호기 우선 (제약표)' },
+  OPT   : { label:'최적화 엔진 스케줄',              desc:'z(j,m)+x(ij) 최적해를 그대로 투입' },
+};
+
+function pickExpander(cand, spec, cfg, ctx) {
+  if (cand.length === 1) return cand[0];
+  switch (cfg.dispatchRule) {
+    case 'RR': { ctx.rr = (ctx.rr || 0) + 1; return cand[ctx.rr % cand.length]; }
+    case 'SETUP': {
+      const same = cand.filter(u => u.last && Math.abs(u.last.od-spec.od)<0.5
+        && Math.abs(u.last.t-spec.t)<0.5 && Math.abs(u.last.L-spec.L)<1);
+      if (same.length) return same.reduce((a,b)=>a.free<=b.free?a:b);
+      return cand.reduce((a,b)=>{
+        const ca=changeoverSec('Expander',a.last,spec), cb=changeoverSec('Expander',b.last,spec);
+        if (ca!==cb) return ca<cb?a:b;
+        return a.free<=b.free?a:b; });
+    }
+    case 'SPEC': {
+      const want = M2_PREFERRED(spec) ? 1 : 0;
+      const pref = cand.filter(u=>u.idx===want);
+      if (pref.length) return pref.reduce((a,b)=>a.free<=b.free?a:b);
+      return cand.reduce((a,b)=>a.free<=b.free?a:b);
+    }
+    default: return cand.reduce((a,b)=>a.free<=b.free?a:b);
+  }
+}
+
+/* 「2호기와 동시 작업 시 동일 외경 제품만 가능」 — 동시 가동 구간의 외경 일치 제약 */
+function sameODBlockUntil(units, u, spec, st, cfg) {
+  if (!cfg.sameODConcurrency) return st;
+  let t = st;
+  for (const o of units) {
+    if (o === u) continue;
+    if (o.free > t && o.last && Math.abs(o.last.od - spec.od) > 0.5) t = o.free;
+  }
+  return t;
+}
+
+/* --------------------------------------------------------------------
+   최적화 엔진 — 병렬설비 + 순서의존 전환시간 + 동시가동(BOTH) 작업
+   해 표현: 전역 작업 순서 order[] + SINGLE 작업의 호기 배정 assign{}
+   평가   : 전진 시뮬레이션 (BOTH 작업은 #1·#2 동시 점유)
+   -------------------------------------------------------------------- */
+function buildExpJobs(orders, cfg) {
+  const jobs = [];
+  for (const o of orders) {
+    const spec = specOf(o, cfg);
+    const { route } = routeOf(spec, cfg);
+    if (!route.includes('EXP')) continue;
+    const em = expanderMode(spec, cfg);
+    const p = {};
+    for (const m of (cfg.useM3?['M1','M2','M3']:['M1','M2'])) p[m] = STD.Expander(spec, m==='M3'?'M2':m).sec * o.qty;
+    p.BOTH = STD.Expander(spec, 'BOTH').sec * o.qty;
+    jobs.push({ no:o.no, spec, qty:o.qty, mode:em.mode, elig:em.list, p });
+  }
+  return jobs;
+}
+function setupBetween(a, b) { return changeoverSec('Expander', a ? a.spec : null, b.spec); }
+
+/* 전진 시뮬레이션 평가 */
+function evalSchedule(order, assign, cfg, w) {
+  const ms = cfg.useM3 ? ['M1','M2','M3'] : ['M1','M2'];
+  const free = {}, last = {}, span = {};
+  ms.forEach(m => { free[m]=0; last[m]=null; span[m]=0; });
+  let setupTot = 0;
+  for (const j of order) {
+    if (j.mode === 'BOTH') {
+      let st = Math.max(free.M1, free.M2);
+      const su = Math.max(setupBetween(last.M1,j), setupBetween(last.M2,j));
+      setupTot += su;
+      const en = st + su + j.p.BOTH;
+      free.M1 = free.M2 = en; last.M1 = last.M2 = j;
+      span.M1 += su + j.p.BOTH; span.M2 += su + j.p.BOTH;
+    } else {
+      const m = assign[j.no] && j.elig.includes(assign[j.no]) ? assign[j.no] : j.elig[0];
+      const su = setupBetween(last[m], j);
+      setupTot += su;
+      let st = free[m];
+      if (cfg.sameODConcurrency) {              // 동시 가동 시 동일 외경만
+        for (const o of ms) if (o!==m && free[o]>st && last[o] && Math.abs(last[o].spec.od-j.spec.od)>0.5) st = free[o];
+      }
+      free[m] = st + su + j.p[m]; last[m] = j; span[m] += su + j.p[m];
+    }
+  }
+  const cmax = Math.max(...ms.map(m=>free[m]));
+  const loads = ms.map(m=>span[m]);
+  const bal = Math.max(...loads) - Math.min(...loads);
+  return { cost: w.cmax*cmax + w.setup*setupTot + w.bal*bal, cmax, setupTot, bal,
+           load: Object.fromEntries(ms.map(m=>[m,span[m]])) };
+}
+
+function optimizeExpander(orders, cfg, opts) {
+  const w = (opts && opts.weights) || { cmax:1, setup:1.4, bal:0.25 };
+  const iters = (opts && opts.iters) || 24000;
+  const jobs = buildExpJobs(orders, cfg);
+  if (!jobs.length) return null;
+  const ms = cfg.useM3 ? ['M1','M2','M3'] : ['M1','M2'];
+
+  /* 초기해: 규격(외경→두께→길이) 그룹핑 + 최단완료 배정 */
+  let order = jobs.slice().sort((a,b)=> a.spec.od-b.spec.od || a.spec.t-b.spec.t || a.spec.L-b.spec.L);
+  const assign = {};
+  { const free={}; ms.forEach(m=>free[m]=0); const last={}; ms.forEach(m=>last[m]=null);
+    for (const j of order) {
+      if (j.mode==='BOTH'){ const st=Math.max(free.M1,free.M2)+j.p.BOTH; free.M1=free.M2=st; last.M1=last.M2=j; continue; }
+      let best=null, be=Infinity;
+      for (const m of j.elig){ const e=free[m]+setupBetween(last[m],j)+j.p[m]; if(e<be){be=e;best=m;} }
+      assign[j.no]=best; free[best]=be; last[best]=j;
+    } }
+
+  let cur = evalSchedule(order, assign, cfg, w);
+  let best = cur, bestOrder = order.slice(), bestAssign = {...assign};
+  let T = Math.max(1, cur.cost*0.06);
+  const cool = Math.pow(0.0004, 1/iters);
+  let rnd = 20260804;
+  const rand = () => { rnd = (rnd*1103515245 + 12345) & 0x7fffffff; return rnd/0x7fffffff; };
+
+  for (let it=0; it<iters; it++) {
+    const op = rand();
+    let trialOrder = order, trialAssign = assign, undo = null;
+    if (op < 0.45) {                                   // 순서 swap
+      const a=Math.floor(rand()*order.length), b=Math.floor(rand()*order.length);
+      if(a===b){ T*=cool; continue; }
+      trialOrder = order.slice(); const t0=trialOrder[a]; trialOrder[a]=trialOrder[b]; trialOrder[b]=t0;
+    } else if (op < 0.72) {                            // 순서 shift
+      const a=Math.floor(rand()*order.length), b=Math.floor(rand()*order.length);
+      trialOrder = order.slice(); const j=trialOrder.splice(a,1)[0]; trialOrder.splice(b,0,j);
+    } else {                                           // 호기 재배정
+      const singles = order.filter(j=>j.mode==='SINGLE' && j.elig.length>1);
+      if(!singles.length){ T*=cool; continue; }
+      const j = singles[Math.floor(rand()*singles.length)];
+      const alt = j.elig.filter(m=>m!==assign[j.no]);
+      trialAssign = {...assign}; trialAssign[j.no] = alt[Math.floor(rand()*alt.length)];
+    }
+    const ev = evalSchedule(trialOrder, trialAssign, cfg, w);
+    if (ev.cost < cur.cost || rand() < Math.exp((cur.cost-ev.cost)/Math.max(1e-6,T))) {
+      order = trialOrder; Object.keys(trialAssign).forEach(k=>assign[k]=trialAssign[k]); cur = ev;
+      if (ev.cost < best.cost) { best = ev; bestOrder = order.slice(); bestAssign = {...assign}; }
+    }
+    T *= cool;
+  }
+
+  /* 결과 상세 타임라인 */
+  const free={}, last={}; ms.forEach(m=>{free[m]=0; last[m]=null;});
+  const detail=[];
+  for (const j of bestOrder) {
+    if (j.mode==='BOTH') {
+      const su=Math.max(setupBetween(last.M1,j), setupBetween(last.M2,j));
+      const st=Math.max(free.M1,free.M2)+su, en=st+j.p.BOTH;
+      detail.push({no:j.no, m:'BOTH', st, en, setup:su, p:j.p.BOTH, qty:j.qty});
+      free.M1=free.M2=en; last.M1=last.M2=j;
+    } else {
+      const m=bestAssign[j.no]||j.elig[0];
+      const su=setupBetween(last[m],j);
+      let st=free[m];
+      if (cfg.sameODConcurrency) for (const o of ms)
+        if(o!==m && free[o]>st && last[o] && Math.abs(last[o].spec.od-j.spec.od)>0.5) st=free[o];
+      st+=su; const en=st+j.p[m];
+      detail.push({no:j.no, m, st, en, setup:su, p:j.p[m], qty:j.qty});
+      free[m]=en; last[m]=j;
+    }
+  }
+  detail.sort((a,b)=>a.st-b.st);
+  const assignOut={}; detail.forEach(d=>assignOut[d.no]=d.m);
+  return {
+    assign: assignOut, seq: detail.map(d=>d.no), detail,
+    cmaxH: best.cmax/3600, setupH: best.setupTot/3600, balH: best.bal/3600,
+    loadH: Object.fromEntries(ms.map(m=>[m,(best.load[m]||0)/3600])),
+    machines: ms, nJobs: jobs.length,
+    nBoth: jobs.filter(j=>j.mode==='BOTH').length,
+    nFixed: jobs.filter(j=>j.mode==='SINGLE'&&j.elig.length===1).length,
+    nFree: jobs.filter(j=>j.mode==='SINGLE'&&j.elig.length>1).length,
+    weights: w, iters,
+  };
+}
+
+/* 오더 → spec */
+function specOf(o, cfg) {
+  return {
+    od:o.od, t:o.t, L:o.L, qty:o.qty,
+    grade: o.grade || (o.t >= 25 ? 'high' : 'normal'),
+    api5l: o.api5l != null ? o.api5l : (o.qty >= 50),
+    markSpec:2, markEnd:2, defects:0, holdSec:cfg.holdSec, rtType:'450kV'
+  };
+}
+
+/* --------------------------------------------------------------------
+   시뮬레이터 — 파이프 단위 FIFO 디스패치
+   -------------------------------------------------------------------- */
+function simulate(orders, cfg) {
+  const cal = makeCalendar(cfg);
+  const t0 = new Date(cfg.startDate + 'T08:00:00').getTime() / 1000;
+
+  /* 자원 풀 생성 */
+  const pools = {};
+  if (NODE.EXP) NODE.EXP.cap = cfg.useM3 ? 3 : 2;
+  for (const n of NODES) {
+    if (n.kind !== 'proc') continue;
+    const units = [];
+    for (let i = 0; i < (n.cap || 1); i++)
+      units.push({ id: n.id + '#' + (i + 1), idx: i, free: t0, last: null, busy: 0, setup: 0, jobs: 0 });
+    pools[n.id] = units;
+  }
+  const events = [];
+  const orderSpan = {};
+  const ctx = { rr: 0 };
+  const bothOrders = new Set(), fixedOrders = new Set();
+  let seqGlobal = 0;
+
+  /* 투입 순서: 최적화 스케줄이 있으면 그 순서, 없으면 계획일 순 */
+  const plan = cfg.plan || null;
+  let sorted = orders.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  if (plan && cfg.dispatchRule === 'OPT' && cfg.applyOptSeq !== false && plan.seq && plan.seq.length) {
+    const rank = {}; plan.seq.forEach((no, i) => rank[no] = i);
+    sorted = sorted.slice().sort((a, b) =>
+      (rank[a.no] != null ? rank[a.no] : 9999) - (rank[b.no] != null ? rank[b.no] : 9999));
+  }
+
+  for (const o of sorted) {
+    const spec = specOf(o, cfg);
+    const { route, line } = routeOf(spec, cfg);
+    const useOptSeq = plan && cfg.dispatchRule === 'OPT' && cfg.applyOptSeq !== false && plan.seq && plan.seq.length;
+    const rel = useOptSeq ? t0
+      : Math.max(t0, o.start ? new Date(o.start.replace(' ', 'T')).getTime() / 1000 : t0);
+    let oS = Infinity, oE = -Infinity;
+
+    for (let k = 1; k <= o.qty; k++) {
+      seqGlobal++;
+      let ready = rel, prevId = null;
+      for (const nid of route) {
+        const n = NODE[nid];
+        if (n.kind === 'buf') continue;
+        const units = pools[nid];
+        let u, coUnits = null, machine;
+
+        if (nid === 'EXP') {
+          const em = expanderMode(spec, cfg);                       // ③ 적격집합 ℰ
+          if (em.mode === 'BOTH') {
+            /* 14M 초과 → #1·#2호기 동시 가동 (소요 = max) */
+            coUnits = units.filter(x => x.idx <= 1);
+            u = coUnits.reduce((a, b) => (a.free >= b.free ? a : b));  // 늦게 비는 쪽 기준
+            machine = 'BOTH';
+            bothOrders.add(o.no);
+          } else {
+            let cand = units.filter(x => em.list.includes(EXP_MACHINES[x.idx].key));
+            if (!cand.length) cand = units;
+            if (cfg.dispatchRule === 'OPT' && plan && plan.assign[o.no] && plan.assign[o.no] !== 'BOTH') {
+              const want = plan.assign[o.no];
+              const fixed = cand.filter(x => EXP_MACHINES[x.idx].key === want);
+              u = fixed.length ? fixed[0] : pickExpander(cand, spec, cfg, ctx);
+            } else {
+              u = pickExpander(cand, spec, cfg, ctx);
+            }
+            machine = EXP_MACHINES[u.idx].key;
+            if (cand.length === 1) fixedOrders.add(o.no);
+          }
+        } else {
+          u = units.reduce((a, b) => (a.free <= b.free ? a : b));
+          machine = n.machine || null;
+        }
+
+        const fn = n.free ? null : STD[n.st];
+        const res = fn ? fn(spec, line, k, machine) : { sec: cfg.freeStationSec, expr: '고정 시간(측정 대상 외)', terms: [] };
+        const dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
+        const seize = coUnits || [u];
+        const co = n.free ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+
+        const arrive = ready;
+        let cs = Math.max(ready, ...seize.map(x => x.free));
+        if (nid === 'EXP' && !coUnits) cs = sameODBlockUntil(units, u, spec, cs, cfg);  // 동시 가동 시 동일 외경
+        let st = cs;
+        if (co > 0) { st = cal.run(cs, co); seize.forEach(x => x.setup += co); }
+        const en = cal.run(st, dur);
+        for (const x of seize) {
+          x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
+        }
+        ready = en;
+        events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
+                      both: !!coUnits, mach: machine });
+        prevId = nid;
+        if (st < oS) oS = st;
+        if (en > oE) oE = en;
+      }
+    }
+    orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route };
+  }
+
+  /* 가동률 */
+  const tEnd = Math.max(...Object.values(orderSpan).map(v => v.e));
+  const horizon = tEnd - t0;
+  const days = horizon / 86400;
+  const availPerUnit = days * cal.dayCap;
+  const stats = [];
+  for (const n of NODES) {
+    if (n.kind !== 'proc') continue;
+    const units = pools[n.id];
+    const busy = units.reduce((a, u) => a + u.busy, 0);
+    const setup = units.reduce((a, u) => a + u.setup, 0);
+    const jobs = units.reduce((a, u) => a + u.jobs, 0);
+    if (!jobs) continue;
+    stats.push({
+      id: n.id, label: n.label, st: n.st, cap: units.length, jobs,
+      busyH: busy / 3600, setupH: setup / 3600,
+      util: availPerUnit ? (busy + setup) / (availPerUnit * units.length) * 100 : 0,
+      units: units.map(u => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600, jobs: u.jobs }))
+    });
+  }
+  stats.sort((a, b) => b.util - a.util);
+  const expStat = stats.find(x => x.id === 'EXP');
+  const kpi = {
+    makespanH: horizon / 3600,
+    totalSetupH: stats.reduce((a, x) => a + x.setupH, 0),
+    expSetupH: expStat ? expStat.setupH : 0,
+    expUtil: expStat ? expStat.util : 0,
+    expBalanceH: expStat ? Math.abs((expStat.units[0] ? expStat.units[0].busyH : 0)
+                                  - (expStat.units[1] ? expStat.units[1].busyH : 0)) : 0,
+    bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
+  };
+  return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, kpi,
+           rule: cfg.dispatchRule, eligRule: cfg.eligRule };
+}
+</script>
+<script>/* =====================================================================
+   UI — 탭 / 캔버스 렌더러 / 애니메이션 / 계산기 / 간트 / 병목
+   ===================================================================== */
+const C = {
+  bg:'#0d1117', panel:'#161b22', line:'#30363d', text:'#e6edf3', dim:'#8b949e',
+  idle:'#238636', proc:'#1f6feb', setup:'#d29922', bneck:'#da3633', off:'#3d444d',
+  accent:'#58a6ff', dec:'#8957e5', buf:'#1f6f6f', done:'#2ea043'
+};
+const fmtT = s => { const d = new Date(s*1000); const p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fmtDur = s => s>=3600 ? `${(s/3600).toFixed(2)}h` : s>=60 ? `${(s/60).toFixed(1)}분` : `${s.toFixed(0)}초`;
+const $ = id => document.getElementById(id);
+
+let SIM = null, CFG = null;
+
+/* ================= 설정 ================= */
+let PLAN = null, LAST_OPT = null;
+function readCfg() {
+  return {
+    dispatchRule: ($('optRule')||{}).value || 'EAT',
+    sameODConcurrency: $('optSameOD') ? $('optSameOD').checked : true,
+    useM3: $('optM3') ? $('optM3').checked : false,
+    applyOptSeq: $('optApplySeq') ? $('optApplySeq').checked : true,
+    plan: PLAN,
+    startDate: $('cfgStart').value || '2026-03-02',
+    shifts: +$('cfgShifts').value,
+    netHoursPerShift: +$('cfgNetH').value,
+    skipWeekend: $('cfgWeekend').checked,
+    useRB: $('cfgRB').checked,
+    useCP: $('cfgCP').checked,
+    processingFinalUT: $('cfgPFUT').checked,
+    holdSec: +$('cfgHold').value,
+    changeover: $('cfgCO').checked,
+    freeStationSec: 300,
+    eventCap: 1e9,
+  };
+}
+function runSim() {
+  CFG = readCfg();
+  if (!CFG.changeover) for (const k in CHANGEOVER) CHANGEOVER[k] = { od:0, t:0, L:0 };
+  else Object.assign(CHANGEOVER, JSON.parse(CO_BACKUP));
+  const t = performance.now();
+  SIM = simulate(ORDERS, CFG);
+  SIM.events.sort((a,b)=>a.s-b.s);
+  SIM.byR = SIM.events.slice().sort((a,b)=>a.r-b.r);
+  $('simInfo').textContent =
+    `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
+    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`;
+  animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
+  for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
+  buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  $('logBody').innerHTML='<div class="lg">▶ 를 눌러 시뮬레이션을 재생하세요.</div>';
+}
+
+/* ================= 캔버스 ================= */
+const cvs = $('cv'), ctx = cvs.getContext('2d');
+let VW = 1600, VH = 900, scale = 1, offX = 0, offY = 0;
+function fit() {
+  const w = cvs.parentElement.clientWidth, h = cvs.parentElement.clientHeight;
+  cvs.width = w * devicePixelRatio; cvs.height = h * devicePixelRatio;
+  cvs.style.width = w + 'px'; cvs.style.height = h + 'px';
+  scale = Math.min(w / VW, h / VH) * 0.97;
+  offX = (w - VW * scale) / 2; offY = (h - VH * scale) / 2;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+const BW = 118, BH = 46, DW = 104, DH = 70;
+function box(n) {
+  if (n.kind === 'dec') return { x:n.x, y:n.y, w:DW, h:DH };
+  return { x:n.x, y:n.y, w:BW, h:n.sub ? BH+((n.cap||1)>1?20:12) : BH+((n.cap||1)>1?9:0) };
+}
+function anchor(n, side) {
+  const b = box(n);
+  switch (side) {
+    case 'l': return [b.x, b.y + b.h/2];
+    case 'r': return [b.x + b.w, b.y + b.h/2];
+    case 't': return [b.x + b.w/2, b.y];
+    case 'b': return [b.x + b.w/2, b.y + b.h];
+  }
+}
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function diamond(x,y,w,h){ ctx.beginPath(); ctx.moveTo(x+w/2,y); ctx.lineTo(x+w,y+h/2);
+  ctx.lineTo(x+w/2,y+h); ctx.lineTo(x,y+h/2); ctx.closePath(); }
+
+function edgePath(e) {
+  const [a,b,,mode,opt] = e, A = NODE[a], B = NODE[b];
+  if (mode === 'C') return [anchor(A, opt.a), ...opt.pts, anchor(B, opt.b)];
+  const ba = box(A), bb = box(B);
+  const ac = [ba.x+ba.w/2, ba.y+ba.h/2], bc = [bb.x+bb.w/2, bb.y+bb.h/2];
+  let p0, p1, mid = [];
+  if (mode === 'h') {
+    const right = bc[0] > ac[0];
+    p0 = anchor(A, right?'r':'l'); p1 = anchor(B, right?'l':'r');
+    if (Math.abs(p0[1]-p1[1]) > 4) { mid = [[ (p0[0]+p1[0])/2, p0[1] ], [ (p0[0]+p1[0])/2, p1[1] ]]; }
+  } else if (mode === 'v') {
+    const down = bc[1] > ac[1];
+    p0 = anchor(A, down?'b':'t'); p1 = anchor(B, down?'t':'b');
+    if (Math.abs(p0[0]-p1[0]) > 4) mid = [[p0[0],(p0[1]+p1[1])/2],[p1[0],(p0[1]+p1[1])/2]];
+  } else if (mode === 'hv') {          // 가로 → 세로
+    const right = bc[0] > ac[0];
+    p0 = anchor(A, right?'r':'l'); p1 = anchor(B, bc[1]>ac[1]?'t':'b');
+    mid = [[p1[0], p0[1]]];
+  } else {                              // 'vh' 세로 → 가로
+    const down = bc[1] > ac[1];
+    p0 = anchor(A, down?'b':'t'); p1 = anchor(B, bc[0]>ac[0]?'l':'r');
+    mid = [[p0[0], p1[1]]];
+  }
+  return [p0, ...mid, p1];
+}
+function drawArrow(pts, color, dash) {
+  ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.setLineDash(dash||[]);
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke(); ctx.setLineDash([]);
+  const p=pts[pts.length-1], q=pts[pts.length-2];
+  const a=Math.atan2(p[1]-q[1], p[0]-q[0]);
+  ctx.fillStyle = color; ctx.beginPath();
+  ctx.moveTo(p[0],p[1]); ctx.lineTo(p[0]-9*Math.cos(a-0.4), p[1]-9*Math.sin(a-0.4));
+  ctx.lineTo(p[0]-9*Math.cos(a+0.4), p[1]-9*Math.sin(a+0.4)); ctx.closePath(); ctx.fill();
+}
+
+const nodeState = {};
+const EDGE_PATH = {};        // "A>B" -> pts
+function edgeKey(a,b){ return a+'>'+b; }
+function buildEdgeCache(){
+  const adj = {};
+  for (const e of EDGES){
+    EDGE_PATH[edgeKey(e[0],e[1])] = edgePath(e);
+    (adj[e[0]] = adj[e[0]] || []).push(e[1]);
+  }
+  /* 논리적 경로(분기·버퍼 노드를 경유하는 라우팅)를 이어붙여 캐시 */
+  const procIds = NODES.filter(n=>n.kind==='proc').map(n=>n.id);
+  for (const a of procIds) for (const b of procIds){
+    if (a===b || EDGE_PATH[edgeKey(a,b)]) continue;
+    const q=[[a,[]]], seen=new Set([a]);
+    while(q.length){
+      const [cur,path]=q.shift();
+      if (path.length>4) continue;
+      for (const nx of (adj[cur]||[])){
+        const np=path.concat([[cur,nx]]);
+        if (nx===b){ let pts=[]; np.forEach((seg,i)=>{ const sp=EDGE_PATH[edgeKey(seg[0],seg[1])]||[];
+            pts = pts.concat(i? sp.slice(1) : sp); });
+          EDGE_PATH[edgeKey(a,b)]=pts; q.length=0; break; }
+        const nn=NODE[nx];
+        if (nn && (nn.kind==='dec'||nn.kind==='buf') && !seen.has(nx)){ seen.add(nx); q.push([nx,np]); }
+      }
+    }
+  }
+}
+function pointOn(pts, f){
+  let total=0; const seg=[];
+  for (let i=1;i<pts.length;i++){ const d=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]); seg.push(d); total+=d; }
+  let want=Math.max(0,Math.min(1,f))*total;
+  for (let i=0;i<seg.length;i++){
+    if (want<=seg[i]||i===seg.length-1){ const r=seg[i]?want/seg[i]:0;
+      return [pts[i][0]+(pts[i+1][0]-pts[i][0])*r, pts[i][1]+(pts[i+1][1]-pts[i][1])*r]; }
+    want-=seg[i];
+  }
+  return pts[pts.length-1];
+}
+let hover = null;
+function hitTest(mx,my){
+  const x=(mx-offX)/scale, y=(my-offY)/scale;
+  for (const n of NODES){ const b=box(n);
+    if (x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h) return n; }
+  return null;
+}
+let animT = 0, evIdx = 0, playing = false, speed = 600, completed = 0;
+const _oc = {};
+function orderColor(no){ if(!_oc[no]){ const i=Object.keys(_oc).length; _oc[no]=`hsl(${(i*53)%360},72%,62%)`; } return _oc[no]; }
+const logs = [], doneSet = new Set(), flying = [];
+
+function nodeColor(n) {
+  const s = nodeState[n.id] || {active:[],q:0};
+  if (n.kind==='dec') return C.dec;
+  if (n.kind==='buf') return C.buf;
+  if (!s.active.length) return s.q>=8 ? C.bneck : (offShiftNow() ? C.off : C.idle);
+  if (s.active.some(a=>a.setup)) return C.setup;
+  if (s.q >= 8) return C.bneck;
+  return C.proc;
+}
+function offShiftNow() {
+  if (!SIM) return false;
+  const d = new Date(animT*1000), h = d.getHours()+d.getMinutes()/60;
+  if (CFG.skipWeekend && (d.getDay()===0||d.getDay()===6)) return true;
+  return !SIM.cal.wins.some(w=>h>=w[0]&&h<w[1]);
+}
+
+function draw() {
+  fit();
+  ctx.save(); ctx.translate(offX, offY); ctx.scale(scale, scale);
+  ctx.fillStyle = C.bg; ctx.fillRect(-9999,-9999,99999,99999);
+
+  /* 구역 배경 */
+  const zones = [
+    [45, 48, 1360, 240, '조관 (Forming) — JCOE', '#1f6feb'],
+    [45, 296, 1520, 190, '확관 (Expansion) — 병목 공정', '#8957e5'],
+    [45, 498, 1520, 372, '검사 · 보수 · 출하 (Inspection & Shipping)', '#238636'],
+  ];
+  for (const [x,y,w,h,t,c] of zones) {
+    ctx.fillStyle = c+'14'; roundRect(x,y,w,h,10); ctx.fill();
+    ctx.strokeStyle = c+'44'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle = c+'cc'; ctx.font='600 12px "Segoe UI",sans-serif';
+    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillText(t, x+10, y+7);
+  }
+
+  /* 엣지 */
+  for (const e of EDGES) {
+    const pts = edgePath(e);
+    const bypass = /By-pass|재검사|재확관/.test(e[2]);
+    drawArrow(pts, bypass ? '#6e7681' : '#484f58', bypass ? [5,4] : null);
+    if (e[2]) {
+      const m = pts[Math.floor(pts.length/2)];
+      ctx.font='10px "Segoe UI",sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      const w = ctx.measureText(e[2]).width+8;
+      ctx.fillStyle = C.bg; ctx.fillRect(m[0]-w/2, m[1]-8, w, 15);
+      ctx.fillStyle = bypass ? '#6e7681' : '#9198a1'; ctx.fillText(e[2], m[0], m[1]);
+    }
+  }
+
+
+  /* 노드 */
+  for (const n of NODES) {
+    const b = box(n), col = nodeColor(n), s = nodeState[n.id]||{active:[],q:0,done:0};
+    ctx.shadowColor = col+'66'; ctx.shadowBlur = s.active.length ? 14 : 0;
+    if (n.kind==='dec') { diamond(b.x,b.y,b.w,b.h); }
+    else roundRect(b.x,b.y,b.w,b.h,7);
+    ctx.fillStyle = col + (n.kind==='dec' ? '33' : (s.active.length?'':'22'));
+    if (n.kind!=='dec' && s.active.length) ctx.fillStyle = col;
+    ctx.fill(); ctx.shadowBlur=0;
+    ctx.strokeStyle = col; ctx.lineWidth = n.bottleneck?2.2:1.4; ctx.stroke();
+
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle = (n.kind!=='dec' && s.active.length) ? '#fff' : C.text;
+    const lines = n.label.split('\n');
+    ctx.font = `600 ${n.kind==='dec'?10:11.5}px "Segoe UI","Malgun Gothic",sans-serif`;
+    const cy = b.y + b.h/2 - (n.sub?5:0) - (lines.length-1)*6;
+    lines.forEach((L,i)=>ctx.fillText(L, b.x+b.w/2, cy + i*12));
+    if (n.sub) { ctx.font='9px "Segoe UI",sans-serif'; ctx.fillStyle= s.active.length?'#dbe9ff':C.dim;
+      ctx.fillText(n.sub, b.x+b.w/2, b.y+b.h-(( n.cap||1)>1?19:11)); }
+
+    /* 호기별 레인 (병렬 설비 구분) */
+    if (n.kind==='proc') {
+      const cap = n.cap||1;
+      const lw = (b.w-8)/cap, ly = b.y+b.h-7;
+      for (let i=0;i<cap;i++){
+        const a = s.active.find(x=>x.u===i);
+        const uc = a ? (a.setup?C.setup:C.proc) : (offShiftNow()?C.off:'#ffffff2e');
+        ctx.fillStyle = uc;
+        roundRect(b.x+4+i*lw+0.6, ly, lw-1.2, 4.6, 2); ctx.fill();
+        if (cap>1 && lw>=13){
+          ctx.fillStyle = a ? '#fff' : (s.active.length?'#dbe9ff99':C.dim);
+          ctx.font='700 7.5px "Segoe UI",sans-serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+          ctx.fillText(n.id==='EXP'?('#'+(i+1)+'호기'):('#'+(i+1)), b.x+4+i*lw+lw/2, ly-1.4);
+        }
+      }
+      ctx.textBaseline='middle';
+      if (s.q>0){ ctx.fillStyle=s.q>5?C.bneck:'#6e7681'; roundRect(b.x+b.w-20,b.y-8,26,15,7); ctx.fill();
+        ctx.fillStyle='#fff'; ctx.font='600 9px sans-serif'; ctx.fillText('Q'+s.q, b.x+b.w-7, b.y-0.5); }
+      if (s.done>0){ ctx.fillStyle=C.dim; ctx.font='9px sans-serif'; ctx.textAlign='right';
+        ctx.fillText(s.done.toLocaleString(), b.x+b.w-3, b.y+9); }
+    }
+  }
+
+  /* 이동 중인 파이프 (후판/강관) */
+  for (const f of flying) {
+    ctx.fillStyle = f.color; ctx.globalAlpha = f.a;
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(f.x-5,f.y-2.5,10,5,2.5) : ctx.rect(f.x-5,f.y-2.5,10,5);
+    ctx.fill();
+    ctx.globalAlpha=1;
+  }
+
+  /* 주석 */
+  ctx.textAlign='left'; ctx.font='10px "Segoe UI",sans-serif'; ctx.fillStyle=C.dim;
+  const notes = [
+    '* 태그 웰딩: 간이 용접, 본 수 = PCS = 후판 수      * SAW: 서브머지드 아크 용접',
+    'RB 라인 투입 조건(전부 만족): 두께 25T 이하 · 외경 24" 이하 · 병목 발생 시',
+    '확관 #1호기: 14m 이상 작업 불가 / #2호기 동시 작업 시 동일 외경만 가능',
+    '12.8~14M 제품 → #1호기만 가동  ·  14M 초과 → #1·#2호기 가동',
+    '제품군 ① 프로세싱 파이프(A671/A672) ② 라인 파이프(API 5L) — 열처리 공정 없음',
+  ];
+  notes.forEach((t,i)=>ctx.fillText(t, 1150, 640+i*16));
+
+  /* 툴팁 */
+  if (hover) {
+    const st = SIM && SIM.stats.find(x=>x.id===hover.id);
+    const L = [hover.label.replace('\n',' ') + (hover.sub? '  ('+hover.sub+')':'')];
+    if (st){
+      L.push(`설비 ${st.cap}대 · 처리 ${st.jobs.toLocaleString()}본`);
+      L.push(`가공 ${st.busyH.toFixed(1)}h · 전환 ${st.setupH.toFixed(1)}h`);
+      L.push(`가동률 ${st.util.toFixed(1)}%`);
+      st.units.forEach(u=>L.push(`  ${u.id} : ${u.jobs}본 / ${u.busyH.toFixed(1)}h`));
+    } else if (hover.kind==='dec') L.push('분기 조건 (Decision)');
+    else if (hover.kind==='buf') L.push('버퍼 · 최대 4,000톤 적재');
+    else L.push('표준시간 측정 대상 외 공정');
+    ctx.font='11px "Segoe UI",sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
+    const w = Math.max(...L.map(t=>ctx.measureText(t).width))+20, h=L.length*16+14;
+    const b0=box(hover); let tx=b0.x+b0.w+10, ty=b0.y;
+    if (tx+w>VW) tx=b0.x-w-10; if (ty+h>VH) ty=VH-h;
+    ctx.fillStyle='#0d1117ee'; roundRect(tx,ty,w,h,8); ctx.fill();
+    ctx.strokeStyle=C.accent; ctx.lineWidth=1; ctx.stroke();
+    L.forEach((t,i)=>{ ctx.fillStyle= i? C.dim : '#fff';
+      ctx.font=(i?'11px':'600 12px')+' "Segoe UI",sans-serif'; ctx.fillText(t,tx+10,ty+8+i*16); });
+  }
+  ctx.restore();
+}
+
+/* ================= 애니메이션 ================= */
+function stepAnim(dt) {
+  if (!SIM) return;
+  animT += dt * speed;
+  if (animT > SIM.tEnd) { animT = SIM.tEnd; playing = false; $('btnPlay').textContent='▶'; }
+  const ev = SIM.events;
+  for (const n of NODES){ const s0=nodeState[n.id]; s0.active=[]; s0.q=0; }
+  /* 활성/대기 이벤트: 도착시각 기준 이진탐색 후 스캔 */
+  let lo=0, hi=ev.length-1, st=ev.length;
+  while (lo<=hi){ const m=(lo+hi)>>1; if (ev[m].s>=animT-864000){ st=m; hi=m-1; } else lo=m+1; }
+  for (let i=Math.max(0,st-4000);i<ev.length && ev[i].cs<=animT;i++){
+    const e=ev[i]; const s0=nodeState[e.n];
+    if (e.e>animT) s0.active.push({u:e.u, setup: animT < e.s, o:e.o, k:e.k});
+  }
+  /* 대기열(도착 후 미착수) — r 정렬 배열에서 역방향 스캔 */
+  flying.length = 0;
+  const bR = SIM.byR;
+  let l2=0, h2=bR.length-1, iR=bR.length;
+  while (l2<=h2){ const m=(l2+h2)>>1; if (bR[m].r>animT){ iR=m; h2=m-1; } else l2=m+1; }
+  const qidx = {};
+  for (let i=iR-1;i>=0 && i>iR-9000;i--){
+    const e=bR[i]; if (e.cs<=animT) continue;
+    const s0=nodeState[e.n]; s0.q++;
+    if (!e.p) continue;
+    const pts = EDGE_PATH[edgeKey(e.p,e.n)]; if (!pts) continue;
+    const j = (qidx[e.n]=(qidx[e.n]||0)+1);
+    if (j>7) continue;
+    const pt = pointOn(pts, Math.max(0.05, 0.9 - (j-1)*0.09));
+    flying.push({x:pt[0], y:pt[1], a:0.9, color:orderColor(e.o)});
+  }
+  /* 완료/대기열 근사 */
+  while (evIdx<ev.length && ev[evIdx].s<=animT) {
+    const e=ev[evIdx];
+    nodeState[e.n].done++;
+    if (e.n==='PACK'){ completed++; }
+    if (logs.length<300) {
+      if (e.co > 0)
+        logs.unshift(`${fmtT(e.cs)}  ⚙ 설비 전환  ${NODE[e.n].label.replace('\n',' ')}  ${(e.co/60).toFixed(0)}분  → 오더 ${e.o}`);
+      else if (e.n==='PACK' && e.k%10===0)
+        logs.unshift(`${fmtT(e.s)}  ✔ 포장 완료  오더 ${e.o} #${e.k}`);
+      else if (e.n==='EXP' && e.k%25===0)
+        logs.unshift(`${fmtT(e.s)}  ▸ 확관 #${e.u+1}호기 착수  오더 ${e.o} #${e.k}`);
+    }
+    evIdx++;
+  }
+  $('simClock').textContent = fmtT(animT);
+  $('simProg').style.width = ((animT-SIM.t0)/(SIM.tEnd-SIM.t0)*100).toFixed(2)+'%';
+  $('doneCnt').textContent = completed.toLocaleString();
+  updateStatPanel();
+  $('logBody').innerHTML = logs.slice(0,60).map(l=>`<div class="lg">${l}</div>`).join('');
+}
+let last=null;
+function loop(ts){ if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
+  if (playing) stepAnim(Math.min(dt,0.1)); draw(); requestAnimationFrame(loop); }
+
+/* ================= 사이드 통계 ================= */
+function statsByFlow(){
+  const ord = NODES.map(n=>n.id);
+  return SIM.stats.slice().sort((a,b)=>ord.indexOf(a.id)-ord.indexOf(b.id));
+}
+function buildStatPanel(){
+  $('statBars').innerHTML = statsByFlow().map(s=>`
+    <div class="sr"><span class="sn" title="${s.label}">${s.label.replace('\n',' ')}</span>
+      <div class="sb"><div class="sf" id="sf_${s.id}"></div><span class="sv" id="sv_${s.id}">0%</span></div>
+      <span class="sc">×${s.cap}</span></div>`).join('');
+}
+function updateStatPanel(){
+  if (!SIM) return;
+  if (animT <= SIM.t0 + 1) {          // 재생 전에는 전체 시뮬 평균 가동률 표시
+    for (const s of SIM.stats){
+      const el=$('sf_'+s.id); if(!el) continue;
+      const u=Math.min(100,s.util);
+      el.style.width=u.toFixed(0)+'%';
+      el.style.background = u>=85?C.bneck:u>=60?C.setup:C.done;
+      $('sv_'+s.id).textContent=u.toFixed(0)+'%';
+    }
+    $('simClock').textContent = fmtT(SIM.t0);
+    return;
+  }
+  const win = Math.max(3600, Math.min(86400*3, animT - SIM.t0));
+  const ev = SIM.events;
+  const busy = {};
+  let lo=0, hi=ev.length-1, st=ev.length;
+  while (lo<=hi){ const m=(lo+hi)>>1; if (ev[m].e>=animT-win){ st=m; hi=m-1; } else lo=m+1; }
+  for (let i=Math.max(0,st-2000);i<ev.length && ev[i].s<=animT;i++){
+    const e=ev[i]; const a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
+    if (b>a) busy[e.n]=(busy[e.n]||0)+(b-a);
+  }
+  for (const s of SIM.stats){
+    const u = Math.min(100, (busy[s.id]||0)/(win*s.cap*(SIM.cal.dayCap/86400))*100);
+    const el=$('sf_'+s.id); if(!el) continue;
+    el.style.width=u.toFixed(0)+'%';
+    el.style.background = u>=85?C.bneck:u>=60?C.setup:C.done;
+    $('sv_'+s.id).textContent=u.toFixed(0)+'%';
+  }
+}
+
+/* ================= 표준시간 계산기 ================= */
+const CALC_ORDER = [
+  ['EdgeMiller','면취 (Edge Miller)'], ['PreBender','Pre Bender'], ['PressBender','Press Bender'],
+  ['GapPress','Gap Press'], ['TackWelder','태그 웰딩'], ['InsideWelder','내면 SAW'],
+  ['OuterBead','슬러그/비드 제거'], ['OutsideWelder','외면 SAW'], ['FirstUT','1차 U.T'],
+  ['Expander','확관 (Expander)'], ['EndFacing','면취기 (End-Facing)'], ['HydroTest','수압'],
+  ['FinalUT','Final U.T'], ['RT','X-ray (RT)'], ['Packing','포장'],
+];
+function calc(){
+  const s = {
+    od: +$('cOD').value, t: +$('cT').value, L: +$('cL').value*1000, qty:+$('cQ').value,
+    grade: $('cGrade').value, api5l: $('cAPI').checked,
+    markSpec:+$('cMS').value, markEnd:+$('cME').value, defects:+$('cDF').value,
+    holdSec:+$('cHold').value, rtType:$('cRT').value,
+  };
+  const line = s.L/1000 > 13 ? '18M':'12M';
+  const mach = $('cExp').value;
+  const rows = [];
+  for (const [k,label] of CALC_ORDER){
+    if (k==='GapPress' && s.t<=25) { rows.push({k,label,skip:'두께 25T 이하 → Gap Press 미투입'}); continue; }
+    if (k==='FirstUT' && !(s.api5l||s.qty>=50)) { rows.push({k,label,skip:'단일오더 API 5L·50PCS 미만 → By-pass'}); continue; }
+    if (k==='FinalUT' && !s.api5l) { rows.push({k,label,skip:'프로세싱 파이프 → 별도 요청 시에만 진행'}); continue; }
+    const r = k==='Expander' ? STD.Expander(s, mach) : STD[k](s, line, 1);
+    rows.push({k,label,...r});
+  }
+  const act = rows.filter(r=>!r.skip);
+  const max = Math.max(...act.map(r=>r.sec));
+  const total = act.reduce((a,r)=>a+r.sec,0);
+  const bn = act.find(r=>r.sec===max);
+  const shiftSec = CFG ? CFG.netHoursPerShift*3600 : 27000;
+
+  $('calcSum').innerHTML = `
+    <div class="kpi"><b>${line}</b><span>투입 라인</span></div>
+    <div class="kpi"><b>${fmtDur(total)}</b><span>1본 총 공정시간 (Net)</span></div>
+    <div class="kpi bn"><b>${bn.label}</b><span>병목 공정 · ${fmtDur(bn.sec)}</span></div>
+    <div class="kpi"><b>${(shiftSec/max).toFixed(1)} 본</b><span>Shift당 생산능력 (병목 기준)</span></div>
+    <div class="kpi"><b>${(s.qty*max/3600).toFixed(1)} h</b><span>${s.qty}본 소요 (병목 기준)</span></div>
+    <div class="kpi"><b>${expanderN(s)} 회</b><span>확관 횟수 N · step ${expanderStep(s).step}mm</span></div>`;
+
+  $('calcRows').innerHTML = rows.map(r=>{
+    if (r.skip) return `<tr class="sk"><td>${r.label}</td><td colspan="4">${r.skip}</td></tr>`;
+    const w = r.sec/max*100;
+    return `<tr class="${r===bn?'bnrow':''}">
+      <td>${r.label}${r===bn?' <span class="tag">병목</span>':''}</td>
+      <td class="num">${r.sec.toFixed(1)}s</td>
+      <td class="num">${(r.sec/60).toFixed(2)}분</td>
+      <td class="bar"><div style="width:${w}%;background:${r===bn?C.bneck:C.accent}"></div></td>
+      <td class="fx">${r.expr}</td></tr>`;
+  }).join('');
+
+  $('calcTerms').innerHTML = act.map(r=>`
+    <div class="tc"><h4>${r.label} <span>${r.sec.toFixed(1)}s</span></h4>
+      ${r.terms.map(t=>`<div class="tr2"><span>${t[0]}</span><b>${t[1].toFixed(1)}s</b></div>`).join('')}
+    </div>`).join('');
+}
+
+
+/* ================= In / Out 시간표 ================= */
+const STATION_LABEL = id => (NODE[id] ? NODE[id].label.replace('\n',' ') : id);
+function unitLabel(nid, u, both){
+  const n=NODE[nid]; if(!n) return '';
+  if(nid==='EXP') return both ? '#1·#2 동시' : '#'+(u+1)+'호기';
+  if((n.cap||1)>1) return '#'+(u+1);
+  return '-';
+}
+function buildIOFilters(){
+  const st=$('ioStation'); if(!st) return;
+  const cur=st.value;
+  let html='<option value="">전체 설비</option>';
+  for(const n of NODES){
+    if(n.kind!=='proc') continue;
+    if(!SIM.stats.find(x=>x.id===n.id)) continue;
+    html+=`<option value="${n.id}">${STATION_LABEL(n.id)}${(n.cap||1)>1?` (${n.cap}호기)`:''}</option>`;
+    if((n.cap||1)>1) for(let i=0;i<n.cap;i++)
+      html+=`<option value="${n.id}|${i}">&nbsp;&nbsp;└ ${STATION_LABEL(n.id)} ${unitLabel(n.id,i)}</option>`;
+  }
+  st.innerHTML=html; if(cur) st.value=cur;
+  const od=$('ioOrder'); const cur2=od.value;
+  od.innerHTML='<option value="">전체 오더</option>'+Object.keys(SIM.orderSpan)
+    .map(no=>{const v=SIM.orderSpan[no];
+      return `<option value="${no}">${no} · OD${v.od}×t${v.t}×${(v.L/1000).toFixed(1)}m · ${v.qty}본</option>`;}).join('');
+  if(cur2) od.value=cur2;
+}
+let IO_ROWS=[];
+function renderIO(){
+  if(!SIM) return;
+  const selRaw=$('ioStation').value, ordSel=$('ioOrder').value;
+  const [selN, selU] = selRaw.split('|');
+  const mode=$('ioUnit').value, limit=+$('ioLimit').value;
+  let ev=SIM.events.filter(e=>NODE[e.n] && NODE[e.n].kind==='proc');
+  if(selN) ev=ev.filter(e=>e.n===selN && (selU===undefined || e.u===+selU));
+  if(ordSel) ev=ev.filter(e=>e.o===ordSel);
+
+  let rows;
+  if(mode==='pipe'){
+    rows=ev.map(e=>({
+      o:e.o, k:e.k, st:e.n, u:e.u, both:e.both,
+      inT:e.r, start:e.s, out:e.e,
+      wait:(e.s-e.r)/60, co:e.co/60, proc:e.d/60
+    })).sort((a,b)=>a.inT-b.inT);
+    $('ioHead').innerHTML=`<tr><th>오더</th><th>본#</th><th>설비</th><th>호기</th>
+      <th>Input (도착)</th><th>착수</th><th>Output (완료)</th>
+      <th style="text-align:right">대기(분)</th><th style="text-align:right">전환(분)</th><th style="text-align:right">가공(분)</th></tr>`;
+    $('ioBody').innerHTML=rows.slice(0,limit).map(r=>`<tr>
+      <td>${r.o}</td><td class="num">${r.k}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td>
+      <td>${fmtT(r.inT)}</td><td>${fmtT(r.start)}</td><td>${fmtT(r.out)}</td>
+      <td class="num">${r.wait.toFixed(1)}</td><td class="num ${r.co>0?'hi2':''}">${r.co.toFixed(0)}</td><td class="num">${r.proc.toFixed(1)}</td></tr>`).join('');
+  } else {
+    const map={};
+    for(const e of ev){
+      const key=e.o+'|'+e.n+'|'+e.u;
+      const m=map[key]||(map[key]={o:e.o,st:e.n,u:e.u,both:e.both,n:0,inT:Infinity,start:Infinity,out:-Infinity,wait:0,co:0,proc:0});
+      m.n++; m.inT=Math.min(m.inT,e.r); m.start=Math.min(m.start,e.s); m.out=Math.max(m.out,e.e);
+      m.wait+=(e.s-e.r); m.co+=e.co; m.proc+=e.d;
+    }
+    rows=Object.values(map).sort((a,b)=>a.inT-b.inT);
+    $('ioHead').innerHTML=`<tr><th>오더</th><th>설비</th><th>호기</th><th style="text-align:right">본수</th>
+      <th>Input (최초 도착)</th><th>착수</th><th>Output (최종 완료)</th>
+      <th style="text-align:right">체류(h)</th><th style="text-align:right">가공(h)</th><th style="text-align:right">전환(분)</th><th style="text-align:right">평균 대기(분)</th></tr>`;
+    $('ioBody').innerHTML=rows.slice(0,limit).map(r=>`<tr>
+      <td>${r.o}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td><td class="num">${r.n}</td>
+      <td>${fmtT(r.inT)}</td><td>${fmtT(r.start)}</td><td>${fmtT(r.out)}</td>
+      <td class="num">${((r.out-r.inT)/3600).toFixed(1)}</td><td class="num">${(r.proc/3600).toFixed(1)}</td>
+      <td class="num ${r.co>0?'hi2':''}">${(r.co/60).toFixed(0)}</td><td class="num">${(r.wait/60/r.n).toFixed(1)}</td></tr>`).join('');
+  }
+  IO_ROWS=rows;
+  const tw=rows.reduce((a,r)=>a+(mode==='pipe'?r.wait*60:r.wait),0);
+  const tc=rows.reduce((a,r)=>a+(mode==='pipe'?r.co*60:r.co),0);
+  const tp=rows.reduce((a,r)=>a+(mode==='pipe'?r.proc*60:r.proc),0);
+  $('ioSum').innerHTML=`
+    <div class="kpi"><b>${rows.length.toLocaleString()}</b><span>조회 행 수${rows.length>limit?` (상위 ${limit} 표시)`:''}</span></div>
+    <div class="kpi"><b>${(tp/3600).toFixed(1)} h</b><span>가공 시간 합계</span></div>
+    <div class="kpi"><b>${(tc/3600).toFixed(1)} h</b><span>설비 전환 합계</span></div>
+    <div class="kpi"><b>${(tw/3600).toFixed(0)} h</b><span>누적 대기 (본×공정 합)</span></div>
+    <div class="kpi"><b>${rows.length?(tw/60/rows.reduce((a,r)=>a+(r.n||1),0)).toFixed(1):0} 분</b><span>평균 대기 (본·공정당)</span></div>`;
+}
+function ioCsv(){
+  const mode=$('ioUnit').value;
+  const head = mode==='pipe'
+    ? ['오더','본#','설비','호기','Input','착수','Output','대기(분)','전환(분)','가공(분)']
+    : ['오더','설비','호기','본수','Input','착수','Output','체류(h)','가공(h)','전환(분)','평균대기(분)'];
+  const lines=[head.join(',')];
+  for(const r of IO_ROWS){
+    lines.push(mode==='pipe'
+      ? [r.o,r.k,STATION_LABEL(r.st),unitLabel(r.st,r.u,r.both),fmtT(r.inT),fmtT(r.start),fmtT(r.out),
+         r.wait.toFixed(1),r.co.toFixed(0),r.proc.toFixed(1)].join(',')
+      : [r.o,STATION_LABEL(r.st),unitLabel(r.st,r.u,r.both),r.n,fmtT(r.inT),fmtT(r.start),fmtT(r.out),
+         ((r.out-r.inT)/3600).toFixed(1),(r.proc/3600).toFixed(1),(r.co/60).toFixed(0),(r.wait/60/r.n).toFixed(1)].join(','));
+  }
+  const blob=new Blob(['﻿'+lines.join('\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`JCOE_InOut_${mode}_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+/* ================= 확관 배분 · 최적화 ================= */
+function initOptTab(){
+  $('optRule').innerHTML=Object.entries(DISPATCH_RULES).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
+  const upd=()=>{ $('ruleDesc').textContent=DISPATCH_RULES[$('optRule').value].desc; };
+  $('optSameOD').onchange=()=>{ PLAN=null; runSim(); };
+  $('optM3').onchange=()=>{ PLAN=null; runSim(); };
+  $('optRule').onchange=upd; upd();
+  $('btnApplyRule').onclick=()=>{
+    if($('optRule').value==='OPT' && !PLAN){ runOptimizer(); }
+    runSim();
+  };
+  $('btnOpt').onclick=runOptimizer;
+  $('btnCmp').onclick=runCompare;
+  $('btnIO').onclick=renderIO;
+  $('btnIOCsv').onclick=ioCsv;
+  ['ioStation','ioOrder','ioUnit','ioLimit'].forEach(id=>$(id).onchange=renderIO);
+}
+function renderEligWarn(){
+  const both=SIM.kpi.bothOrders, fixed=SIM.kpi.fixedOrders;
+  const spans=SIM.orderSpan;
+  const grp={both:{n:0,q:0}, fixed:{n:0,q:0}, free:{n:0,q:0}};
+  for(const no in spans){
+    const v=spans[no]; if(!v.route.includes('EXP')) continue;
+    const k = both.includes(no)?'both' : fixed.includes(no)?'fixed':'free';
+    grp[k].n++; grp[k].q+=v.qty;
+  }
+  $('eligWarn').innerHTML=`<div class="kpis" style="margin-bottom:4px">
+    <div class="kpi"><b>${grp.free.n}오더 / ${grp.free.q.toLocaleString()}본</b><span>두 호기 다 가능 → <b style="color:#58a6ff;font-size:11px">배분 규칙 대상</b></span></div>
+    <div class="kpi"><b>${grp.fixed.n}오더 / ${grp.fixed.q.toLocaleString()}본</b><span>12.8~14m → #1호기 전용 (선택 여지 없음)</span></div>
+    <div class="kpi"><b>${grp.both.n}오더 / ${grp.both.q.toLocaleString()}본</b><span>14m 초과 → #1·#2 동시 가동${both.length?` (${both.join(', ')})`:''}</span></div>
+  </div>`;
+}
+function runOptimizer(){
+  const cfg=readCfg();
+  const w={cmax:+$('wCmax').value, setup:+$('wSetup').value, bal:+$('wBal').value};
+  const iters=+$('optIters').value;
+  const t=performance.now();
+  PLAN = optimizeExpander(ORDERS, cfg, {weights:w, iters});
+  const ms=performance.now()-t;
+  if(!PLAN){ $('optSum').innerHTML='<div class="kpi"><b>—</b><span>확관 대상 오더 없음</span></div>'; return; }
+  LAST_OPT={ms};
+  $('optRule').value='OPT';
+  $('ruleDesc').textContent=DISPATCH_RULES.OPT.desc;
+  runSim();
+  renderOptResult(ms);
+}
+function renderOptResult(ms){
+  if(!PLAN){ return; }
+  const P=PLAN;
+  $('optSum').innerHTML=`
+    <div class="kpi"><b>${P.nJobs}</b><span>확관 대상 오더 (작업 j)</span></div>
+    <div class="kpi"><b>${P.nFree} / ${P.nFixed} / ${P.nBoth}</b><span>선택가능 / #1전용 / 동시가동</span></div>
+    <div class="kpi"><b>${P.cmaxH.toFixed(1)} h</b><span>확관 Makespan (Cmax)</span></div>
+    <div class="kpi bn"><b>${P.setupH.toFixed(1)} h</b><span>총 설비 전환시간 Σs<sub>ij</sub></span></div>
+    <div class="kpi"><b>${P.balH.toFixed(1)} h</b><span>호기간 부하 편차</span></div>
+    <div class="kpi"><b>${P.machines.map((m,i)=>`#${i+1} ${(P.loadH[m]||0).toFixed(0)}h`).join(' / ')}</b><span>호기별 부하</span></div>
+    <div class="kpi"><b>${(ms||0).toFixed(0)} ms</b><span>SA ${P.iters.toLocaleString()}회 탐색</span></div>`;
+  const byM={}; P.machines.forEach(m=>byM[m]=[]);
+  P.detail.forEach(d=>{ if(d.m==='BOTH'){ byM.M1.push(d); byM.M2.push(d); } else byM[d.m].push(d); });
+  const colorOf=no=>{ const v=SIM.orderSpan[no]; return v?`hsl(${(Math.round(v.od/25.4)*17)%360},62%,55%)`:'#666'; };
+  $('optSeq').innerHTML='<div class="mseq">'+P.machines.map(m=>{
+    const rows=byM[m], tot=rows.reduce((a,r)=>a+r.p+r.setup,0)||1;
+    return `<div class="mcard"><h5>확관 #${m[1]}호기 <span>${rows.length}오더 · ${(tot/3600).toFixed(1)}h · 전환 ${(rows.reduce((a,r)=>a+r.setup,0)/3600).toFixed(1)}h</span></h5>
+      <div class="mseqbar">${rows.map(r=>
+        `<div style="width:${r.setup/tot*100}%;background:#d29922" title="전환 ${(r.setup/60).toFixed(0)}분"></div>
+         <div style="width:${r.p/tot*100}%;background:${colorOf(r.no)}" title="${r.no} ${(r.p/3600).toFixed(1)}h"></div>`).join('')}</div>
+      ${rows.map((r,i)=>{const v=SIM.orderSpan[r.no]||{};
+        return `<div class="mrow"><span><i style="background:${colorOf(r.no)}"></i>${i+1}. ${r.no}
+          ${r.m==='BOTH'?'<span style="color:#ff9a92;font-size:9.5px">[#1·#2 동시]</span>':''}
+          &nbsp;<span style="color:#6e7681">OD${v.od}×t${v.t}×${((v.L||0)/1000).toFixed(1)}m</span></span>
+          <b>${(r.p/3600).toFixed(1)}h${r.setup>0?` <span style="color:#e3b341">+전환 ${(r.setup/60).toFixed(0)}분</span>`:''}</b></div>`;}).join('')}
+    </div>`;
+  }).join('')+'</div>';
+}
+/* ---- 사후분석: 규칙별 비교 ---- */
+function runCompare(){
+  const base=readCfg();
+  if(!PLAN) PLAN=optimizeExpander(ORDERS, base, {weights:{cmax:+$('wCmax').value,setup:+$('wSetup').value,bal:+$('wBal').value}, iters:+$('optIters').value});
+  const rows=[];
+  for(const r of Object.keys(DISPATCH_RULES)){
+    const cfg={...base, dispatchRule:r, plan:PLAN};
+    const S=simulate(ORDERS,cfg);
+    const e=S.stats.find(x=>x.id==='EXP');
+    rows.push({r, label:DISPATCH_RULES[r].label,
+      mk:S.kpi.makespanH, exp:S.kpi.expSetupH, tot:S.kpi.totalSetupH, util:S.kpi.expUtil,
+      u1:e&&e.units[0]?e.units[0].jobs:0, u2:e&&e.units[1]?e.units[1].jobs:0,
+      u3:e&&e.units[2]?e.units[2].jobs:0, bal:S.kpi.expBalanceH});
+  }
+  const baseRow=rows.find(x=>x.r==='EAT'), maxExp=Math.max(...rows.map(x=>x.exp));
+  const bestExp=Math.min(...rows.map(x=>x.exp)), bestMk=Math.min(...rows.map(x=>x.mk));
+  $('cmpBody').innerHTML=rows.map(x=>{
+    const d=(a,b)=>{const p=(a-b)/b*100; return p<-0.5?`<span class="imp">${p.toFixed(1)}%</span>`:p>0.5?`<span class="wors">+${p.toFixed(1)}%</span>`:'—';};
+    return `<tr class="${x.r===$('optRule').value?'bnrow':''}">
+      <td>${x.label}</td>
+      <td class="num">${(x.mk/24).toFixed(1)}일 ${x.mk===bestMk?'★':''}<br><span style="color:#6e7681;font-size:10px">${d(x.mk,baseRow.mk)}</span></td>
+      <td class="num"><b>${x.exp.toFixed(1)}</b> ${x.exp===bestExp?'★':''}<br><span style="color:#6e7681;font-size:10px">${d(x.exp,baseRow.exp)}</span></td>
+      <td class="num">${x.tot.toFixed(0)}</td>
+      <td class="num">${x.util.toFixed(1)}%</td>
+      <td class="num">${x.u1.toLocaleString()}</td><td class="num">${x.u2.toLocaleString()}${x.u3?` / ${x.u3}`:''}</td>
+      <td class="num">${x.bal.toFixed(1)}</td>
+      <td class="bar"><div style="width:${x.exp/maxExp*100}%;background:${x.exp===bestExp?C.done:x.exp>maxExp*0.8?C.bneck:C.accent}"></div></td></tr>`;
+  }).join('');
+  const opt=rows.find(x=>x.r==='OPT'), eat=baseRow;
+  $('cmpNote').innerHTML=`<div class="note">
+    <b>해석</b> — 최적화 엔진 적용 시 확관 설비 전환시간이 <b>${eat.exp.toFixed(1)}h → ${opt.exp.toFixed(1)}h
+    (${((opt.exp-eat.exp)/eat.exp*100).toFixed(0)}%)</b>, 호기간 부하 편차가
+    <b>${eat.bal.toFixed(1)}h → ${opt.bal.toFixed(1)}h</b> 로 개선됩니다.
+    Makespan 개선폭(${((opt.mk-eat.mk)/eat.mk*100).toFixed(1)}%)이 상대적으로 작은 이유는
+    현재 계획의 전체 병목이 확관이 아니라 <b>${SIM.stats[0].label.replace('\n',' ')}(가동률 ${SIM.stats[0].util.toFixed(0)}%)</b> 이기 때문입니다.
+    확관 최적화의 실질 효과는 <b>전환 손실 감소 · 재공(WIP) 감소 · 호기 부하 균형</b>에서 나타납니다.</div>`;
+}
+
+/* ================= 간트 ================= */
+function renderGantt(){
+  const spans = Object.entries(SIM.orderSpan).sort((a,b)=>a[1].s-b[1].s);
+  const t0=SIM.t0, tE=SIM.tEnd, span=tE-t0;
+  const days = Math.ceil(span/86400);
+  let hdr='';
+  for(let d=0;d<days;d++){ const dt=new Date((t0+d*86400)*1000);
+    hdr+=`<div class="gd${[0,6].includes(dt.getDay())?' we':''}" style="left:${d/days*100}%;width:${100/days}%">${dt.getMonth()+1}/${dt.getDate()}</div>`; }
+  const colorOf = od => `hsl(${(Math.round(od/25.4)*17)%360},62%,55%)`;
+  const rows = spans.map(([no,v])=>`
+    <div class="gr">
+      <div class="gl"><b>${no}</b><span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
+      <div class="gt">
+        <div class="gb" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
+          title="${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h"></div>
+      </div></div>`).join('');
+  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gt">${hdr}</div></div>${rows}`;
+}
+
+/* ================= 병목 분석 ================= */
+function renderBottleneck(){
+  const s = SIM.stats;
+  const max = Math.max(...s.map(x=>x.util));
+  $('bnTable').innerHTML = s.map(x=>`
+    <tr class="${x.util>=85?'hi':x.util>=60?'mid':''}">
+      <td>${x.label.replace('\n',' ')}</td><td class="num">${x.cap}</td><td class="num">${x.jobs.toLocaleString()}</td>
+      <td class="num">${x.busyH.toFixed(1)}</td><td class="num">${x.setupH.toFixed(1)}</td>
+      <td class="num">${(x.setupH/(x.busyH+x.setupH)*100||0).toFixed(1)}%</td>
+      <td class="bar"><div style="width:${Math.min(100,x.util/max*100)}%;background:${x.util>=85?C.bneck:x.util>=60?C.setup:C.done}"></div></td>
+      <td class="num"><b>${x.util.toFixed(1)}%</b></td></tr>`).join('');
+  const top = s[0];
+  $('bnCall').innerHTML = `
+    <div class="kpi bn"><b>${top.label.replace('\n',' ')}</b><span>최대 부하 공정 · 가동률 ${top.util.toFixed(1)}%</span></div>
+    <div class="kpi"><b>${s.reduce((a,x)=>a+x.setupH,0).toFixed(0)} h</b><span>총 설비 전환 시간</span></div>
+    <div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>전체 계획 소요</span></div>
+    <div class="kpi"><b>${(ORDERS.reduce((a,o)=>a+o.qty,0)/(SIM.horizonH/24)).toFixed(0)} 본/일</b><span>평균 산출</span></div>`;
+  $('bnUnits').innerHTML = s.filter(x=>x.cap>1).map(x=>`
+    <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap} units)</h4>
+      ${x.units.map(u=>`<div class="tr2"><span>${u.id}</span><b>${u.jobs}본 / ${u.busyH.toFixed(1)}h</b></div>`).join('')}
+    </div>`).join('');
+}
+
+/* ================= 부트 ================= */
+const CO_BACKUP = JSON.stringify(CHANGEOVER);
+function boot(){
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));
+    t.classList.add('on'); $(t.dataset.p).classList.add('on');
+    if (t.dataset.p==='pFlow') fit();
+  });
+  $('btnPlay').onclick=()=>{ playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
+  $('btnReset').onclick=()=>{ animT=SIM.t0; evIdx=0; completed=0; logs.length=0;
+    for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0}; };
+  $('spd').oninput=e=>{ speed=[60,600,3600,18000,86400][+e.target.value]; $('spdL').textContent=
+    ['1분/s','10분/s','1시간/s','5시간/s','1일/s'][+e.target.value]; };
+  $('btnRun').onclick=runSim;
+  $('btnCalc').onclick=calc;
+  document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
+  cvs.onmousemove = e=>{ const r=cvs.getBoundingClientRect();
+    hover = hitTest(e.clientX-r.left, e.clientY-r.top);
+    cvs.style.cursor = hover?'pointer':'default'; };
+  cvs.onmouseleave = ()=>{ hover=null; };
+  window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
+  for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+  fit(); buildEdgeCache(); initOptTab();
+  runSim(); calc(); requestAnimationFrame(loop);
+}
+</script>
+<script>boot();</script>
+</body>
+</html>
