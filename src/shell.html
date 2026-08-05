@@ -141,6 +141,11 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
 .haxis{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);margin-top:5px}
 .hpct{display:flex;gap:16px;font-size:11px;color:var(--dim);margin-top:9px;flex-wrap:wrap}
 .hpct b{color:#fff;font-variant-numeric:tabular-nums}
+.gdl{position:absolute;top:0;bottom:0;width:2px;background:#da3633;z-index:4}
+.gdl.nolbl::after{content:''}
+.gdl::after{content:'마감';position:absolute;top:-1px;left:3px;font-size:9px;color:#ff9a92;white-space:nowrap}
+.gover{position:absolute;top:0;bottom:0;background:#da363314;z-index:1;pointer-events:none}
+.gb.late{outline:2px solid #da3633}
 </style>
 </head>
 <body>
@@ -363,9 +368,24 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       다른 계획서를 넣으면 공정 흐름·간트·병목·In/Out·최적화가 모두 새 데이터로 다시 계산됩니다.
       필요한 열은 <b>외경 · 두께 · 길이 · 수량</b> 네 가지이며, 오더번호·계획 투입일·납기는 있으면 함께 읽습니다.</div>
 
-    <h3>② 시뮬레이션 파라미터</h3>
-    <div id="cfgBar">
+    <h3>② 계획 기간</h3>
+    <div class="toolbar">
       <div class="f"><label>시작일</label><input type="date" id="cfgStart" value="2026-03-02"></div>
+      <div class="f"><label>계획 마감일 (선택)</label><input type="date" id="cfgDeadline"></div>
+      <div class="f"><label>오더 투입일</label><select id="cfgDateMode">
+        <option value="plan" selected>계획서 날짜 그대로</option>
+        <option value="shift">시작일 기준으로 전체 이동</option>
+        <option value="seq">시작일부터 순차 투입</option></select></div>
+      <div class="f" id="fGap" style="display:none"><label>순차 투입 간격 (h)</label>
+        <input type="number" id="cfgSeqGap" value="6" step="1" min="1"></div>
+      <button id="btnPeriod">기간 적용</button>
+      <button id="btnPeriodClear" class="ghost">마감일 해제</button>
+      <div class="hint" id="periodHint"></div>
+    </div>
+    <div class="kpis" id="periodSum"></div>
+
+    <h3>③ 시뮬레이션 파라미터</h3>
+    <div id="cfgBar">
       <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></div>
       <div class="f"><label>실가동 h/Shift</label><input type="number" id="cfgNetH" value="7.5" step="0.5"></div>
       <div class="f"><label>수압 유지(초)</label><input type="number" id="cfgHold" value="60"></div>
@@ -384,7 +404,7 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
       · 전환시간: 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.
     </div>
-    <h3>제품군</h3>
+    <h3>④ 제품군</h3>
     <table><thead><tr><th style="width:200px">제품군</th><th>특징</th></tr></thead><tbody>
       <tr><td>프로세싱 파이프</td><td>A671 / A672 — Final U.T 는 별도 요청 시에만 진행, 관단 X-ray By-pass</td></tr>
       <tr><td>라인 파이프 (API 5L)</td><td>열처리 공정 없음 — Final U.T + 관단 X-ray 필수, 1차 U.T 대상</td></tr>

@@ -23,6 +23,9 @@ function readCfg() {
     applyOptSeq: $('optApplySeq') ? $('optApplySeq').checked : true,
     plan: PLAN,
     startDate: $('cfgStart').value || '2026-03-02',
+    deadline: $('cfgDeadline') && $('cfgDeadline').value ? $('cfgDeadline').value : null,
+    dateMode: ($('cfgDateMode')||{}).value || 'plan',
+    seqGapH: +(($('cfgSeqGap')||{}).value || 6),
     shifts: +$('cfgShifts').value,
     netHoursPerShift: +$('cfgNetH').value,
     skipWeekend: $('cfgWeekend').checked,
@@ -60,11 +63,13 @@ function runSim() {
     `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
     + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`
     + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
-    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '');
+    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '')
+    + (SIM.kpi.deadline ? ` · 마감 ${CFG.deadline} 달성률 ${(SIM.kpi.doneInPeriod/(SIM.kpi.doneInPeriod+SIM.kpi.overflow)*100).toFixed(0)}%` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
   if($('mcHint')) renderStNote();
+  if($('periodSum')) renderPeriod();
   if($('seek')) $('seek').value=0;
   $('logBody').innerHTML='<div class="lg">▶ 를 눌러 시뮬레이션을 재생하세요.</div>';
 }
@@ -693,14 +698,23 @@ function renderGantt(){
   for(let d=0;d<days;d++){ const dt=new Date((t0+d*86400)*1000);
     hdr+=`<div class="gd${[0,6].includes(dt.getDay())?' we':''}" style="left:${d/days*100}%;width:${100/days}%">${dt.getMonth()+1}/${dt.getDate()}</div>`; }
   const colorOf = od => `hsl(${(Math.round(od/25.4)*17)%360},62%,55%)`;
-  const rows = spans.map(([no,v])=>`
-    <div class="gr">
-      <div class="gl"><b>${no}</b><span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
-      <div class="gt">
-        <div class="gb" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
-          title="${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h"></div>
-      </div></div>`).join('');
-  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gt">${hdr}</div></div>${rows}`;
+  const dl = SIM.kpi.deadline;
+  const dlPct = dl ? (dl-t0)/span*100 : null;
+  const on = dl!=null && dlPct<=100;
+  const marks    = on ? `<div class="gover" style="left:${dlPct}%;right:0"></div><div class="gdl nolbl" style="left:${dlPct}%"></div>` : '';
+  const marksHdr = on ? `<div class="gover" style="left:${dlPct}%;right:0"></div><div class="gdl" style="left:${dlPct}%"></div>` : '';
+  const rows = spans.map(([no,v])=>{
+    const late = (dl && v.e>dl) || (v.tardyH!=null && v.tardyH>0);
+    const tt = `${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`
+      + (v.due?`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`:'');
+    return `<div class="gr">
+      <div class="gl"><b>${no}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
+        <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
+      <div class="gt">${marks}
+        <div class="gb${late?' late':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
+          title="${tt}"></div>
+      </div></div>`;}).join('');
+  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
 }
 
 /* ================= 병목 분석 ================= */
@@ -724,6 +738,37 @@ function renderBottleneck(){
     <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap} units)</h4>
       ${x.units.map(u=>`<div class="tr2"><span>${u.id}</span><b>${u.jobs}본 / ${u.busyH.toFixed(1)}h</b></div>`).join('')}
     </div>`).join('');
+}
+
+/* ================= 계획 기간 ================= */
+function initPeriod(){
+  const upd=()=>{ $('fGap').style.display = $('cfgDateMode').value==='seq' ? 'flex':'none'; };
+  $('cfgDateMode').onchange=()=>{ upd(); runSim(); };
+  $('btnPeriod').onclick=runSim;
+  $('btnPeriodClear').onclick=()=>{ $('cfgDeadline').value=''; runSim(); };
+  $('cfgStart').onchange=runSim; $('cfgDeadline').onchange=runSim; $('cfgSeqGap').onchange=runSim;
+  upd();
+}
+function renderPeriod(){
+  const k=SIM.kpi, total=k.doneInPeriod+k.overflow;
+  const first=Object.values(SIM.orderSpan).reduce((a,v)=>Math.min(a,v.s),Infinity);
+  $('periodHint').innerHTML = `실제 소요 <b style="color:#e6edf3">${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)}</b> (${(SIM.horizonH/24).toFixed(1)}일)`;
+  if(!k.deadline){
+    $('periodSum').innerHTML = `<div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>전체 소요 — 마감일을 넣으면 기간 내 달성률이 표시됩니다</span></div>`
+      + (k.due.withDue ? dueCard() : '');
+    return;
+  }
+  const rate = total ? k.doneInPeriod/total*100 : 0;
+  $('periodSum').innerHTML = `
+    <div class="kpi ${rate<100?'bn':''}"><b>${rate.toFixed(1)} %</b><span>기간 내 달성률 (마감 ${CFG.deadline})</span></div>
+    <div class="kpi"><b>${k.doneInPeriod.toLocaleString()} 본</b><span>마감일까지 포장 완료</span></div>
+    <div class="kpi ${k.overflow?'bn':''}"><b>${k.overflow.toLocaleString()} 본</b><span>기간 초과 이월</span></div>
+    <div class="kpi"><b>${k.periodDays.toFixed(1)} 일</b><span>지정 기간</span></div>
+    <div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>실제 소요</span></div>` + dueCard();
+}
+function dueCard(){
+  const d=SIM.kpi.due; if(!d.withDue) return '';
+  return `<div class="kpi ${d.late?'bn':''}"><b>${d.late} / ${d.withDue}</b><span>납기 지연 오더 ${d.late?`· 최대 ${(d.maxTardyH/24).toFixed(1)}일`:''}</span></div>`;
 }
 
 /* ================= 재생 컨트롤 ================= */
@@ -926,7 +971,7 @@ function boot(){
   cvs.onmouseleave = ()=>{ hover=null; };
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab();
+  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod();
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
   $('btnDice').onclick=newSeed;

@@ -406,6 +406,33 @@ function lnormMul(rng, cv) {
 const expo = (rng, mean) => -mean * Math.log(1 - rng());
 
 /* --------------------------------------------------------------------
+   계획 기간 — 시작일 / 마감일 / 오더 투입일 처리 방식
+     dateMode 'plan'  : 계획서에 적힌 투입일 그대로 (시작일보다 이른 건 시작일로 당김)
+              'shift' : 계획서 순서·간격은 유지하고 전체를 시작일에 맞춰 평행 이동
+              'seq'   : 시작일부터 seqGapH 간격으로 순차 투입 (계획서 날짜 무시)
+   -------------------------------------------------------------------- */
+function applyPeriod(orders, cfg) {
+  const t0 = new Date(cfg.startDate + 'T08:00:00').getTime() / 1000;
+  const mode = cfg.dateMode || 'plan';
+  const src = orders.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  const ts = o => o.start ? new Date(o.start.replace(' ', 'T')).getTime() / 1000 : t0;
+  const fmt = t => { const d = new Date(t * 1000), p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+  if (mode === 'seq') {
+    const gap = (cfg.seqGapH || 6) * 3600;
+    return src.map((o, i) => ({ ...o, start: fmt(t0 + i * gap) }));
+  }
+  if (mode === 'shift') {
+    const min = Math.min(...src.map(ts));
+    const off = t0 - min;
+    return src.map(o => ({ ...o, start: fmt(ts(o) + off), due: o.due
+      ? fmt(new Date(o.due.replace(' ', 'T')).getTime() / 1000 + off) : o.due }));
+  }
+  return src;
+}
+
+/* --------------------------------------------------------------------
    반복 실행 (몬테카를로) — 시드를 바꿔가며 N 회 실행하고 분포를 낸다.
    onProgress(i, n) 가 있으면 청크 단위로 비동기 실행한다.
    -------------------------------------------------------------------- */
@@ -496,9 +523,12 @@ function simulate(orders, cfg) {
   const bothOrders = new Set(), fixedOrders = new Set();
   let seqGlobal = 0;
 
-  /* 투입 순서: 최적화 스케줄이 있으면 그 순서, 없으면 계획일 순 */
+  /* 계획 기간 적용 후, 투입 순서: 최적화 스케줄이 있으면 그 순서, 없으면 계획일 순 */
   const plan = cfg.plan || null;
-  let sorted = orders.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  const deadlineTs = cfg.deadline ? new Date(cfg.deadline + 'T23:59:59').getTime() / 1000 : null;
+  let doneInPeriod = 0, overflow = 0;
+  const dueStat = { withDue: 0, late: 0, tardyH: 0, maxTardyH: 0 };
+  let sorted = applyPeriod(orders, cfg);
   if (plan && cfg.dispatchRule === 'OPT' && cfg.applyOptSeq !== false && plan.seq && plan.seq.length) {
     const rank = {}; plan.seq.forEach((no, i) => rank[no] = i);
     sorted = sorted.slice().sort((a, b) =>
@@ -582,6 +612,8 @@ function simulate(orders, cfg) {
         if (st < oS) oS = st;
         if (en > oE) oE = en;
 
+        if (nid === 'PACK' && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
+
         /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
         if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
           rework++; nRework++;
@@ -590,7 +622,15 @@ function simulate(orders, cfg) {
         }
       }
     }
-    orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route };
+    let tardyH = null;
+    if (o.due) {
+      const dueTs = new Date(o.due.replace(' ', 'T')).getTime() / 1000;
+      dueStat.withDue++;
+      tardyH = (oE - dueTs) / 3600;
+      if (tardyH > 0) { dueStat.late++; dueStat.tardyH += tardyH; dueStat.maxTardyH = Math.max(dueStat.maxTardyH, tardyH); }
+    }
+    orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route,
+                        due: o.due || null, tardyH };
   }
 
   /* 가동률 */
@@ -624,6 +664,8 @@ function simulate(orders, cfg) {
                                   - (expStat.units[1] ? expStat.units[1].busyH : 0)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
     rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
+    deadline: deadlineTs, doneInPeriod, overflow, due: dueStat,
+    periodDays: deadlineTs ? (deadlineTs - t0) / 86400 : null,
     throughputPerDay: Object.values(orderSpan).reduce((a, v) => a + v.qty, 0) / (horizon / 86400),
     seed: cfg.seed || 1, stochOn: !!ST.on,
   };

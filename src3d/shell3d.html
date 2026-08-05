@@ -72,6 +72,14 @@ select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radi
 .pm-hd button{background:none;color:var(--dim);padding:0 4px;font-size:14px}
 #seek{width:170px;accent-color:#1f6feb}
 label.mini{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:4px;cursor:pointer}
+.pm-sec{font-size:12px;color:var(--acc);font-weight:700;margin:16px 0 8px;padding-top:12px;border-top:1px solid var(--ln)}
+.pm-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.pm-f{display:flex;flex-direction:column;gap:3px}
+.pm-f label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+.pm-f input,.pm-f select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radius:6px;
+  padding:5px 8px;font-size:12px;min-width:130px;font-family:inherit}
+.pm-note{font-size:11.5px;color:var(--dim);margin-top:10px;line-height:1.6}
+.pm-note b{color:#e6edf3}
 </style>
 </head>
 <body>
@@ -118,7 +126,20 @@ label.mini{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap
     <div id="infoPanel"></div>
     <div id="planModal"><div class="pm-box">
       <div class="pm-hd">조관계획서 불러오기<button id="pmClose">✕</button></div>
-      <div id="planLoader"></div></div></div>
+      <div id="planLoader"></div>
+      <div class="pm-sec">계획 기간</div>
+      <div class="pm-row">
+        <div class="pm-f"><label>시작일</label><input type="date" id="cfgStart" value="2026-03-02"></div>
+        <div class="pm-f"><label>계획 마감일 (선택)</label><input type="date" id="cfgDeadline"></div>
+        <div class="pm-f"><label>오더 투입일</label><select id="cfgDateMode">
+          <option value="plan" selected>계획서 날짜 그대로</option>
+          <option value="shift">시작일 기준으로 전체 이동</option>
+          <option value="seq">시작일부터 순차 투입</option></select></div>
+        <div class="pm-f" id="fGap" style="display:none"><label>간격 (h)</label>
+          <input type="number" id="cfgSeqGap" value="6" step="1" min="1"></div>
+        <button id="btnPeriod">기간 적용</button>
+      </div>
+      <div class="pm-note" id="periodHint"></div></div></div>
   </div>
   <div id="side">
     <h2>공정별 가동률</h2><div id="statBars"></div>
