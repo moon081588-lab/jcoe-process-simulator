@@ -26,7 +26,7 @@ const NODES = [
   { id:'UT1',   label:'1차 U.T', st:'FirstUT', kind:'proc', x:1265, y:400, cap:1 },
   { id:'BUF',   label:'10번 문 적재', sub:'Buffer · Max 4,000톤', kind:'buf', x:1085, y:315 },
   { id:'D3',    label:'RB 라인\n투입 필요', kind:'dec', x:919, y:310 },
-  { id:'RB',    label:'RB 라인 이동', sub:'t≤25T · OD≤24"', st:'Expander', machine:'RB', kind:'proc', x:912, y:405, cap:1 },
+  { id:'RB',    label:'RB 라인 이동', sub:'', st:'Expander', machine:'RB', kind:'proc', x:912, y:405, cap:1 },
   { id:'EXP',   label:'Expander', sub:'JCOE 병목 공정', st:'Expander', kind:'proc', x:740, y:315, cap:2, bottleneck:true },
   { id:'D4',    label:'CP\n투입', kind:'dec', x:594, y:310 },
   { id:'CP',    label:'Calibration Press', kind:'proc', st:null, x:587, y:405, cap:1, free:true },
@@ -36,8 +36,8 @@ const NODES = [
   /* ---- 검사 · 보수 · 출하 ---- */
   { id:'D5',    label:'API 5L\n제품', kind:'dec', x:104, y:520 },
   { id:'FUT',   label:'Final U.T', st:'FinalUT', kind:'proc', x:250, y:620, cap:1 },
-  { id:'XE',    label:'관단 X-ray', st:'RT', kind:'proc', x:400, y:620, cap:1 },
-  { id:'FX',    label:'F-X ray', sub:'Full Length (Max 3대)', st:'RT', kind:'proc', x:560, y:530, cap:2 },
+  { id:'XE',    label:'관단 X-ray', sub:'End-RT (관단부만)', st:'RT', rtType:'End-RT', kind:'proc', x:400, y:620, cap:1 },
+  { id:'FX',    label:'F-X ray', sub:'Full Length (Max 3대)', st:'RT', rtType:'450kV', kind:'proc', x:560, y:530, cap:2 },
   { id:'D6',    label:'불량', kind:'dec', x:700, y:528 },
   { id:'RP',    label:'Repair', kind:'proc', st:null, x:760, y:640, cap:1, free:true },
   { id:'D7',    label:'용접\n문제', kind:'dec', x:767, y:726 },
@@ -110,6 +110,23 @@ function makeCalendar(cfg, shiftsOverride) {
   const dayCap = wins.reduce((a, w) => a + (w[1] - w[0]), 0) * 3600;
   return {
     wins, dayCap,
+    /* [t0, t1] 구간의 실제 가용 가동시간[초]. 주말 비가동을 정확히 반영한다.
+       종전에는 (달력일수 × dayCap) 으로 계산해 주말 비가동 시 가동률이 35% 과소 보고됐다. */
+    capBetween(t0, t1) {
+      if (!(t1 > t0)) return 0;
+      let total = 0;
+      const d = new Date(t0 * 1000); d.setHours(0, 0, 0, 0);
+      let day = d.getTime() / 1000;
+      for (let g = 0; g < 4000 && day < t1; g++, day += 86400) {
+        const dd = new Date(day * 1000);
+        if (cfg.skipWeekend && (dd.getDay() === 0 || dd.getDay() === 6)) continue;
+        for (const w of wins) {
+          const a = Math.max(t0, day + w[0] * 3600), b = Math.min(t1, day + w[1] * 3600);
+          if (b > a) total += b - a;
+        }
+      }
+      return total;
+    },
     /* t(sec, epoch) 를 다음 가동 시각으로 이동 */
     snap(t) {
       const d = new Date(t * 1000);
@@ -195,7 +212,6 @@ function expRules(cfg) {
 }
 const OD_M2_HI = 48 * 25.4 * 0.997;   // 1217.6mm 이상 → #2호기
 const OD_M2_LO = 22 * 25.4 * 1.003;   //  560.5mm 이하 → #2호기
-const EXP_LIMIT = { M1: 14.0, M2: 12.8, M3: 12.8 };   // (하위 호환용 기본값)
 
 function expanderMode(spec, cfg) {
   const R = expRules(cfg);
@@ -246,9 +262,12 @@ function forceRB(s, cfg) {
   return false;
 }
 /* 라우팅 시점의 RB 투입 판정.  rbMode: 'capable' | 'force' | 'off' */
+function usesPlan(cfg) {
+  return !!(cfg && cfg.plan && (cfg.dispatchRule === 'OPT' || cfg.dispatchRule === 'IMPORT'));
+}
 function useRBLine(s, cfg) {
   const mode = cfg.rbMode || (cfg.useRB === false ? 'off' : 'capable');
-  if (cfg.plan && cfg.plan.assign && s.no != null) {          // 최적화/외부 스케줄 지정이 우선
+  if (usesPlan(cfg) && cfg.plan.assign && s.no != null) {     // 최적화/외부 스케줄 지정이 우선
     const a = cfg.plan.assign[s.no];
     if (a === 'RB') return true;
     if (a === 'M1' || a === 'M2' || a === 'M3' || a === 'BOTH') return false;
@@ -282,9 +301,12 @@ function pickExpander(cand, spec, cfg, ctx) {
         return a.free<=b.free?a:b; });
     }
     case 'SPEC': {
-      const want = M2_PREFERRED(spec) ? 1 : 0;
-      const pref = cand.filter(u=>u.idx===want);
-      if (pref.length) return pref.reduce((a,b)=>a.free<=b.free?a:b);
+      /* 제약표: 외경 48"↑ / 22"↓ 는 #2호기(및 3호기) 우선 투입.
+         그 외 규격은 "우선" 규정이 없으므로 #1호기 강제가 아니라 가장 빨리 비는 호기로 보낸다. */
+      if (M2_PREFERRED(spec)) {
+        const pref = cand.filter(u => u.idx >= 1);
+        if (pref.length) return pref.reduce((a,b)=>a.free<=b.free?a:b);
+      }
       return cand.reduce((a,b)=>a.free<=b.free?a:b);
     }
     default: return cand.reduce((a,b)=>a.free<=b.free?a:b);
@@ -543,7 +565,9 @@ function specOf(o, cfg) {
     no:o.no, od:o.od, t:o.t, L:o.L, qty:o.qty,
     bottleneck: o.bottleneck || null,     // 병목 공정 작업장 (HT102 = 열처리 → RB 강제)
     rawL: o.rawL || 0,                    // 원재료 길이 [mm] — 더블 파이프 판정용
-    grade: o.grade || (o.t >= 25 ? 'high' : 'normal'),
+    /* 계획서에 재질 열이 없어 두께를 재질 대리변수로 쓴다 (세아제강 확인 항목).
+       경계를 Gap Press 투입 조건(t > 25)과 일치시킨다 — 종전 t >= 25 는 t=25.0 제품에서 어긋났다. */
+    grade: o.grade || (o.t > 25 ? 'high' : 'normal'),
     api5l: o.api5l != null ? o.api5l : (o.qty >= 50),
     markSpec:2, markEnd:2, defects:0, holdSec:cfg.holdSec, rtType:'450kV'
   };
@@ -646,6 +670,7 @@ function monteCarlo(orders, cfg, n, onProgress, done) {
         downtimeH: S.kpi.downtimeH, thru: S.kpi.throughputPerDay,
         topUtil: S.stats[0] ? S.stats[0].util : 0, topName: S.stats[0] ? S.stats[0].label : '',
         u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0,
+        u3: e && e.units[2] ? e.units[2].jobs : 0, balH: S.kpi.expBalanceH,
       });
       i++;
     }
@@ -672,7 +697,8 @@ function monteCarlo(orders, cfg, n, onProgress, done) {
       expUtil: S.kpi.expUtil, rework: S.kpi.rework, breakdowns: S.kpi.breakdowns, downtimeH: S.kpi.downtimeH,
       thru: S.kpi.throughputPerDay, topUtil: S.stats[0] ? S.stats[0].util : 0,
       topName: S.stats[0] ? S.stats[0].label : '',
-      u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0 });
+      u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0,
+      u3: e && e.units[2] ? e.units[2].jobs : 0, balH: S.kpi.expBalanceH });
     i++;
   }
   return finish();
@@ -703,6 +729,7 @@ function simulate(orders, cfg) {
   let nRework = 0, nBreak = 0, downtime = 0;
 
   const events = [];
+  const pipeCount = {};
   const orderSpan = {};
   const ctx = { rr: 0 };
   const bothOrders = new Set(), fixedOrders = new Set();
@@ -771,11 +798,18 @@ function simulate(orders, cfg) {
         const fn = n.free ? null : STD[n.st];
         const freeSec = nid === 'RP' ? ST.repairSec : nid === 'RW' ? ST.reweldSec
                       : nid === 'EP' ? ST.expIssueSec : cfg.freeStationSec;
-        const res = fn ? fn(spec, line, k, machine) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] };
-        let dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
+        /* RT 는 노드마다 촬영 방식이 다르다 — 관단 X-ray(XE)=End-RT, F-X ray=전장 450kV */
+        const nspec = n.rtType ? Object.assign({}, spec, { rtType: n.rtType }) : spec;
+        const res = (n.st === 'Expander')
+          ? STD.Expander(nspec, machine === 'M3' ? 'M2' : machine)
+          : (fn ? fn(nspec, line, k) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] });
+        let dur = res.sec;
         const seize = coUnits || [u];
+        /* 전환시간도 작업시간과 같은 호기 기준으로 계산해야 한다.
+           RB 노드는 풀 인덱스가 0 이라 종전에는 M1 다이표로 전환시간이 계산됐다. */
         let co = (n.free || cfg.changeover === false) ? 0 : Math.max(...seize.map(x =>
-          changeoverSec(n.st, x.last, spec, n.st === 'Expander' && EXP_MACHINES[x.idx] ? EXP_MACHINES[x.idx].key : null)));
+          changeoverSec(n.st, x.last, nspec,
+            n.st === 'Expander' ? (n.machine || (EXP_MACHINES[x.idx] && EXP_MACHINES[x.idx].key)) : null)));
         if (ST.on) {
           dur *= lnormMul(rng, ST.cvTime);
           if (co > 0) co *= lnormMul(rng, ST.cvSetup);
@@ -795,6 +829,7 @@ function simulate(orders, cfg) {
         for (const x of seize) {
           x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
         }
+        pipeCount[nid] = (pipeCount[nid] || 0) + 1;      // 파이프 실제 통과 본수 (BOTH 도 1회)
         ready = en;
         if (collect) events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
                       both: !!coUnits, mach: machine, rw: rework > 0 });
@@ -807,8 +842,12 @@ function simulate(orders, cfg) {
         /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
         if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
           rework++; nRework++;
-          if (rng() < ST.pWeld) queue.unshift('RP', 'RW', ...route.slice(route.indexOf('FX')));
-          else                  queue.unshift('RP', 'EP', ...route.slice(route.indexOf('EXP')));
+          /* 남아 있던 꼬리(예: PACK)를 비우고 다시 넣는다.
+             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다. */
+          const back = (rng() < ST.pWeld)
+            ? ['RP', 'RW', ...route.slice(route.indexOf('FX'))]
+            : ['RP', 'EP', ...route.slice(route.indexOf('EXP'))];
+          queue.length = 0; queue.push(...back);
         }
       }
     }
@@ -827,8 +866,8 @@ function simulate(orders, cfg) {
   const tEnd = Math.max(...Object.values(orderSpan).map(v => v.e));
   const horizon = tEnd - t0;
   const days = horizon / 86400;
-  const availPerUnit = days * cal.dayCap;
-  const availRB = days * calRB.dayCap;                 // RB 는 1근무조라 가용시간이 다르다
+  const availPerUnit = cal.capBetween(t0, tEnd);
+  const availRB = calRB.capBetween(t0, tEnd);          // RB 는 1근무조라 가용시간이 다르다
   const stats = [];
   for (const n of NODES) {
     if (n.kind !== 'proc') continue;
@@ -841,7 +880,9 @@ function simulate(orders, cfg) {
     const unitUtil = units.map(u => avail ? (u.busy + u.setup) / avail * 100 : 0);
     const utilMax = Math.max(...unitUtil), utilMin = Math.min(...unitUtil);
     stats.push({
-      id: n.id, label: n.label, st: n.st, cap: units.length, jobs,
+      id: n.id, label: n.label, st: n.st, cap: units.length,
+      jobs: pipeCount[n.id] || jobs,          // 처리 본수 = 실제 파이프 수
+      unitJobs: jobs,                          // 호기별 합계 (BOTH 는 2대가 각각 계상)
       busyH: busy / 3600, setupH: setup / 3600,
       /* util = 설비 1대 기준 가동률의 최댓값. 대수로 나눈 평균은 호기 편중을 가려서 쓰지 않는다 */
       util: utilMax,
@@ -860,9 +901,14 @@ function simulate(orders, cfg) {
     makespanH: horizon / 3600,
     totalSetupH: stats.reduce((a, x) => a + x.setupH, 0),
     expSetupH: expStat ? expStat.setupH : 0,
+    /* expUtil = 확관 호기 중 가장 바쁜 1대의 가동률 (대수 평균이 아님).
+       expUtilAvg 를 함께 내보내 "설비군 전체 가동률" 로 오해되지 않게 한다. */
     expUtil: expStat ? expStat.util : 0,
-    expBalanceH: expStat ? Math.abs((expStat.units[0] ? expStat.units[0].busyH : 0)
-                                  - (expStat.units[1] ? expStat.units[1].busyH : 0)) : 0,
+    expUtilAvg: expStat ? expStat.utilAvg : 0,
+    expUnitUtil: expStat ? expStat.unitUtil.slice() : [],
+    /* 호기 부하 편차 = 전 호기(3호기 포함) 최대−최소 */
+    expBalanceH: expStat && expStat.units.length
+      ? Math.max(...expStat.units.map(u => u.busyH)) - Math.min(...expStat.units.map(u => u.busyH)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
     rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
     deadline: deadlineTs, doneInPeriod, overflow, due: dueStat,

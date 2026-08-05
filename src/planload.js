@@ -6,7 +6,7 @@ const PlanLoader = (() => {
 
 /* ---------- 열 자동 인식 키워드 (앞쪽일수록 우선) ---------- */
 const KEYS = {
-  no:   ['판매오더','오더번호','오더 번호','order no','orderno','order','수주번호','수주','제번','작번','관리번호','lot no','lot','품번','no.'],
+  no:   ['판매오더','오더번호','오더 번호','order no','orderno','order','수주번호','수주','제번','작번','관리번호','lot no','lot','품번','no.','오더'],
   od:   ['외경','외 경','o.d','od','outer','대구경','호칭경','규격'],
   t:    ['두께','육후','살두께','wt','thk','thickness','t(mm)','t'],
   L:    ['길이','장','length','len','l(mm)','l(m)','정척','l'],
@@ -49,21 +49,35 @@ const fmtDT = d => { const p = n => String(n).padStart(2, '0');
 
 /* 원재료내역 문자열에서 길이[mm] 추출.
    data_loader._extract_raw_length 와 같은 취지 — '...*12802' / '12.802M' / '25604mm' 등 */
+/* 원재료내역 문자열 → 원판 길이[mm].
+   'SLAB 914.0*9.3*25604' 같은 치수 토큰에서 뽑는다.
+   HEAT NO / LOT / 자재코드처럼 길이가 아닌 숫자가 섞여도 잘못 잡지 않도록,
+   ① 라벨 뒤 식별번호 제거 ② 단위(mm/m) 붙은 값 ③ 치수 토큰 중 mm 범위 최댓값 ④ 단독 숫자 순으로 본다. */
 function extractRawLength(v) {
   if (v == null) return 0;
   if (isNum(v)) return v > 100 ? v : v * 1000;
-  const s = String(v);
-  let best = 0;
-  const re = /(\d+(?:\.\d+)?)\s*(mm|m|M|MM)?/g;
-  let m;
-  while ((m = re.exec(s))) {
-    let x = parseFloat(m[1]);
-    const u = (m[2] || '').toLowerCase();
-    if (u === 'm' && x < 100) x *= 1000;
-    else if (!u && x < 100) continue;            // 단위 없는 작은 수는 두께/수량일 수 있어 제외
-    if (x >= 3000 && x <= 60000 && x > best) best = x;
+  let s = String(v).replace(/,/g, '');
+  s = s.replace(/\b(heat|lot|coil|charge|no|c\/?no|serial)\s*(no)?\.?\s*[:#]?\s*[A-Za-z]*\d+[A-Za-z0-9-]*/gi, ' ');
+  const inMM = x => x >= 3000 && x <= 60000;
+
+  // ① 단위가 명시된 값 (12.802M / 25604mm)
+  let m, best = 0;
+  const reU = /(\d+(?:\.\d+)?)\s*(mm|m)\b/gi;
+  while ((m = reU.exec(s))) {
+    const raw = parseFloat(m[1]);
+    const x = m[2].toLowerCase() === 'm' && raw < 100 ? raw * 1000 : raw;
+    if (inMM(x) && x > best) best = x;
   }
-  return best;
+  if (best) return best;
+
+  // ② 치수 토큰 전체에서 mm 범위 최댓값 (OD·두께는 이 범위에 거의 안 들어온다)
+  const nums = (s.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat);
+  const mm = nums.filter(inMM);
+  if (mm.length) return Math.max.apply(null, mm);
+
+  // ③ 숫자가 하나뿐일 때만 m 로 해석 (여러 개면 두께·외경과 구분할 수 없어 포기)
+  if (nums.length === 1 && nums[0] >= 3 && nums[0] <= 60) return nums[0] * 1000;
+  return 0;
 }
 
 /* ---------- 헤더 행 탐지 ---------- */
@@ -126,7 +140,7 @@ function autoMap(headers, body) {
   };
   guessBy('od',  s => s.med >= 150 && s.med <= 2000);
   guessBy('t',   s => s.med >= 5 && s.med <= 60);
-  guessBy('L',   s => s.med >= 4000 && s.med <= 25000);
+  guessBy('L',   s => (s.med >= 4000 && s.med <= 25000) || (s.med >= 4 && s.med <= 25));   // mm 또는 m
   guessBy('qty', s => s.med >= 1 && s.med <= 2000 && s.allInt);
   return map;
 }
@@ -167,9 +181,10 @@ function buildOrders(body, map, units, opt) {
 
     if (od == null && t == null && L == null && qty == null) return;    // 빈 행
     const miss = [];
-    if (od == null) miss.push('외경'); if (t == null) miss.push('두께');
-    if (L == null) miss.push('길이');  if (qty == null || qty <= 0) miss.push('수량');
-    if (miss.length) { skipped.push({ row: rowNo, why: miss.join('·') + ' 없음' }); return; }
+    if (od == null) miss.push('외경 없음'); if (t == null) miss.push('두께 없음');
+    if (L == null) miss.push('길이 없음');
+    if (qty == null) miss.push('수량 없음'); else if (qty <= 0) miss.push(`수량 ${qty}`);
+    if (miss.length) { skipped.push({ row: rowNo, why: miss.join(' · ') }); return; }
 
     if (units.od === 'inch') od = od * 25.4;
     if (units.L === 'm') L = L * 1000;
@@ -340,7 +355,17 @@ function mount(el, opts) {
     $$('plSheet').onchange = e => renderCfg(e.target.value);
     $$('plHdr').onchange = e => { HDR = +e.target.value; reMap(); };
     ['no', 'od', 't', 'L', 'qty', 'date', 'due', 'bn', 'rawL'].forEach(f =>
-      $$('plC_' + f).onchange = e => { MAP[f] = e.target.value === '' ? null : +e.target.value; refresh(); });
+      $$('plC_' + f).onchange = e => {
+        MAP[f] = e.target.value === '' ? null : +e.target.value;
+        /* 길이·외경 열을 직접 바꾸면 단위를 다시 추정한다.
+           종전에는 로드 시점 값이 굳어 m 단위 계획서를 수동 지정해도 mm 로 읽혔다. */
+        if (f === 'L' || f === 'od') {
+          const u = guessUnits(ROWS.slice(HDR + 1), MAP);
+          if (f === 'L') { UNITS.L = u.L; if ($$('plU_L')) $$('plU_L').value = u.L; }
+          if (f === 'od') { UNITS.od = u.od; if ($$('plU_od')) $$('plU_od').value = u.od; }
+        }
+        refresh();
+      });
     ['od', 'L'].forEach(u => $$('plU_' + u).onchange = e => { UNITS[u] = e.target.value; refresh(); });
     $$('plStart').onchange = refresh;
     refresh();
@@ -368,7 +393,13 @@ function mount(el, opts) {
     BUILT = r;
     const qty = r.orders.reduce((a, o) => a + o.qty, 0);
     if (!r.orders.length) {
-      msg('pl-err', '유효한 오더가 한 건도 없습니다. 헤더 행과 열 지정을 확인해 주세요.');
+      const why = r.skipped.length
+        ? `<br><b>건너뛴 행 ${r.skipped.length}건의 사유</b> — ` +
+          r.skipped.slice(0, 12).map(x => `${x.row}행(${x.why})`).join(', ') +
+          (r.skipped.length > 12 ? ` 외 ${r.skipped.length - 12}건` : '') +
+          `<br>길이 값이 0.01m 처럼 나온다면 <b>길이 단위</b>를 m 으로 바꿔 보세요.`
+        : '';
+      msg('pl-err', '유효한 오더가 한 건도 없습니다. 헤더 행과 열 지정을 확인해 주세요.' + why);
       $$('plPrev').innerHTML = ''; $$('plAct').style.display = 'none'; return;
     }
     const skipHtml = r.skipped.length

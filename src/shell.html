@@ -249,14 +249,12 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
   <!-- ========== 확관 배분 · 최적화 ========== -->
   <section class="pane" id="pOpt"><div class="inner">
     <h3>① 확관기 공정 제약 (적격집합 ℰ)</h3>
-    <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:110px">설비</th><th>공정 제약 (자료 원문)</th><th style="width:210px">모델 반영</th></tr></thead><tbody>
+    <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:130px">설비</th><th>공정 제약 (자료 원문)</th><th style="width:250px">현재 적용 기준</th></tr></thead><tbody>
       <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td><td id="rmR1">L ≤ 14.0m 단독 가능</td></tr>
       <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td><td id="rmR2">L ≤ 12.8m 단독 가능</td></tr>
       <tr><td>확관 3호기</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입</td><td id="rmR3">= RB 라인 (열처리 HT102 · 배척 제품)</td></tr>
     </tbody></table></div>
-    <div class="ok" style="margin-bottom:12px">위 제약을 그대로 풀면 다이어그램 주석과 정확히 일치합니다 —
-      <b>12.8M~14M 제품은 #2·#3호기가 불가하므로 “Only #1 Expander 가동”</b>,
-      <b>14M 초과 제품은 어느 호기도 단독 불가하므로 “#1·#2 Expander 동시 가동”</b> (소요시간 = max(#1, #2)).</div>
+    <div class="ok" style="margin-bottom:12px" id="eligOk"></div>
     <div class="toolbar">
       <div class="f" style="min-width:300px"><label>확관 제약 기준</label><select id="optRuleSet" style="width:100%">
         <option value="ppt" selected>공정 다이어그램 · 제약표 (L2≤12.8m · RB 24"↓)</option>
@@ -374,10 +372,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
     <h3>병렬 설비 유닛별 부하</h3><div id="bnUnits"></div>
     <h3>확관기별 공정 제약 (설비 전환 제약)</h3>
     <table><thead><tr><th style="width:130px">설비</th><th>공정 제약</th></tr></thead><tbody>
-      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td></tr>
-      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td></tr>
-      <tr><td>확관 3호기</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입</td></tr>
-      <tr><td>RB 라인</td><td>투입 조건(전부 만족): 두께 25T 이하 · 외경 24" 이하 · 병목 발생 시</td></tr>
+      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능<br><span id="bnR1" class="hi2"></span></td></tr>
+      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입<br><span id="bnR2" class="hi2"></span></td></tr>
+      <tr><td>확관 3호기 (= RB 라인)</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입<br><span id="bnR3" class="hi2"></span></td></tr>
     </tbody></table>
     <div class="note">제품 규격(외경·두께·길이) 변경 시 <b>설비 전환 시간</b>이 발생하며, 확관 공정은 타 공정 대비 전환 시간이 길어 전체 공정의 병목을 유발합니다.
       동일 규격 오더를 묶어 투입하면 전환 손실을 줄일 수 있습니다 — 위 <b>전환비율</b> 컬럼이 개선 여지를 나타냅니다.</div>
@@ -429,9 +426,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       <b>모델 구조</b> — 파이프 1본 단위 FIFO 디스패치 시뮬레이션.<br>
       · 라우팅: 길이 &gt; 13m → 18M 라인 / 이하 → 12M 라인. 두께 25T 초과 → Gap Press 투입.
       단일 오더 API 5L 또는 50PCS 이상 → 1차 U.T, 그 외 By-pass.<br>
-      · 확관: #1호기(14m 이상 불가 제약 반영) / #2호기 중 가장 빨리 비는 설비에 배정. RB 라인 조건 충족 시 우회.<br>
+      · 확관: 적격 호기 중 배분 규칙에 따라 배정. 길이·외경 제약과 RB 투입 조건은 「확관 최적화」 탭의 <b>확관 제약 기준</b>을 따릅니다.<br>
       · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
-      · 전환시간: 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.<br>
+      · 전환시간: 확관 외 설비는 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.<br>
       · 확관 셋업(공구 계층): 호기별 다이 스펙표에서 장착 공구를 판정해 <b>드로바 교체 270분 &gt; 헤드 교체 150분 &gt; 다이 교체 90분 &gt; 동일 0</b>을 적용합니다. (확관 최적화 운영 모델 산출 근거)<br>
       · 확관 N: 「표준시간 분석」 산출식(N 홀수)과 운영 최적화 모델 구현(#1호기 round식 / #2호기 짝수)이 서로 다릅니다. 두 식을 병기해 두었으니 전환해 가며 차이를 확인하실 수 있습니다.
     </div>

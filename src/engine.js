@@ -7,12 +7,21 @@
 const MM_PER_INCH = 25.4;
 const odInch = (od_mm) => od_mm / MM_PER_INCH;
 
-/* 범위 테이블 조회: rows = [[min,max,val,...], ...] */
+/* 범위 테이블 조회: rows = [[min,max,val,...], ...]
+   엑셀 표는 구간이 1/100 단위로 끊겨 있어 사이에 "구멍"(예: 29.0~29.1)이 71곳 있습니다.
+   종전에는 구멍에 떨어진 값이 조용히 '마지막 행'(가장 두꺼운=가장 느린 조건)을 받아
+   두께 29.05mm 같은 입력에서 용접시간이 29% 과대 계상됐습니다.
+   → 구멍에 떨어지면 가장 가까운 구간을 쓰고, 동점이면 위쪽(보수적) 구간을 씁니다. */
 function pickRange(rows, x, valIdx = 2) {
   for (const r of rows) if (x >= r[0] && x <= r[1]) return r[valIdx];
-  // 범위 밖 → 가장 가까운 경계 사용
   if (x < rows[0][0]) return rows[0][valIdx];
-  return rows[rows.length - 1][valIdx];
+  if (x > rows[rows.length - 1][1]) return rows[rows.length - 1][valIdx];
+  let best = rows[rows.length - 1], bd = Infinity;
+  for (const r of rows) {
+    const d = x < r[0] ? r[0] - x : x - r[1];
+    if (d < bd || (d === bd && r[0] > x)) { bd = d; best = r; }   // 동점 → 위쪽 구간
+  }
+  return best[valIdx];
 }
 /* 인치 키 테이블 조회 (짝수 인치) — 가장 가까운 값 */
 function pickInch(obj, inch) {
@@ -125,9 +134,12 @@ STD.FirstUT = (s) => {
    T.dieSpec = { M1|M2|RB: [ [headGroup, od_mm, tmin, tmax, step_mm, label], ... ] }
    호기별 다이 스펙이 서로 다르므로 반드시 machine 을 넘겨야 한다.
    ==================================================================== */
-const DIE_KEY = { M1: 'M1', M2: 'M2', RB: 'RB', BOTH: 'M1' };
+const DIE_KEY = { M1: 'M1', M2: 'M2', M3: 'M2', RB: 'RB', BOTH: 'M1' };
+const TDIFF_WARN = 3.0;          // 두께 최근접 매칭이 이 이상 벌어지면 경고
 
-/** 외경 ±5mm 근사 + 두께 최근접으로 (헤드그룹, 드로바, 다이) 결정 */
+/** 외경 ±5mm 근사 + 두께 최근접으로 (헤드그룹, 드로바, 다이) 결정
+    매칭 실패 시 die 를 규격 자체로 만들어 둔다 — 종전처럼 모두 'UNKNOWN' 이면
+    서로 다른 규격 사이에서도 "교체 없음 0초" 가 되어 실제 공구 교체를 놓친다. */
 function toolInfo(od, t, machine) {
   const rows = (T.dieSpec || {})[DIE_KEY[machine] || 'M2'] || [];
   let best = null, bestDiff = Infinity;
@@ -139,10 +151,15 @@ function toolInfo(od, t, machine) {
     else diff = Math.min(Math.abs(t - tmin), Math.abs(t - tmax));
     if (diff < bestDiff) { bestDiff = diff; best = { head, od: rod, step, label }; }
   }
-  if (!best) return { head: null, drawbar: null, die: 'UNKNOWN', step: null, label: '해당 다이 없음' };
+  if (!best) {
+    /* 다이표에 없는 규격 — 규격을 키로 삼아 서로 다른 제품이 "동일 공구" 로 판정되지 않게 한다 */
+    return { head: null, drawbar: `NA_${Math.round(od)}`, die: `NA|${Math.round(od)}|${t}`,
+             step: null, label: '해당 다이 없음', unknown: true, tDiff: null };
+  }
   const drawbar = (DIE_KEY[machine] === 'RB') ? `RB_${best.head}`
                 : (best.head === 450 ? 'SMALL' : 'LARGE');
-  return { head: best.head, drawbar, die: `${best.od}|${best.label}`, step: best.step, label: best.label };
+  return { head: best.head, drawbar, die: `${best.od}|${best.label}`, step: best.step,
+           label: best.label, tDiff: bestDiff, warn: bestDiff > TDIFF_WARN };
 }
 
 /** 확관 Step Size / 다이 정보 (호기별) */
@@ -173,7 +190,9 @@ function expanderNMode() { return EXP_NMODE; }
 function expanderN(s, machine) {
   const { step } = expanderStep(s, machine);
   if (EXP_NMODE === 'ortools' && (machine === 'M1' || machine === 'BOTH')) {
-    return Math.round(s.L / (step - (step <= 150 ? 100 : 150)));
+    /* step 151mm 에서 분모가 1 이 되어 N 이 12,802 까지 튀는 불연속이 있어 하한을 둔다 */
+    const den = Math.max(50, step - (step <= 150 ? 100 : 150));
+    return Math.round(s.L / den);
   }
   let n = ceil((s.L - 500) / step) + 2;
   if (EXP_NMODE === 'ortools') { if (n % 2 === 1) n += 1; }   // 짝수 보정
@@ -301,6 +320,14 @@ function expanderSetup(prev, cur, machine) {
   if (!prev) return { sec: 0, kind: '없음' };
   const a = toolInfo(prev.od, prev.t, machine || 'M2');
   const b = toolInfo(cur.od,  cur.t,  machine || 'M2');
+  const same = Math.abs(a.od - b.od) < 0.5 && Math.abs(prev.t - cur.t) < 0.05;
+  /* 한쪽이라도 다이표에 없는 규격이면 판정 불가.
+     규격이 다르면 최소 다이 교체는 일어난다고 보고 보수적으로 부과한다. */
+  if (a.unknown || b.unknown) {
+    if (Math.abs(prev.od - cur.od) < 0.5 && Math.abs(prev.t - cur.t) < 0.05)
+      return { sec: 0, kind: '교체 없음', from: a, to: b, unknown: true };
+    return { sec: EXP_SETUP.die, kind: 'Die 교체(공구 미상 — 보수적 추정)', from: a, to: b, unknown: true };
+  }
   if (a.drawbar !== b.drawbar) return { sec: EXP_SETUP.drawbar, kind: 'Drawbar 교체', from: a, to: b };
   if (a.head    !== b.head)    return { sec: EXP_SETUP.head,    kind: 'Head 교체',    from: a, to: b };
   if (a.die     !== b.die)     return { sec: EXP_SETUP.die,     kind: 'Die 교체',     from: a, to: b };
