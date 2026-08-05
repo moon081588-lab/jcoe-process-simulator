@@ -1414,7 +1414,7 @@ function simulate(orders, cfg) {
         const res = fn ? fn(spec, line, k, machine) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] };
         let dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
         const seize = coUnits || [u];
-        let co = n.free ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+        let co = (n.free || cfg.changeover === false) ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
         if (ST.on) {
           dur *= lnormMul(rng, ST.cvTime);
           if (co > 0) co *= lnormMul(rng, ST.cvSetup);
@@ -1474,11 +1474,19 @@ function simulate(orders, cfg) {
     const setup = units.reduce((a, u) => a + u.setup, 0);
     const jobs = units.reduce((a, u) => a + u.jobs, 0);
     if (!jobs) continue;
+    const unitUtil = units.map(u => availPerUnit ? (u.busy + u.setup) / availPerUnit * 100 : 0);
+    const utilMax = Math.max(...unitUtil), utilMin = Math.min(...unitUtil);
     stats.push({
       id: n.id, label: n.label, st: n.st, cap: units.length, jobs,
       busyH: busy / 3600, setupH: setup / 3600,
-      util: availPerUnit ? (busy + setup) / (availPerUnit * units.length) * 100 : 0,
-      units: units.map(u => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600, jobs: u.jobs }))
+      /* util = 설비 1대 기준 가동률의 최댓값. 대수로 나눈 평균은 호기 편중을 가려서 쓰지 않는다 */
+      util: utilMax,
+      utilAvg: availPerUnit ? (busy + setup) / (availPerUnit * units.length) * 100 : 0,
+      unitUtil, imbalance: utilMax - utilMin,
+      setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
+      loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),
+      units: units.map((u, i) => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600,
+                                    jobs: u.jobs, util: unitUtil[i] }))
     });
   }
   stats.sort((a, b) => b.util - a.util);

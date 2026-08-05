@@ -53,8 +53,6 @@ function readStoch(){
 }
 function runSim() {
   CFG = readCfg();
-  if (!CFG.changeover) for (const k in CHANGEOVER) CHANGEOVER[k] = { od:0, t:0, L:0 };
-  else Object.assign(CHANGEOVER, JSON.parse(CO_BACKUP));
   const t = performance.now();
   SIM = simulate(ORDERS, CFG);
   SIM.events.sort((a,b)=>a.s-b.s);
@@ -718,25 +716,62 @@ function renderGantt(){
 }
 
 /* ================= 병목 분석 ================= */
+/* 병목 유형 판정 — 성격이 다른 병목을 구분해서 보여준다 */
+function bnType(x){
+  if (x.setupShare >= 15) return { k:'setup', t:'전환 병목', c:C.setup };
+  if (x.imbalance >= 20) return { k:'elig', t:'제약 병목', c:'#8957e5' };
+  if (x.util >= 55) return { k:'proc', t:'가공 병목', c:C.bneck };
+  return { k:'ok', t:'여유', c:C.done };
+}
 function renderBottleneck(){
   const s = SIM.stats;
   const max = Math.max(...s.map(x=>x.util));
-  $('bnTable').innerHTML = s.map(x=>`
-    <tr class="${x.util>=85?'hi':x.util>=60?'mid':''}">
-      <td>${x.label.replace('\n',' ')}</td><td class="num">${x.cap}</td><td class="num">${x.jobs.toLocaleString()}</td>
-      <td class="num">${x.busyH.toFixed(1)}</td><td class="num">${x.setupH.toFixed(1)}</td>
-      <td class="num">${(x.setupH/(x.busyH+x.setupH)*100||0).toFixed(1)}%</td>
-      <td class="bar"><div style="width:${Math.min(100,x.util/max*100)}%;background:${x.util>=85?C.bneck:x.util>=60?C.setup:C.done}"></div></td>
-      <td class="num"><b>${x.util.toFixed(1)}%</b></td></tr>`).join('');
+  $('bnTable').innerHTML = s.map(x=>{
+    const ty = bnType(x);
+    return `<tr class="${x.util>=80?'hi':x.util>=55?'mid':''}">
+      <td>${x.label.replace('\n',' ')}</td>
+      <td class="num">${x.cap}</td><td class="num">${x.jobs.toLocaleString()}</td>
+      <td class="num">${x.busyH.toFixed(1)}</td>
+      <td class="num ${x.setupH>10?'hi2':''}">${x.setupH.toFixed(1)}</td>
+      <td class="num ${x.setupShare>=15?'hi2':''}">${x.setupShare.toFixed(1)}%</td>
+      <td class="bar"><div style="width:${Math.min(100,x.util/max*100)}%;background:${x.util>=80?C.bneck:x.util>=55?C.setup:C.done}"></div></td>
+      <td class="num"><b>${x.util.toFixed(1)}%</b>${x.cap>1?`<br><span style="color:#6e7681;font-size:9.5px">${x.unitUtil.map(v=>v.toFixed(0)+'%').join(' / ')}</span>`:''}</td>
+      <td><span class="tag" style="background:${ty.c};color:#fff">${ty.t}</span></td></tr>`;
+  }).join('');
+
   const top = s[0];
+  const setupTop = s.slice().sort((a,b)=>b.setupH-a.setupH)[0];
+  const eligTop = s.slice().sort((a,b)=>b.imbalance-a.imbalance)[0];
+  const totSetup = s.reduce((a,x)=>a+x.setupH,0);
+  const exp = s.find(x=>x.id==='EXP') || {imbalance:0, setupH:0, util:0, unitUtil:[0,0]};
   $('bnCall').innerHTML = `
-    <div class="kpi bn"><b>${top.label.replace('\n',' ')}</b><span>최대 부하 공정 · 가동률 ${top.util.toFixed(1)}%</span></div>
-    <div class="kpi"><b>${s.reduce((a,x)=>a+x.setupH,0).toFixed(0)} h</b><span>총 설비 전환 시간</span></div>
-    <div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>전체 계획 소요</span></div>
-    <div class="kpi"><b>${(ORDERS.reduce((a,o)=>a+o.qty,0)/(SIM.horizonH/24)).toFixed(0)} 본/일</b><span>평균 산출</span></div>`;
+    <div class="kpi bn"><b>${top.label.replace('\n',' ')}</b><span>가공 병목 · 대당 가동률 ${top.util.toFixed(1)}%</span></div>
+    <div class="kpi" style="border-color:#d2992266;background:#d2992214"><b style="color:#e3b341">${setupTop.label.replace('\n',' ')}</b><span>전환 병목 · ${setupTop.setupH.toFixed(1)}h (전체 전환의 ${(setupTop.setupH/totSetup*100).toFixed(0)}%)</span></div>
+    <div class="kpi" style="border-color:#8957e566;background:#8957e514"><b style="color:#a77bff">${eligTop.label.replace('\n',' ')}</b><span>제약 병목 · 호기 편차 ${eligTop.imbalance.toFixed(0)}%p</span></div>
+    <div class="kpi"><b>${totSetup.toFixed(0)} h</b><span>총 설비 전환 시간</span></div>
+    <div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>전체 계획 소요</span></div>`;
+
+  $('bnWhy').innerHTML = `<div class="note">
+    <b>병목이 확관 한 곳이 아닌 이유</b> — 성격이 다른 세 가지 병목이 동시에 존재합니다.<br><br>
+    <b style="color:#ff7b72">① 가공 병목</b> — <b>${top.label.replace('\n',' ')} ${top.util.toFixed(0)}%</b>.
+    1본당 소요가 길고 설비가 ${top.cap}대뿐이라 물리적으로 가장 느립니다.
+    표준시간표 기준 1본 소요는 포장 873초 · 수압 745초 · 슬러그 제거 695초인데
+    <b>확관은 #1호기 483초</b>로 오히려 빠른 편입니다. 순수 가공 속도만 보면 확관은 병목이 아닙니다.<br><br>
+    <b style="color:#e3b341">② 전환 병목</b> — <b>${setupTop.label.replace('\n',' ')} ${setupTop.setupH.toFixed(0)}h</b>,
+    전체 설비 전환의 ${(setupTop.setupH/totSetup*100).toFixed(0)}%가 여기서 발생합니다. 다이·헤드 교체 때문에 규격이 바뀔 때마다 멈춥니다.
+    <b>PPT가 말한 “확관 병목”은 이쪽</b>입니다 — “타 공정 대비 긴 설비 전환 시간이 전체 공정의 병목을 유발”.<br><br>
+    <b style="color:#a77bff">③ 제약 병목</b> — 확관 호기 간 가동률 차이 <b>${exp.imbalance.toFixed(0)}%p</b>
+    (${exp.unitUtil.map(v=>v.toFixed(0)+'%').join(' / ')}).
+    12.8~14m 제품은 #1호기 전용이라 물량의 66%가 한 대에 몰립니다.
+    두 대 평균으로 보면 낮아 보이지만 <b>#1호기만 보면 상위권</b>입니다.<br><br>
+    정리하면 <b>납기를 좌우하는 것은 포장·슬러그 제거 같은 가공 병목</b>이고,
+    <b>확관은 전환·제약 병목</b>이라 개선 수단이 다릅니다. 앞은 설비 증설이나 사이클타임 단축,
+    뒤는 <b>오더 시퀀싱(같은 규격 묶기)과 호기 배분</b>으로 풉니다 — 「확관 최적화」 탭이 그 도구입니다.</div>`;
+
   $('bnUnits').innerHTML = s.filter(x=>x.cap>1).map(x=>`
     <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap} units)</h4>
-      ${x.units.map(u=>`<div class="tr2"><span>${u.id}</span><b>${u.jobs}본 / ${u.busyH.toFixed(1)}h</b></div>`).join('')}
+      ${x.units.map((u,i)=>`<div class="tr2"><span>${x.id==='EXP'?('확관 #'+(i+1)+'호기'):u.id}</span>
+        <b>${u.jobs.toLocaleString()}본 · ${u.busyH.toFixed(1)}h · ${u.util.toFixed(0)}%</b></div>`).join('')}
     </div>`).join('');
 }
 
