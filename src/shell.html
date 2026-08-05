@@ -138,7 +138,7 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
     <div class="tab" data-p="pOpt">확관 배분 · 최적화</div>
     <div class="tab" data-p="pGantt">오더 스케줄</div>
     <div class="tab" data-p="pBn">병목 분석</div>
-    <div class="tab" data-p="pCfg">시뮬레이션 설정</div>
+    <div class="tab" data-p="pCfg">계획서 · 설정</div>
   </div>
   <div id="simInfo"></div>
 </header>
@@ -301,7 +301,13 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
 
   <!-- ========== 설정 ========== -->
   <section class="pane" id="pCfg"><div class="inner">
-    <h3>시뮬레이션 파라미터</h3>
+    <h3>① 조관계획서 불러오기</h3>
+    <div id="planLoader"></div>
+    <div class="note">현재 기본 데이터는 <b>2026년 3월 포항공장 조관계획서</b> 기준 58오더 / 1,446본입니다.
+      다른 계획서를 넣으면 공정 흐름·간트·병목·In/Out·최적화가 모두 새 데이터로 다시 계산됩니다.
+      필요한 열은 <b>외경 · 두께 · 길이 · 수량</b> 네 가지이며, 오더번호·계획 투입일·납기는 있으면 함께 읽습니다.</div>
+
+    <h3>② 시뮬레이션 파라미터</h3>
     <div id="cfgBar">
       <div class="f"><label>시작일</label><input type="date" id="cfgStart" value="2026-03-02"></div>
       <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></div>
@@ -332,8 +338,11 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
 </div>
 <script>
 const T = __TABLES__;
-const ORDERS = __ORDERS__;
+let ORDERS = __ORDERS__;
+const ORDERS_DEFAULT = ORDERS.slice();
 </script>
+<script>__XLSX__</script>
+<script>__PLANLOAD__</script>
 <script>__ENGINE__</script>
 <script>__FLOW__</script>
 <script>__UI__</script>

@@ -45,7 +45,8 @@ function runSim() {
   SIM.byR = SIM.events.slice().sort((a,b)=>a.r-b.r);
   $('simInfo').textContent =
     `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
-    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`;
+    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`
+    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
@@ -710,6 +711,37 @@ function renderBottleneck(){
     </div>`).join('');
 }
 
+/* ================= 계획서 로더 연동 ================= */
+let PLAN_SRC = null;
+function applyOrders(list, meta, srcLabel){
+  ORDERS = list;
+  PLAN = null; LAST_OPT = null;                   // 최적화 해는 데이터가 바뀌면 무효
+  PLAN_SRC = srcLabel || null;
+  _oc && Object.keys(_oc).forEach(k=>delete _oc[k]);
+  $('optSum').innerHTML=''; $('optSeq').innerHTML='';
+  $('cmpBody').innerHTML='<tr><td colspan="9" style="color:#6e7681">데이터가 바뀌었습니다. 「전체 규칙 비교 실행」을 다시 눌러 주세요.</td></tr>';
+  $('cmpNote').innerHTML='';
+  if ($('optRule').value==='OPT') $('optRule').value='EAT';
+  runSim(); calc();
+}
+function initPlanLoader(){
+  const el=$('planLoader'); if(!el||typeof PlanLoader==='undefined') return;
+  PlanLoader.mount(el, {
+    startDate: $('cfgStart').value,
+    onApply:(list,meta)=>{
+      const first=list[0] && list[0].start ? list[0].start.slice(0,10) : null;
+      if(first) $('cfgStart').value=first;
+      applyOrders(list, meta, '업로드 계획서');
+      document.querySelector('.tab[data-p="pFlow"]').click();
+    },
+    onReset:()=>{
+      const d0=ORDERS_DEFAULT[0] && ORDERS_DEFAULT[0].start ? ORDERS_DEFAULT[0].start.slice(0,10) : '2026-03-02';
+      $('cfgStart').value=d0;
+      applyOrders(ORDERS_DEFAULT.slice(), null, null);
+    },
+  });
+}
+
 /* ================= 부트 ================= */
 const CO_BACKUP = JSON.stringify(CHANGEOVER);
 function boot(){
@@ -733,6 +765,6 @@ function boot(){
   cvs.onmouseleave = ()=>{ hover=null; };
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  fit(); buildEdgeCache(); initOptTab();
+  fit(); buildEdgeCache(); initOptTab(); initPlanLoader();
   runSim(); calc(); requestAnimationFrame(loop);
 }

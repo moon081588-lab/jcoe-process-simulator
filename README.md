@@ -10,8 +10,8 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 
 | 파일 | 크기 | 내용 |
 |---|---|---|
-| [`dist/JCOE_Simulator.html`](dist/JCOE_Simulator.html) | ~104 KB | 2D — 공정 흐름 / 표준시간 계산기 / In·Out 시간표 / 확관 배분·최적화 / 오더 스케줄 / 병목 분석 |
-| [`dist/JCOE_3D.html`](dist/JCOE_3D.html) | ~742 KB | 3D — 공정 흐름도 입체화 + 자재 적치·이동 애니메이션 (three.js 내장, 오프라인 동작) |
+| [`dist/JCOE_Simulator.html`](dist/JCOE_Simulator.html) | ~747 KB | 2D — 공정 흐름 / 표준시간 계산기 / In·Out 시간표 / 확관 배분·최적화 / 오더 스케줄 / 병목 분석 |
+| [`dist/JCOE_3D.html`](dist/JCOE_3D.html) | ~1.4 MB | 3D — 공정 흐름도 입체화 + 자재 적치·이동 애니메이션 (three.js 내장, 오프라인 동작) |
 
 ---
 
@@ -27,7 +27,7 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | **확관 배분 · 최적화** | 확관기 공정 제약, 배분 규칙 5종, SA 최적화 엔진, 규칙별 사후분석 비교 |
 | **오더 스케줄** | 오더별 생산 간트 |
 | **병목 분석** | 공정별 가동률·설비 전환시간 비율, 병렬 설비 유닛별 부하 |
-| **시뮬레이션 설정** | 교대 수, Shift당 실가동 시간, 주말 비가동, RB 라인·Calibration Press 사용 여부 |
+| **계획서 · 설정** | 조관계획서 엑셀 업로드, 교대 수, Shift당 실가동 시간, 주말 비가동, RB 라인·Calibration Press 사용 여부 |
 
 ### 3D 시뮬레이터 (`dist/JCOE_3D.html`)
 
@@ -38,6 +38,22 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 - **야드** — 원자재(후판) 야드는 줄고 완제품 야드는 늘어납니다. 28.5일 완주 시 후판 0매 / 완제품 1,401본
 - **호기 분리** — 확관 #1·#2호기, 내면·외면 SAW 4라인, F-X ray 2대가 물리적으로 분리된 설비로 표시
 - **조작** — 좌 드래그 회전 / 우 드래그(또는 Shift) 이동 / 휠 확대 / 설비 클릭 시 가동률·전환시간·산출식
+
+### 계획서 불러오기
+
+기본 데이터는 2026년 3월 포항공장 조관계획서 기준 58오더 / 1,446본이지만, **다른 계획서 엑셀을 넣어 바로 돌릴 수 있습니다.**
+
+2D는 「계획서 · 설정」 탭, 3D는 상단 **계획서 불러오기** 버튼에서 파일을 끌어다 놓으면 됩니다.
+`.xlsx` / `.xlsm` / `.xls` / `.csv` 를 읽습니다.
+
+- **시트·헤더 행 자동 탐지** — 표지 시트나 제목 몇 줄이 위에 있어도 실제 헤더 행을 찾습니다. `JCOE` 가 들어간 시트를 우선 선택합니다
+- **열 자동 인식** — `오더번호/제번/작번`, `외경/O.D`, `두께/육후/WT`, `길이/L`, `수량/본수/PCS`, `계획일/투입일자`, `납기/요청일` 등의 표기를 인식합니다. 못 찾으면 숫자 분포로 추정하고, 그래도 틀리면 화면에서 직접 지정할 수 있습니다
+- **단위 자동 추정** — 외경 중앙값이 120 미만이면 inch, 길이 중앙값이 60 미만이면 m 로 판단해 mm 로 환산합니다. 수동 변경 가능
+- **검증** — 필수값 누락·수량 0·범위 이탈 행은 건너뛰고 사유를 행 번호와 함께 표시합니다
+- **필수 열은 외경·두께·길이·수량** 네 가지. 오더번호가 없으면 행 번호로, 계획 투입일이 없으면 시작일부터 순차 배치합니다
+- 적용하면 공정 흐름·간트·병목·In/Out·최적화가 모두 새 데이터로 다시 계산됩니다. `orders.json` 내보내기와 기본 데이터 되돌리기도 지원합니다
+
+형식 변형 테스트용 샘플은 `testdata/` 에 있고, `python3 tools/make_test_plans.py` 로 다시 만들 수 있습니다.
 
 ---
 
@@ -188,6 +204,7 @@ python3 tools/extract_orders.py legacy/JCOE_view2.html
 │   ├── engine.js                표준시간 계산 엔진 (엑셀 산출식 19종 + 전환시간 테이블)
 │   ├── flow.js                  공정 노드 그래프 · 라우팅 · 교대 캘린더 · 시뮬레이터 · 확관 최적화 엔진
 │   ├── ui.js                    2D UI (Canvas 렌더러 · 계산기 · In/Out 표 · 최적화 탭 · 간트 · 병목)
+│   ├── planload.js              조관계획서 엑셀 로더 (시트·헤더·열 자동 인식, 단위 추정, 검증 UI)
 │   └── shell.html               2D HTML/CSS 셸 (빌드 시 플레이스홀더 치환)
 ├── src3d/
 │   ├── scene3d.js               three.js 씬 · 설비 형상 · 자재 인스턴싱 · 카메라 컨트롤
@@ -199,15 +216,19 @@ python3 tools/extract_orders.py legacy/JCOE_view2.html
 │   ├── extract_tables.py        엑셀 → data/tables.json
 │   ├── extract_orders.py        기존 HTML payload → data/orders.json
 │   ├── fetch_three.py           npm 레지스트리에서 three.js 빌드 파일 받기
+│   ├── make_test_plans.py       계획서 로더 테스트용 샘플 생성
 │   ├── verify_formulas.js       산출식 교차검증
 │   ├── verify_ui.js             브라우저 통합 검증 (playwright)
 │   └── runsim.js                Node 에서 시뮬레이터를 불러오는 헬퍼
 ├── legacy/                    이전 산출물 (참고용 · 이 저장소에서는 빌드하지 않음)
 │   ├── gen_views.py             기존 View 생성기 — config.py / data_loader.py / simulator.py 는 미포함이라 실행 불가
 │   └── JCOE_*.html              gen_views.py 가 생성한 5개 뷰 (각 13MB, 시뮬 결과가 임베드되어 있음)
+├── testdata/                  계획서 로더 테스트용 샘플 (형식 변형 4종)
 ├── vendor/
 │   ├── three.min.js             three.js r160.1 (MIT)
-│   └── three-LICENSE
+│   ├── xlsx.full.min.js         SheetJS 0.18.5 (Apache-2.0) — 계획서 엑셀 파싱
+│   ├── three-LICENSE
+│   └── xlsx-LICENSE
 ├── docs/                      원자료 슬라이드 캡처 (최적화 모델 · 확관기 제약)
 ├── build.py                   2D 빌드
 └── build3d.py                 3D 빌드
@@ -226,4 +247,6 @@ python3 tools/extract_orders.py legacy/JCOE_view2.html
 
 ## 9. 라이선스
 
-사내 프로젝트 산출물입니다. `vendor/three.min.js` 는 three.js (MIT License, `vendor/three-LICENSE` 참조).
+사내 프로젝트 산출물입니다.
+`vendor/three.min.js` 는 three.js (MIT License, `vendor/three-LICENSE`),
+`vendor/xlsx.full.min.js` 는 SheetJS (Apache-2.0, `vendor/xlsx-LICENSE`) 입니다.

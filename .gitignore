@@ -2,6 +2,8 @@
 *.xlsx
 *.xlsm
 *.pptx
+# 단, 계획서 로더 테스트용 샘플은 포함
+!testdata/*.xlsx
 
 # 빌드/실행 부산물
 node_modules/

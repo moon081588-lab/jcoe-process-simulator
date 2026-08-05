@@ -471,7 +471,7 @@ function buildLogicalCurves(){
 /* ---------------- 시뮬레이션 연동 ---------------- */
 let PLAN3 = null;
 function readCfg(){ return {
-  startDate:'2026-03-02', shifts:+$('cfgShifts').value, netHoursPerShift:7.5,
+  startDate:(ORDERS[0]&&ORDERS[0].start?ORDERS[0].start.slice(0,10):'2026-03-02'), shifts:+$('cfgShifts').value, netHoursPerShift:7.5,
   skipWeekend:false, useRB:$('cfgRB').checked, useCP:false, processingFinalUT:false,
   holdSec:60, changeover:$('cfgCO').checked, freeStationSec:300, eventCap:1e9,
   dispatchRule: ($('cfgRule')||{}).value || 'EAT', sameODConcurrency:true, useM3:false,
@@ -488,7 +488,8 @@ function runSim(){
   animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
   for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
   $('simInfo').textContent = `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
-    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`;
+    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
+    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '');
   buildStat(); updateStat(); refreshVisual();
 }
 const _oc={};
@@ -709,6 +710,26 @@ function showInfo(){
   $('infoX').onclick=()=>{ selected=null; p.classList.remove('on'); };
 }
 
+/* ---------------- 계획서 로더 ---------------- */
+let PLAN_SRC = null;
+function applyOrders(list, srcLabel){
+  ORDERS = list; PLAN3 = null; PLAN_SRC = srcLabel || null;
+  Object.keys(_oc).forEach(k=>delete _oc[k]);
+  if($('cfgRule').value==='OPT') $('cfgRule').value='EAT';
+  runSim();
+  $('planModal').classList.remove('on');
+}
+function initPlanLoader(){
+  const el=$('planLoader'); if(!el||typeof PlanLoader==='undefined') return;
+  PlanLoader.mount(el, {
+    startDate:'2026-03-02',
+    onApply:list=>applyOrders(list,'업로드 계획서'),
+    onReset:()=>applyOrders(ORDERS_DEFAULT.slice(), null),
+  });
+  $('btnPlan').onclick=()=>$('planModal').classList.add('on');
+  $('pmClose').onclick=()=>$('planModal').classList.remove('on');
+}
+
 /* ---------------- 루프 & 부트 ---------------- */
 function resize(){
   const w=$('c3d').clientWidth, h=$('c3d').clientHeight;
@@ -736,5 +757,6 @@ function boot(){
     `<option value="${k}">${v.label.replace(/\s*\(.*\)/,'')}</option>`).join('');
   $('cfgShifts').onchange=runSim; $('cfgRB').onchange=runSim; $('cfgCO').onchange=runSim;
   $('cfgRule').onchange=runSim;
+  initPlanLoader();
   runSim(); requestAnimationFrame(loop);
 }

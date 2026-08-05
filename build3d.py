@@ -11,6 +11,8 @@ out = (tpl
   .replace('__THREE__',  three.read_text(encoding='utf-8'))
   .replace('__TABLES__', json.dumps(json.loads((R/'data/tables.json').read_text(encoding='utf-8')), ensure_ascii=False))
   .replace('__ORDERS__', json.dumps(json.loads((R/'data/orders.json').read_text(encoding='utf-8')), ensure_ascii=False))
+  .replace('__XLSX__',     (R/'vendor/xlsx.full.min.js').read_text(encoding='utf-8'))
+  .replace('__PLANLOAD__', (R/'src/planload.js').read_text(encoding='utf-8'))
   .replace('__ENGINE__', (R/'src/engine.js').read_text(encoding='utf-8'))
   .replace('__FLOW__',   (R/'src/flow.js').read_text(encoding='utf-8'))
   .replace('__SCENE__',  (R/'src3d/scene3d.js').read_text(encoding='utf-8')))
