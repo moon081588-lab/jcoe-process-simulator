@@ -14,7 +14,10 @@ const ORDERS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/orders.json'), '
 
 const api = new Function('T', 'ORDERS', src + `
   return { simulate, optimizeExpander, routeOf, expanderMode, STD, CHANGEOVER,
-           DISPATCH_RULES, NODES, NODE, EDGES };
+           DISPATCH_RULES, NODES, NODE, EDGES,
+           toolInfo, expanderSetup, expanderStep, expanderN,
+           setExpSetupMode, setExpanderNMode,
+           importOptPlan, normMachine, rbCapable, forceRB, useRBLine, EXP_MACHINES };
 `)(T, ORDERS);
 
 module.exports = { api, ORDERS, T };

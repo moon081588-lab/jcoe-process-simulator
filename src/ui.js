@@ -16,12 +16,20 @@ let SIM = null, CFG = null;
 /* ================= 설정 ================= */
 let PLAN = null, LAST_OPT = null;
 function readCfg() {
+  /* 확관 셋업/N 산출 방식은 엔진 전역 상태이므로 설정을 읽을 때 함께 반영 */
+  setExpSetupMode(($('cfgExpSetup') || {}).value || 'tool');
+  setExpanderNMode(($('cfgExpN') || {}).value || 'excel');
   return {
+    expSetupMode: ($('cfgExpSetup') || {}).value || 'tool',
+    expNMode: ($('cfgExpN') || {}).value || 'excel',
     dispatchRule: ($('optRule')||{}).value || 'EAT',
     sameODConcurrency: $('optSameOD') ? $('optSameOD').checked : true,
     useM3: $('optM3') ? $('optM3').checked : false,
+    expRuleSet: ($('optRuleSet')||{}).value || 'ppt',
+    rbMode: ($('optRbMode')||{}).value || 'capable',
+    rbShifts: +(($('optRbShift')||{}).value || 1),
     applyOptSeq: $('optApplySeq') ? $('optApplySeq').checked : true,
-    plan: PLAN,
+    plan: (($('optRule')||{}).value === 'IMPORT') ? IMP_PLAN : PLAN,
     startDate: $('cfgStart').value || '2026-03-02',
     deadline: $('cfgDeadline') && $('cfgDeadline').value ? $('cfgDeadline').value : null,
     dateMode: ($('cfgDateMode')||{}).value || 'plan',
@@ -458,7 +466,8 @@ function calc(){
     <div class="kpi bn"><b>${bn.label}</b><span>병목 공정 · ${fmtDur(bn.sec)}</span></div>
     <div class="kpi"><b>${(shiftSec/max).toFixed(1)} 본</b><span>Shift당 생산능력 (병목 기준)</span></div>
     <div class="kpi"><b>${(s.qty*max/3600).toFixed(1)} h</b><span>${s.qty}본 소요 (병목 기준)</span></div>
-    <div class="kpi"><b>${expanderN(s)} 회</b><span>확관 횟수 N · step ${expanderStep(s).step}mm</span></div>`;
+    <div class="kpi"><b>${expanderN(s,'M1')} / ${expanderN(s,'M2')} 회</b><span>확관 N (#1 / #2호기) · step ${expanderStep(s,'M1').step} / ${expanderStep(s,'M2').step}mm</span></div>
+    <div class="kpi"><b>${(()=>{const ti=expanderStep(s,'M1').tool;return ti.head?`H${ti.head} · ${ti.drawbar}`:'다이 없음';})()}</b><span>#1호기 헤드/드로바 · ${expanderStep(s,'M1').tool.label}</span></div>`;
 
   $('calcRows').innerHTML = rows.map(r=>{
     if (r.skip) return `<tr class="sk"><td>${r.label}</td><td colspan="4">${r.skip}</td></tr>`;
@@ -581,7 +590,9 @@ function initOptTab(){
   const upd=()=>{ $('ruleDesc').textContent=DISPATCH_RULES[$('optRule').value].desc; };
   $('optSameOD').onchange=()=>{ PLAN=null; runSim(); };
   $('optM3').onchange=()=>{ PLAN=null; runSim(); };
-  $('optRule').onchange=upd; upd();
+  ['optRuleSet','optRbMode','optRbShift'].forEach(id=>{ if($(id)) $(id).onchange=()=>{ PLAN=null; runSim(); }; });
+  $('optRule').onchange=()=>{ upd(); renderImport(); }; upd();
+  initImportTab();
   $('btnApplyRule').onclick=()=>{
     if($('optRule').value==='OPT' && !PLAN){ runOptimizer(); }
     runSim();
@@ -606,6 +617,118 @@ function renderEligWarn(){
     <div class="kpi"><b>${grp.fixed.n}오더 / ${grp.fixed.q.toLocaleString()}본</b><span>12.8~14m → #1호기 전용 (선택 여지 없음)</span></div>
     <div class="kpi"><b>${grp.both.n}오더 / ${grp.both.q.toLocaleString()}본</b><span>14m 초과 → #1·#2 동시 가동${both.length?` (${both.join(', ')})`:''}</span></div>
   </div>`;
+  renderRuleDiff();
+}
+
+/* 두 제약 기준의 차이를 한눈에 — 확인 요청 자료로 쓰기 위한 표 */
+function renderRuleDiff(){
+  const el=$('ruleDiff'); if(!el) return;
+  const cur=($('optRuleSet')||{}).value||'ppt';
+  const base=readCfg();
+  const sum=(rs)=>{
+    const cfg={...base, expRuleSet:rs}, q={M1:0,M2:0,FREE:0,BOTH:0,RB:0};
+    for(const o of ORDERS){
+      const sp={no:o.no,od:o.od,t:o.t,L:o.L,qty:o.qty,bottleneck:o.bottleneck,rawL:o.rawL};
+      let k;
+      if(useRBLine(sp,cfg)) k='RB';
+      else { const em=expanderMode(sp,cfg);
+        k = em.mode==='BOTH'?'BOTH' : em.list.length>1?'FREE' : em.list[0]==='M1'?'M1':'M2'; }
+      q[k]+=o.qty;
+    }
+    return q;
+  };
+  const R = EXP_RULESET[cur];
+  if($('rmR1')) $('rmR1').textContent = `L ≤ ${R.L1}m 단독 가능`;
+  if($('rmR2')) $('rmR2').textContent = `L ≤ ${R.L2}m 단독 가능` + (R.m2Exclusive ? ' · 48"↑/22"↓ 전용' : ' · 48"↑/22"↓ 우선');
+  if($('rmR3')) $('rmR3').textContent = `= RB 라인 (${R.rb==='ortools'?'다이표 외경 · 9≤t≤25.4':'t≤25T · OD≤24"'})`;
+  const a=sum('ppt'), b=sum('ortools');
+  const row=(lbl,ka)=>`<tr><td>${lbl}</td><td class="num">${a[ka].toLocaleString()}</td><td class="num">${b[ka].toLocaleString()}</td></tr>`;
+  el.innerHTML=`<div class="warn" style="margin-bottom:10px">
+    <b>두 자료의 확관 제약이 서로 다릅니다 — 세아제강 확인 필요</b>
+    <table style="margin-top:8px"><thead><tr><th>항목</th><th>공정 다이어그램·제약표</th><th>확관 최적화 운영 모델</th></tr></thead><tbody>
+      <tr><td>#2호기 길이 상한</td><td>12.8m 이상 불가</td><td class="hi2">12.8384m 초과 불가</td></tr>
+      <tr><td>#1호기 길이 상한</td><td>14m 이상 불가</td><td>14.021m 초과 불가</td></tr>
+      <tr><td>외경 48"↑ / 22"↓</td><td>#2호기 <b>우선</b> 투입</td><td class="hi2">#2호기 <b>전용</b> (hard)</td></tr>
+      <tr><td>RB 투입 조건</td><td>두께 25T 이하 &amp; 외경 24" 이하</td><td class="hi2">RB 다이표 외경(24"~48") &amp; 9≤t≤25.4</td></tr>
+      <tr><td>RB 강제 투입</td><td>(제약표) 열처리 &amp; 배척 제품 우선</td><td>병목공정 HT102 · 원재료/제품 길이비 ≥ 1.8</td></tr>
+    </tbody></table>
+    <div style="margin-top:9px">현재 오더셋 <b>${ORDERS.reduce((x,o)=>x+o.qty,0).toLocaleString()}본</b>을 기준별로 분류하면:</div>
+    <table style="margin-top:6px"><thead><tr><th>구분 (본)</th><th style="text-align:right">다이어그램 기준</th><th style="text-align:right">운영 모델 기준</th></tr></thead><tbody>
+      ${row('#1호기 전용','M1')}${row('#2호기 전용','M2')}${row('두 호기 다 가능 — 배분 규칙 대상','FREE')}${row('#1·#2 동시 가동','BOTH')}${row('RB 라인','RB')}
+    </tbody></table>
+    <div style="margin-top:9px">12.802m 제품(전체의 66%)이 <b>12.8m 기준에서는 #1호기 전용</b>, <b>12.8384m 기준에서는 두 호기 다 가능</b>으로 갈립니다.
+      호기 부하 편중이 여기서 통째로 결정되므로, 실제 상한이 어느 쪽인지가 이 모델에서 가장 영향이 큰 미확인 항목입니다.
+      현재 적용 기준: <b>${cur==='ortools'?'확관 최적화 운영 모델':'공정 다이어그램 · 제약표'}</b></div></div>`;
+}
+
+/* ================= 외부 최적화 스케줄 가져오기 (OR-Tools CP-SAT) ================= */
+let IMP_PLAN = null, IMP_SRC = '';
+function initImportTab(){
+  const drop=$('impDrop'), inp=$('impFile');
+  if(!drop||!inp) return;
+  drop.onclick=()=>inp.click();
+  drop.ondragover=e=>{ e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave=()=>drop.classList.remove('over');
+  drop.ondrop=e=>{ e.preventDefault(); drop.classList.remove('over');
+    if(e.dataTransfer.files&&e.dataTransfer.files[0]) readImport(e.dataTransfer.files[0]); };
+  inp.onchange=e=>{ if(e.target.files[0]) readImport(e.target.files[0]); };
+  renderImport();
+}
+function readImport(file){
+  const fr=new FileReader();
+  const isJson=/\.json$/i.test(file.name);
+  fr.onload=()=>{
+    try{
+      let rows;
+      if(isJson){
+        const j=JSON.parse(fr.result);
+        rows=Array.isArray(j)?j:(j.rows||j.data||j.schedule);
+        if(!rows) throw new Error('JSON 에서 배열을 찾지 못했습니다.');
+      } else {
+        const wb=XLSX.read(fr.result,{type:'array'});
+        const sh=wb.Sheets[wb.SheetNames[0]];
+        rows=XLSX.utils.sheet_to_json(sh,{header:1,raw:true,defval:null});
+      }
+      IMP_PLAN=importOptPlan(rows);
+      IMP_SRC=file.name;
+      $('optRule').value='IMPORT';
+      $('ruleDesc').textContent=DISPATCH_RULES.IMPORT.desc;
+      renderImport(); runSim();
+    }catch(err){
+      $('impInfo').innerHTML=`<div class="warn"><b>읽지 못했습니다</b><br>${String(err.message||err)}</div>`;
+    }
+  };
+  if(isJson) fr.readAsText(file); else fr.readAsArrayBuffer(file);
+}
+function renderImport(){
+  const info=$('impInfo'), seqEl=$('impSeq'); if(!info) return;
+  if(!IMP_PLAN){
+    info.innerHTML=`<div class="note">확관 최적화 모델(<code>optimizer_grouped.solve_integrated_schedule</code>)이 만든 결과 DataFrame 을
+      CSV/XLSX 로 저장해 올리면, <b>호기 배정과 투입 순서를 그대로</b> 시뮬레이션에 반영합니다.
+      「최적화 엔진 스케줄(내장 SA)」 과 나란히 비교해 볼 수 있습니다.</div>`;
+    if(seqEl) seqEl.innerHTML=''; return;
+  }
+  const P=IMP_PLAN, matched=P.seq.filter(no=>ORDERS.some(o=>String(o.no)===String(no))).length;
+  const applied=($('optRule')||{}).value==='IMPORT';
+  info.innerHTML=`<div class="kpis" style="margin:8px 0 4px">
+      <div class="kpi"><b>${P.nOrders.toLocaleString()}</b><span>가져온 오더 (행 ${P.nRows.toLocaleString()}건)</span></div>
+      <div class="kpi"><b>${matched} / ${P.nOrders}</b><span>현재 오더셋과 매칭</span></div>
+      <div class="kpi"><b>${P.count.M1}/${P.count.M2}/${P.count.RB}/${P.count.BOTH}</b><span>#1 / #2 / RB / 동시</span></div>
+      ${P.spanH?`<div class="kpi"><b>${(P.spanH/24).toFixed(1)}일</b><span>CP-SAT Makespan (${P.unit==='sec'?'초':'분'} 단위 해석)</span></div>`:''}
+      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?IMP_SRC:'배분 규칙을 「외부 최적화 스케줄」 로 바꾸세요'}</span></div>
+    </div>
+    ${matched===0?`<div class="warn"><b>매칭된 오더가 0건입니다.</b> 파일의 OrderNo(판매오더)와 시뮬레이터 오더번호 체계가 다릅니다.
+      계획서 탭에서 같은 조관계획서를 먼저 불러오면 매칭됩니다.</div>`:''}
+    ${P.warn.length?`<div class="warn"><b>경고 ${P.warn.length}건</b><br>${P.warn.slice(0,8).join('<br>')}${P.warn.length>8?'<br>…':''}</div>`:''}`;
+  if(seqEl){
+    const byM={};
+    P.detail.forEach(d=>{ (byM[d.m]=byM[d.m]||[]).push(d); });
+    seqEl.innerHTML=Object.keys(byM).sort().map(m=>`<div class="uc" style="margin-top:8px">
+      <h4>${m==='BOTH'?'#1·#2 동시':m==='RB'?'RB 라인':'확관 '+m.replace('M','#')+'호기'}
+        <span>${byM[m].length}건</span></h4>
+      <div style="font-size:10.5px;color:#8b949e;line-height:1.7;word-break:break-all">
+        ${byM[m].slice(0,60).map(d=>d.no).join(' → ')}${byM[m].length>60?' → …':''}</div></div>`).join('');
+  }
 }
 function runOptimizer(){
   const cfg=readCfg();
@@ -655,7 +778,8 @@ function runCompare(){
   if(!PLAN) PLAN=optimizeExpander(ORDERS, base, {weights:{cmax:+$('wCmax').value,setup:+$('wSetup').value,bal:+$('wBal').value}, iters:+$('optIters').value});
   const rows=[];
   for(const r of Object.keys(DISPATCH_RULES)){
-    const cfg={...base, dispatchRule:r, plan:PLAN};
+    if(r==='IMPORT' && !IMP_PLAN) continue;                     // 가져온 스케줄이 없으면 비교 대상 제외
+    const cfg={...base, dispatchRule:r, plan: r==='IMPORT' ? IMP_PLAN : PLAN};
     const S=simulate(ORDERS,cfg);
     const e=S.stats.find(x=>x.id==='EXP');
     rows.push({r, label:DISPATCH_RULES[r].label,
@@ -1010,5 +1134,6 @@ function boot(){
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
   $('btnDice').onclick=newSeed;
+  ['cfgExpSetup','cfgExpN'].forEach(id=>{ if($(id)) $(id).onchange=()=>{ runSim(); calc(); }; });
   runSim(); calc(); requestAnimationFrame(loop);
 }

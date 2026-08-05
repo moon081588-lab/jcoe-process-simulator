@@ -120,32 +120,78 @@ STD.FirstUT = (s) => {
     terms: [['기본', 240], ['이송 L/150', s.L / 150], ['탭 절단 ×2', (9600 / cv) * 2]] };
 };
 
-/* 확관 Step Size / 확관 횟수 N */
-function expanderStep(s) {
+/* ====================================================================
+   확관 공구(Head / Drawbar / Die) — 세아제강 운영 최적화 모델(specs.py) 이식
+   T.dieSpec = { M1|M2|RB: [ [headGroup, od_mm, tmin, tmax, step_mm, label], ... ] }
+   호기별 다이 스펙이 서로 다르므로 반드시 machine 을 넘겨야 한다.
+   ==================================================================== */
+const DIE_KEY = { M1: 'M1', M2: 'M2', RB: 'RB', BOTH: 'M1' };
+
+/** 외경 ±5mm 근사 + 두께 최근접으로 (헤드그룹, 드로바, 다이) 결정 */
+function toolInfo(od, t, machine) {
+  const rows = (T.dieSpec || {})[DIE_KEY[machine] || 'M2'] || [];
+  let best = null, bestDiff = Infinity;
+  for (const r of rows) {
+    const [head, rod, tmin, tmax, step, label] = r;
+    if (Math.abs(rod - od) > 5) continue;              // 외경 ±5mm 이내만 후보
+    let diff;
+    if (t >= tmin && t <= tmax) diff = 0;
+    else diff = Math.min(Math.abs(t - tmin), Math.abs(t - tmax));
+    if (diff < bestDiff) { bestDiff = diff; best = { head, od: rod, step, label }; }
+  }
+  if (!best) return { head: null, drawbar: null, die: 'UNKNOWN', step: null, label: '해당 다이 없음' };
+  const drawbar = (DIE_KEY[machine] === 'RB') ? `RB_${best.head}`
+                : (best.head === 450 ? 'SMALL' : 'LARGE');
+  return { head: best.head, drawbar, die: `${best.od}|${best.label}`, step: best.step, label: best.label };
+}
+
+/** 확관 Step Size / 다이 정보 (호기별) */
+function expanderStep(s, machine) {
+  const ti = toolInfo(s.od, s.t, machine || 'M2');
+  if (ti.step) return { step: ti.step, dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
+  /* 호기별 다이표에 없으면 엑셀 「Expander(1호기)」 표로 폴백 */
   const inch = Math.round(odInch(s.od));
   const keys = Object.keys(T.expanderDie).map(Number).sort((a, b) => a - b);
-  let best = keys[0];
-  for (const k of keys) if (Math.abs(k - inch) < Math.abs(best - inch)) best = k;
-  const dies = T.expanderDie[best];
-  let die = dies.find(d => d[0] >= s.t) || dies[dies.length - 1];
-  return { step: die[1], dieT: die[0], inch: best };
+  let bk = keys[0];
+  for (const k of keys) if (Math.abs(k - inch) < Math.abs(bk - inch)) bk = k;
+  const dies = T.expanderDie[bk];
+  const die = dies.find(d => d[0] >= s.t) || dies[dies.length - 1];
+  return { step: die[1], dieT: `t${die[0]}`, inch: bk, tool: ti, fallback: true };
 }
-function expanderN(s) {
-  const { step } = expanderStep(s);
+
+/* 확관 횟수 N — 산출 근거가 두 가지로 갈려 있어 토글로 병기한다.
+   'excel'   : 「JCOE 공정 생산 표준 시간 분석」 시트 산출식
+               N = ceil((L−500)/step) + 2, 짝수면 +1 → 항상 홀수
+   'ortools' : 세아제강 운영 최적화 모델(specs.py) 구현
+               M1  N = round(L / (step − (step≤150 ? 100 : 150)))
+               M2  N = ceil((L−500)/step) + 2, 홀수면 +1 → 항상 짝수
+   두 식은 step 이 작을수록(=두꺼운 관) 크게 벌어진다. 세아제강 확인 필요 항목. */
+let EXP_NMODE = 'excel';
+function setExpanderNMode(m) { EXP_NMODE = (m === 'ortools') ? 'ortools' : 'excel'; }
+function expanderNMode() { return EXP_NMODE; }
+
+function expanderN(s, machine) {
+  const { step } = expanderStep(s, machine);
+  if (EXP_NMODE === 'ortools' && (machine === 'M1' || machine === 'BOTH')) {
+    return Math.round(s.L / (step - (step <= 150 ? 100 : 150)));
+  }
   let n = ceil((s.L - 500) / step) + 2;
-  if (n % 2 === 0) n += 1;                 // N은 항상 홀수
+  if (EXP_NMODE === 'ortools') { if (n % 2 === 1) n += 1; }   // 짝수 보정
+  else                        { if (n % 2 === 0) n += 1; }   // 홀수 보정
   return n;
 }
 
 /* 12~13. Expander (확관) — 병목 발생지 */
 STD.Expander = (s, machine) => {
-  const n = expanderN(s), d = expanderStep(s);
-  if (machine === 'BOTH') {                 // 14M 초과 → #1·#2호기 동시 가동
-    const a = 177 + n * 12 + (s.L + 3500) / 300, b = 165 + n * 7.5;
+  const tag = EXP_NMODE === 'ortools' ? '[운영모델 N식]' : '[엑셀 N식]';
+  if (machine === 'BOTH') {                 // 14.021m 초과 → #1·#2호기 동시 가동
+    const n1 = expanderN(s, 'M1'), n2 = expanderN(s, 'M2');
+    const a = 177 + n1 * 12 + (s.L + 3500) / 300, b = 165 + n2 * 7.5;
     return { sec: Math.max(a, b),
-      expr: `#1·#2호기 동시 가동: max(#1 ${a.toFixed(0)}s, #2 ${b.toFixed(0)}s),  N=${n}회, step=${d.step}mm`,
+      expr: `#1·#2호기 동시 가동: max(#1 ${a.toFixed(0)}s, #2 ${b.toFixed(0)}s) ${tag}`,
       terms: [['#1호기 소요', a], ['#2호기 소요', b], ['동시 가동 → max 적용', Math.max(a, b)]] };
   }
+  const d = expanderStep(s, machine), n = expanderN(s, machine);
   if (machine === 'RB') {
     const sec = 234 + (ceil(s.L / d.step) - 2) * 15;
     return { sec, expr: `RB라인: 234 + (ceil(L/step)−2)×15, step=${d.step}mm`,
@@ -153,11 +199,11 @@ STD.Expander = (s, machine) => {
   }
   if (machine === 'M1') {
     const sec = 177 + n * 12 + (s.L + 3500) / 300;
-    return { sec, expr: `#1호기: 177 + N×12 + (L+3500)/300,  N=${n}회, step=${d.step}mm`,
+    return { sec, expr: `#1호기: 177 + N×12 + (L+3500)/300,  N=${n}회, step=${d.step}mm ${tag}`,
       terms: [['기본', 177], [`확관 ${n}회 ×12s`, n * 12], ['이송 (L+3500)/300', (s.L + 3500) / 300]] };
   }
   const sec = 165 + n * 7.5;
-  return { sec, expr: `#2호기: 165 + N×7.5,  N=${n}회(홀수), step=${d.step}mm (${d.inch}" die t${d.dieT})`,
+  return { sec, expr: `#2호기: 165 + N×7.5,  N=${n}회, step=${d.step}mm (${d.dieT}) ${tag}`,
     terms: [['기본', 165], [`확관 ${n}회 ×7.5s`, n * 7.5]] };
 };
 
@@ -237,7 +283,7 @@ const CHANGEOVER = {
   InsideWelder: { od: 600,  t: 900,  L: 0    },  // WPS 변경
   OutsideWelder:{ od: 600,  t: 900,  L: 0    },
   FirstUT:      { od: 150,  t: 150,  L: 0    },  // UT Calibration 2.5min
-  Expander:     { od: 5400, t: 1800, L: 3600 },  // 다이/헤드 교체 — 최대 병목
+  Expander:     { od: 5400, t: 1800, L: 3600 },  // (폴백) 실제는 EXP_SETUP 공구 계층 룰 사용
   EndFacing:    { od: 3600, t: 600,  L: 0    },  // 클램프 교체 60분(외경 변화 시)
   OuterBead:    { od: 120,  t: 0,    L: 0    },
   HydroTest:    { od: 3000, t: 0,    L: 0    },  // 수압 면판 교체 40~60분
@@ -245,8 +291,25 @@ const CHANGEOVER = {
   RT:           { od: 300,  t: 300,  L: 0    },
   Packing:      { od: 300,  t: 0,    L: 600  },
 };
-function changeoverSec(station, prev, cur) {
+/* 확관 셋업 — 공구 계층 룰 (세아제강 운영 최적화 모델 specs.get_setup_time_val)
+   드로바 교체 270분 > 헤드 교체 150분 > 다이 교체 90분 > 동일 0
+   od/t 변화폭이 아니라 "장착 공구가 실제로 바뀌는가"로 판정한다. */
+const EXP_SETUP = { drawbar: 270 * 60, head: 150 * 60, die: 90 * 60 };
+let EXP_SETUP_MODE = 'tool';                       // 'tool' | 'legacy'
+function setExpSetupMode(m) { EXP_SETUP_MODE = (m === 'legacy') ? 'legacy' : 'tool'; }
+function expanderSetup(prev, cur, machine) {
+  if (!prev) return { sec: 0, kind: '없음' };
+  const a = toolInfo(prev.od, prev.t, machine || 'M2');
+  const b = toolInfo(cur.od,  cur.t,  machine || 'M2');
+  if (a.drawbar !== b.drawbar) return { sec: EXP_SETUP.drawbar, kind: 'Drawbar 교체', from: a, to: b };
+  if (a.head    !== b.head)    return { sec: EXP_SETUP.head,    kind: 'Head 교체',    from: a, to: b };
+  if (a.die     !== b.die)     return { sec: EXP_SETUP.die,     kind: 'Die 교체',     from: a, to: b };
+  return { sec: 0, kind: '교체 없음', from: a, to: b };
+}
+
+function changeoverSec(station, prev, cur, machine) {
   if (!prev) return 0;
+  if (station === 'Expander' && EXP_SETUP_MODE === 'tool') return expanderSetup(prev, cur, machine).sec;
   const c = CHANGEOVER[station]; if (!c) return 0;
   let s = 0;
   if (Math.abs(prev.od - cur.od) > 0.5) s += c.od;

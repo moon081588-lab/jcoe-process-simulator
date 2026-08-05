@@ -85,8 +85,7 @@ function routeOf(s, cfg) {
   r.push('TACK', 'ISAW', 'SLUG', 'OSAW', 'CUT');
   if (s.api5l || s.qty >= 50) r.push('UT1');         // D2
   r.push('BUF');
-  const rbOK = s.t <= 25 && odInch(s.od) <= 24;      // D3: RB 라인 투입 조건
-  r.push(rbOK && cfg.useRB ? 'RB' : 'EXP');
+  r.push(useRBLine(s, cfg) ? 'RB' : 'EXP');          // D3: RB 라인 투입 조건
   if (r[r.length - 1] === 'EXP') {
     if (cfg.useCP) r.push('CP');                     // D4
     r.push('EF', 'HYD');
@@ -101,9 +100,9 @@ function routeOf(s, cfg) {
 /* --------------------------------------------------------------------
    교대 캘린더  (Excel: 실 라인 가동 시간 = 7.5H / Shift)
    -------------------------------------------------------------------- */
-function makeCalendar(cfg) {
-  const shifts = cfg.shifts;                 // 1 | 2 | 3
-  const netH = cfg.netHoursPerShift;         // 7.5
+function makeCalendar(cfg, shiftsOverride) {
+  const shifts = shiftsOverride || cfg.shifts;   // 1 | 2 | 3
+  const netH = cfg.netHoursPerShift;             // 7.5
   const wins = [];
   if (shifts === 1) wins.push([8, 8 + netH]);
   else if (shifts === 2) wins.push([8, 8 + netH], [16, 16 + netH]);
@@ -164,18 +163,100 @@ const EXP_MACHINES = [
      · 12.8M~14M 제품 → #2·#3호기가 불가하므로 Only #1 Expander 가동
      · 14M 초과 제품  → 어느 호기도 단독 불가 → #1·#2 Expander 동시 가동 (소요=max)
    -------------------------------------------------------------------- */
-const EXP_LIMIT = { M1: 14.0, M2: 12.8, M3: 12.8 };   // [m] 이상 작업 불가
+/* --------------------------------------------------------------------
+   확관 제약 기준 (RULESET) — 두 자료가 서로 다르므로 전환 가능하게 둔다
+     'ppt'     : 공정 다이어그램 + 확관기별 공정 제약표 (슬라이드 3·4)
+     'ortools' : 확관 공정 최적화 운영 모델 (specs.py / optimizer_grouped.py)
+   차이가 나는 항목은 EXP_RULESET 표에 전부 모아 두었다.
+   -------------------------------------------------------------------- */
+const EXP_RULESET = {
+  ppt: {
+    label: '공정 다이어그램 · 제약표',
+    L1: 14.0, L2: 12.8,            // [m] 초과 시 작업 불가
+    m2Exclusive: false,            // 외경 48"↑/22"↓ 는 "우선 투입"(soft)
+    rb: 'ppt',                     // RB: 두께 25T 이하 & 외경 24" 이하 (전부 만족)
+  },
+  ortools: {
+    label: '확관 최적화 운영 모델',
+    L1: 14.021, L2: 12.8384,
+    m2Exclusive: true,             // 외경 48"↑/22"↓ 는 #2호기 "전용"(hard)
+    rb: 'ortools',                 // RB: 다이표 외경 & 9≤t≤25.4 & L≤12.8
+  },
+};
+function expRules(cfg) {
+  const base = EXP_RULESET[(cfg && cfg.expRuleSet) === 'ortools' ? 'ortools' : 'ppt'];
+  return {
+    L1: cfg && cfg.expL1 != null ? +cfg.expL1 : base.L1,
+    L2: cfg && cfg.expL2 != null ? +cfg.expL2 : base.L2,
+    m2Exclusive: cfg && cfg.m2ExclusiveOD != null ? !!cfg.m2ExclusiveOD : base.m2Exclusive,
+    rb: (cfg && cfg.rbCond) || base.rb,
+    label: base.label,
+  };
+}
+const OD_M2_HI = 48 * 25.4 * 0.997;   // 1217.6mm 이상 → #2호기
+const OD_M2_LO = 22 * 25.4 * 1.003;   //  560.5mm 이하 → #2호기
+const EXP_LIMIT = { M1: 14.0, M2: 12.8, M3: 12.8 };   // (하위 호환용 기본값)
 
 function expanderMode(spec, cfg) {
+  const R = expRules(cfg);
   const Lm = spec.L / 1000;
   const pool = cfg.useM3 ? ['M1','M2','M3'] : ['M1','M2'];
-  const single = pool.filter(m => Lm < EXP_LIMIT[m]);
-  if (single.length) return { mode:'SINGLE', list:single };
-  if (Lm < EXP_LIMIT.M1 * 2) return { mode:'BOTH', list:['M1','M2'] };   // 동시 가동
-  return { mode:'BOTH', list:['M1','M2'], over:true };
+  if (Lm > R.L1) return { mode:'BOTH', list:['M1','M2'], why:`L ${Lm.toFixed(3)}m > ${R.L1}m — 단독 불가` };
+  const lim = { M1: R.L1, M2: R.L2, M3: R.L2 };
+  let single = pool.filter(m => Lm <= lim[m]);
+  if (!single.length) return { mode:'BOTH', list:['M1','M2'], over:true, why:'적격 호기 없음' };
+  /* 외경 48"↑ / 22"↓ → #2호기 전용 (길이 제약이 우선 적용된 뒤에만 판정) */
+  if (R.m2Exclusive && single.length > 1 && (spec.od >= OD_M2_HI || spec.od <= OD_M2_LO)) {
+    const only = single.filter(m => m !== 'M1');
+    if (only.length) return { mode:'SINGLE', list:only, why:`외경 ${odInch(spec.od).toFixed(0)}" — #2호기 전용` };
+  }
+  return { mode:'SINGLE', list:single };
 }
 /* #2호기 우선 투입 규격 (제약표) */
-const M2_PREFERRED = (s) => { const inch = odInch(s.od); return inch >= 48 || inch <= 22; };
+const M2_PREFERRED = (s) => (s.od >= OD_M2_HI || s.od <= OD_M2_LO);
+
+/* --------------------------------------------------------------------
+   RB 라인 적격성 — 두 자료가 외경 조건에서 정면으로 갈린다
+     · 다이어그램  「RB 라인 투입 조건 (전부 만족): 두께 25T 이하 · 외경 24" 이하」
+     · 운영 모델    RB 다이표 외경(610~1219mm = 24"~48") & 9mm ≤ t ≤ 25.4mm & L ≤ 12.8m
+   Force_RB (RB 강제 투입) — 제약표「확관 3호기: 열처리 공정 제품 & 배척 제품 우선 투입」과 일치
+     · 병목공정 == 'HT102'            (열처리 제품)
+     · 원재료길이 / 제품길이 ≥ 1.8      (배척 = 원판 1장에서 2본)
+   -------------------------------------------------------------------- */
+let _rbOD = null;
+function rbDiameters() {
+  if (_rbOD) return _rbOD;
+  _rbOD = new Set(((T.dieSpec || {}).RB || []).map(r => r[1]));
+  return _rbOD;
+}
+function rbCapable(s, cfg) {
+  const R = expRules(cfg);
+  if ((s.L / 1000) > 12.8) return false;
+  if (R.rb === 'ortools') {
+    if (s.t < 9 || s.t > 25.4) return false;
+    for (const od of rbDiameters()) if (Math.abs(od - s.od) <= 5) return true;
+    return false;
+  }
+  return s.t <= 25 && odInch(s.od) <= 24;          // 다이어그램 조건
+}
+function forceRB(s, cfg) {
+  if (!rbCapable(s, cfg)) return false;
+  if (String(s.bottleneck || '').trim().toUpperCase() === 'HT102') return true;   // 열처리
+  if (s.rawL > 0 && s.L > 0 && (s.rawL / s.L) >= 1.8) return true;                // 배척
+  return false;
+}
+/* 라우팅 시점의 RB 투입 판정.  rbMode: 'capable' | 'force' | 'off' */
+function useRBLine(s, cfg) {
+  const mode = cfg.rbMode || (cfg.useRB === false ? 'off' : 'capable');
+  if (cfg.plan && cfg.plan.assign && s.no != null) {          // 최적화/외부 스케줄 지정이 우선
+    const a = cfg.plan.assign[s.no];
+    if (a === 'RB') return true;
+    if (a === 'M1' || a === 'M2' || a === 'M3' || a === 'BOTH') return false;
+  }
+  if (mode === 'off') return false;
+  if (mode === 'force') return forceRB(s, cfg);
+  return rbCapable(s, cfg) && (cfg.useRB !== false);
+}
 
 const DISPATCH_RULES = {
   EAT   : { label:'최단 가용 (Earliest Available)', desc:'가장 먼저 비는 호기에 배정 — 현장 기본 가정' },
@@ -183,6 +264,7 @@ const DISPATCH_RULES = {
   SETUP : { label:'전환 최소 (Setup-aware)',        desc:'직전 작업과 규격이 같은 호기 우선 → 전환시간 회피' },
   SPEC  : { label:'규격 우선 (Spec-based)',          desc:'외경 48" 이상 · 22" 이하는 #2호기 우선 (제약표)' },
   OPT   : { label:'최적화 엔진 스케줄',              desc:'z(j,m)+x(ij) 최적해를 그대로 투입' },
+  IMPORT: { label:'외부 최적화 스케줄 (OR-Tools)',   desc:'CP-SAT 결과 파일의 배정·순서를 그대로 투입' },
 };
 
 function pickExpander(cand, spec, cfg, ctx) {
@@ -194,7 +276,8 @@ function pickExpander(cand, spec, cfg, ctx) {
         && Math.abs(u.last.t-spec.t)<0.5 && Math.abs(u.last.L-spec.L)<1);
       if (same.length) return same.reduce((a,b)=>a.free<=b.free?a:b);
       return cand.reduce((a,b)=>{
-        const ca=changeoverSec('Expander',a.last,spec), cb=changeoverSec('Expander',b.last,spec);
+        const ca=changeoverSec('Expander',a.last,spec,EXP_MACHINES[a.idx]&&EXP_MACHINES[a.idx].key),
+              cb=changeoverSec('Expander',b.last,spec,EXP_MACHINES[b.idx]&&EXP_MACHINES[b.idx].key);
         if (ca!==cb) return ca<cb?a:b;
         return a.free<=b.free?a:b; });
     }
@@ -238,7 +321,7 @@ function buildExpJobs(orders, cfg) {
   }
   return jobs;
 }
-function setupBetween(a, b) { return changeoverSec('Expander', a ? a.spec : null, b.spec); }
+function setupBetween(a, b, m) { return changeoverSec('Expander', a ? a.spec : null, b.spec, m || 'M2'); }
 
 /* 전진 시뮬레이션 평가 */
 function evalSchedule(order, assign, cfg, w) {
@@ -249,14 +332,14 @@ function evalSchedule(order, assign, cfg, w) {
   for (const j of order) {
     if (j.mode === 'BOTH') {
       let st = Math.max(free.M1, free.M2);
-      const su = Math.max(setupBetween(last.M1,j), setupBetween(last.M2,j));
+      const su = Math.max(setupBetween(last.M1,j,'M1'), setupBetween(last.M2,j,'M2'));
       setupTot += su;
       const en = st + su + j.p.BOTH;
       free.M1 = free.M2 = en; last.M1 = last.M2 = j;
       span.M1 += su + j.p.BOTH; span.M2 += su + j.p.BOTH;
     } else {
       const m = assign[j.no] && j.elig.includes(assign[j.no]) ? assign[j.no] : j.elig[0];
-      const su = setupBetween(last[m], j);
+      const su = setupBetween(last[m], j, m);
       setupTot += su;
       let st = free[m];
       if (cfg.sameODConcurrency) {              // 동시 가동 시 동일 외경만
@@ -286,7 +369,7 @@ function optimizeExpander(orders, cfg, opts) {
     for (const j of order) {
       if (j.mode==='BOTH'){ const st=Math.max(free.M1,free.M2)+j.p.BOTH; free.M1=free.M2=st; last.M1=last.M2=j; continue; }
       let best=null, be=Infinity;
-      for (const m of j.elig){ const e=free[m]+setupBetween(last[m],j)+j.p[m]; if(e<be){be=e;best=m;} }
+      for (const m of j.elig){ const e=free[m]+setupBetween(last[m],j,m)+j.p[m]; if(e<be){be=e;best=m;} }
       assign[j.no]=best; free[best]=be; last[best]=j;
     } }
 
@@ -327,13 +410,13 @@ function optimizeExpander(orders, cfg, opts) {
   const detail=[];
   for (const j of bestOrder) {
     if (j.mode==='BOTH') {
-      const su=Math.max(setupBetween(last.M1,j), setupBetween(last.M2,j));
+      const su=Math.max(setupBetween(last.M1,j,'M1'), setupBetween(last.M2,j,'M2'));
       const st=Math.max(free.M1,free.M2)+su, en=st+j.p.BOTH;
       detail.push({no:j.no, m:'BOTH', st, en, setup:su, p:j.p.BOTH, qty:j.qty});
       free.M1=free.M2=en; last.M1=last.M2=j;
     } else {
       const m=bestAssign[j.no]||j.elig[0];
-      const su=setupBetween(last[m],j);
+      const su=setupBetween(last[m],j,m);
       let st=free[m];
       if (cfg.sameODConcurrency) for (const o of ms)
         if(o!==m && free[o]>st && last[o] && Math.abs(last[o].spec.od-j.spec.od)>0.5) st=free[o];
@@ -352,14 +435,114 @@ function optimizeExpander(orders, cfg, opts) {
     nBoth: jobs.filter(j=>j.mode==='BOTH').length,
     nFixed: jobs.filter(j=>j.mode==='SINGLE'&&j.elig.length===1).length,
     nFree: jobs.filter(j=>j.mode==='SINGLE'&&j.elig.length>1).length,
-    weights: w, iters,
+    weights: w, iters, src:'SA',
+  };
+}
+
+/* ====================================================================
+   외부 최적화 스케줄 가져오기 (OR-Tools CP-SAT 결과)
+   optimizer_grouped.solve_integrated_schedule() 가 뽑는 DataFrame 을
+   CSV / XLSX / JSON 어느 형태로 내보내도 읽을 수 있게 헤더를 느슨하게 인식한다.
+     필수 : OrderNo(또는 판매오더/오더/오더번호) · Machine(또는 설비/호기)
+     선택 : Ex_Start(시작) · Ex_End · Quantity · Length · Diameter · Thickness
+   Machine 값 매핑 :
+     Expander#1 / EXPANDER#1 / M1 / 1호기      → M1
+     Expander#2 / M2 / 2호기                   → M2
+     Expander#RB / RB                          → RB
+     Both / BOTH / 동시                        → BOTH
+   ==================================================================== */
+const IMP_KEYS = {
+  no:      ['orderno','order_no','판매오더','오더','오더번호','order','vbtxt'],
+  machine: ['machine','설비','호기','expander','배정','assign'],
+  start:   ['ex_start','start','시작','착수','starttime'],
+  end:     ['ex_end','end','종료','완료','endtime'],
+  qty:     ['quantity','qty','수량','계획수량','본수'],
+  L:       ['length','길이'],
+  od:      ['diameter','외경'],
+  t:       ['thickness','두께'],
+  stage:   ['stage','detailno','detail_no'],
+};
+function _impNorm(h) { return String(h == null ? '' : h).trim().toLowerCase().replace(/[\s_()·]/g, ''); }
+function _impFind(headers, cands) {
+  const hs = headers.map(_impNorm);
+  for (const c of cands) {
+    const cn = _impNorm(c);
+    let i = hs.indexOf(cn);            if (i >= 0) return i;
+    i = hs.findIndex(h => h.includes(cn) && h.length <= cn.length + 4);
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+function normMachine(v) {
+  const x = String(v == null ? '' : v).trim().toUpperCase().replace(/[\s_#]/g, '');
+  if (!x) return null;
+  if (x.includes('BOTH') || x.includes('동시')) return 'BOTH';
+  if (x.includes('RB')) return 'RB';
+  if (x.includes('3')) return 'M3';
+  if (x.includes('2')) return 'M2';
+  if (x.includes('1')) return 'M1';
+  return null;
+}
+
+/** rows: 2차원 배열([헤더행, ...데이터]) 또는 객체 배열 */
+function importOptPlan(rows) {
+  if (!rows || !rows.length) throw new Error('빈 파일입니다.');
+  let headers, body;
+  if (Array.isArray(rows[0])) {
+    /* 헤더 행 탐색 — OrderNo/Machine 두 열을 모두 찾을 수 있는 첫 행 */
+    let hi = -1;
+    for (let i = 0; i < Math.min(rows.length, 25); i++) {
+      const h = rows[i].map(x => x);
+      if (_impFind(h, IMP_KEYS.no) >= 0 && _impFind(h, IMP_KEYS.machine) >= 0) { hi = i; break; }
+    }
+    if (hi < 0) throw new Error('OrderNo(판매오더) 와 Machine(설비) 열을 찾지 못했습니다.');
+    headers = rows[hi]; body = rows.slice(hi + 1);
+  } else {
+    headers = Object.keys(rows[0]); body = rows.map(r => headers.map(h => r[h]));
+  }
+  const ix = {}; for (const k of Object.keys(IMP_KEYS)) ix[k] = _impFind(headers, IMP_KEYS[k]);
+  if (ix.no < 0 || ix.machine < 0) throw new Error('OrderNo(판매오더) 와 Machine(설비) 열을 찾지 못했습니다.');
+
+  const detail = [], assign = {}, warn = [];
+  for (const r of body) {
+    const no = r[ix.no] == null ? '' : String(r[ix.no]).trim();
+    if (!no || no.toLowerCase() === 'nan') continue;
+    const m = normMachine(r[ix.machine]);
+    if (!m) { warn.push(`${no}: 설비값 '${r[ix.machine]}' 인식 실패`); continue; }
+    const num = i => (i >= 0 && r[i] != null && r[i] !== '' && isFinite(+r[i])) ? +r[i] : null;
+    const st = num(ix.start), en = num(ix.end);
+    detail.push({ no, m, st: st == null ? detail.length : st, en: en == null ? null : en,
+                  qty: num(ix.qty), L: num(ix.L), od: num(ix.od), t: num(ix.t),
+                  stage: ix.stage >= 0 ? r[ix.stage] : null,
+                  setup: 0, p: (st != null && en != null) ? (en - st) : null });
+    /* 같은 판매오더가 R/U 로 쪼개져 두 행이면 먼저 나온 배정을 채택 (동일 설비 강제 제약) */
+    if (assign[no] == null) assign[no] = m;
+    else if (assign[no] !== m) warn.push(`${no}: 행마다 설비가 다름(${assign[no]} / ${m}) — 앞의 값 사용`);
+  }
+  if (!detail.length) throw new Error('읽을 수 있는 행이 없습니다.');
+  detail.sort((a, b) => a.st - b.st);
+  const uniq = []; const seen = new Set();
+  for (const d of detail) if (!seen.has(d.no)) { seen.add(d.no); uniq.push(d.no); }
+
+  const cnt = { M1:0, M2:0, M3:0, RB:0, BOTH:0 };
+  Object.values(assign).forEach(m => cnt[m]++);
+  const unit = detail[0] && detail[0].en != null && detail[detail.length-1].en > 20000 ? 'sec' : 'min';
+  const spanRaw = Math.max(...detail.map(d => d.en == null ? 0 : d.en));
+  return {
+    src: 'IMPORT', assign, seq: uniq, detail, warn,
+    nRows: detail.length, nOrders: uniq.length, count: cnt,
+    machines: ['M1','M2','M3'].filter(m => cnt[m] > 0).concat(cnt.BOTH ? [] : []),
+    spanH: spanRaw ? (unit === 'sec' ? spanRaw / 3600 : spanRaw / 60) : null,
+    unit,
   };
 }
 
 /* 오더 → spec */
 function specOf(o, cfg) {
   return {
-    od:o.od, t:o.t, L:o.L, qty:o.qty,
+    no:o.no, od:o.od, t:o.t, L:o.L, qty:o.qty,
+    bottleneck: o.bottleneck || null,     // 병목 공정 작업장 (HT102 = 열처리 → RB 강제)
+    rawL: o.rawL || 0,                    // 원재료 길이 [mm] — 더블 파이프 판정용
     grade: o.grade || (o.t >= 25 ? 'high' : 'normal'),
     api5l: o.api5l != null ? o.api5l : (o.qty >= 50),
     markSpec:2, markEnd:2, defects:0, holdSec:cfg.holdSec, rtType:'450kV'
@@ -500,6 +683,8 @@ function monteCarlo(orders, cfg, n, onProgress, done) {
    -------------------------------------------------------------------- */
 function simulate(orders, cfg) {
   const cal = makeCalendar(cfg);
+  /* RB 라인은 1근무조 고정 (M1/M2 는 2~3근). 확관 최적화 운영 모델의 rb_multiplier 근거 */
+  const calRB = makeCalendar(cfg, cfg.rbShifts || 1);
   const t0 = new Date(cfg.startDate + 'T08:00:00').getTime() / 1000;
 
   /* 자원 풀 생성 */
@@ -529,7 +714,8 @@ function simulate(orders, cfg) {
   let doneInPeriod = 0, overflow = 0;
   const dueStat = { withDue: 0, late: 0, tardyH: 0, maxTardyH: 0 };
   let sorted = applyPeriod(orders, cfg);
-  if (plan && cfg.dispatchRule === 'OPT' && cfg.applyOptSeq !== false && plan.seq && plan.seq.length) {
+  const planRule = (cfg.dispatchRule === 'OPT' || cfg.dispatchRule === 'IMPORT');
+  if (plan && planRule && cfg.applyOptSeq !== false && plan.seq && plan.seq.length) {
     const rank = {}; plan.seq.forEach((no, i) => rank[no] = i);
     sorted = sorted.slice().sort((a, b) =>
       (rank[a.no] != null ? rank[a.no] : 9999) - (rank[b.no] != null ? rank[b.no] : 9999));
@@ -538,7 +724,7 @@ function simulate(orders, cfg) {
   for (const o of sorted) {
     const spec = specOf(o, cfg);
     const { route, line } = routeOf(spec, cfg);
-    const useOptSeq = plan && cfg.dispatchRule === 'OPT' && cfg.applyOptSeq !== false && plan.seq && plan.seq.length;
+    const useOptSeq = plan && planRule && cfg.applyOptSeq !== false && plan.seq && plan.seq.length;
     const rel = useOptSeq ? t0
       : Math.max(t0, o.start ? new Date(o.start.replace(' ', 'T')).getTime() / 1000 : t0);
     let oS = Infinity, oE = -Infinity;
@@ -555,7 +741,9 @@ function simulate(orders, cfg) {
         let u, coUnits = null, machine;
 
         if (nid === 'EXP') {
-          const em = expanderMode(spec, cfg);                       // ③ 적격집합 ℰ
+          let em = expanderMode(spec, cfg);                         // ③ 적격집합 ℰ
+          /* 외부/내부 최적화 스케줄이 BOTH 로 지정했으면 그대로 따른다 */
+          if (planRule && plan && plan.assign[o.no] === 'BOTH') em = { mode:'BOTH', list:['M1','M2'] };
           if (em.mode === 'BOTH') {
             /* 14M 초과 → #1·#2호기 동시 가동 (소요 = max) */
             coUnits = units.filter(x => x.idx <= 1);
@@ -565,7 +753,7 @@ function simulate(orders, cfg) {
           } else {
             let cand = units.filter(x => em.list.includes(EXP_MACHINES[x.idx].key));
             if (!cand.length) cand = units;
-            if (cfg.dispatchRule === 'OPT' && plan && plan.assign[o.no] && plan.assign[o.no] !== 'BOTH') {
+            if (planRule && plan && plan.assign[o.no] && plan.assign[o.no] !== 'BOTH' && plan.assign[o.no] !== 'RB') {
               const want = plan.assign[o.no];
               const fixed = cand.filter(x => EXP_MACHINES[x.idx].key === want);
               u = fixed.length ? fixed[0] : pickExpander(cand, spec, cfg, ctx);
@@ -586,7 +774,8 @@ function simulate(orders, cfg) {
         const res = fn ? fn(spec, line, k, machine) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] };
         let dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
         const seize = coUnits || [u];
-        let co = (n.free || cfg.changeover === false) ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+        let co = (n.free || cfg.changeover === false) ? 0 : Math.max(...seize.map(x =>
+          changeoverSec(n.st, x.last, spec, n.st === 'Expander' && EXP_MACHINES[x.idx] ? EXP_MACHINES[x.idx].key : null)));
         if (ST.on) {
           dur *= lnormMul(rng, ST.cvTime);
           if (co > 0) co *= lnormMul(rng, ST.cvSetup);
@@ -599,9 +788,10 @@ function simulate(orders, cfg) {
         const arrive = ready;
         let cs = Math.max(ready, ...seize.map(x => x.free));
         if (nid === 'EXP' && !coUnits) cs = sameODBlockUntil(units, u, spec, cs, cfg);  // 동시 가동 시 동일 외경
+        const CAL = (nid === 'RB') ? calRB : cal;
         let st = cs;
-        if (co > 0) { st = cal.run(cs, co); seize.forEach(x => x.setup += co); }
-        const en = cal.run(st, dur);
+        if (co > 0) { st = CAL.run(cs, co); seize.forEach(x => x.setup += co); }
+        const en = CAL.run(st, dur);
         for (const x of seize) {
           x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
         }
@@ -638,22 +828,25 @@ function simulate(orders, cfg) {
   const horizon = tEnd - t0;
   const days = horizon / 86400;
   const availPerUnit = days * cal.dayCap;
+  const availRB = days * calRB.dayCap;                 // RB 는 1근무조라 가용시간이 다르다
   const stats = [];
   for (const n of NODES) {
     if (n.kind !== 'proc') continue;
+    const avail = (n.id === 'RB') ? availRB : availPerUnit;
     const units = pools[n.id];
     const busy = units.reduce((a, u) => a + u.busy, 0);
     const setup = units.reduce((a, u) => a + u.setup, 0);
     const jobs = units.reduce((a, u) => a + u.jobs, 0);
     if (!jobs) continue;
-    const unitUtil = units.map(u => availPerUnit ? (u.busy + u.setup) / availPerUnit * 100 : 0);
+    const unitUtil = units.map(u => avail ? (u.busy + u.setup) / avail * 100 : 0);
     const utilMax = Math.max(...unitUtil), utilMin = Math.min(...unitUtil);
     stats.push({
       id: n.id, label: n.label, st: n.st, cap: units.length, jobs,
       busyH: busy / 3600, setupH: setup / 3600,
       /* util = 설비 1대 기준 가동률의 최댓값. 대수로 나눈 평균은 호기 편중을 가려서 쓰지 않는다 */
       util: utilMax,
-      utilAvg: availPerUnit ? (busy + setup) / (availPerUnit * units.length) * 100 : 0,
+      utilAvg: avail ? (busy + setup) / (avail * units.length) * 100 : 0,
+      shifts: (n.id === 'RB') ? (cfg.rbShifts || 1) : cfg.shifts,
       unitUtil, imbalance: utilMax - utilMin,
       setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
       loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),

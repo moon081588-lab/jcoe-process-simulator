@@ -15,8 +15,8 @@ const ROOT = path.join(__dirname, '..');
 const T = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/tables.json'), 'utf8'));
 const engine = fs.readFileSync(path.join(ROOT, 'src/engine.js'), 'utf8');
 
-const api = new Function('T', engine + '\nreturn { STD, pickRange, expanderStep, expanderN, odInch };')(T);
-const { STD, pickRange, expanderStep, expanderN } = api;
+const api = new Function('T', engine + '\nreturn { STD, pickRange, expanderStep, expanderN, odInch, toolInfo, expanderSetup, setExpanderNMode };')(T);
+const { STD, pickRange, expanderStep, expanderN, toolInfo, expanderSetup, setExpanderNMode } = api;
 
 let failed = 0;
 function expect(name, got, want, tol = 0.5) {
@@ -36,9 +36,16 @@ expect('TackWelder 12M',        STD.TackWelder(A, '12M').sec,   200 + 12802 / 66
 expect('InsideWelder 12M',      STD.InsideWelder(A, '12M').sec, 710 + 12802 / 21.6666667, 0.1);
 expect('OutsideWelder 12M',     STD.OutsideWelder(A, '12M').sec, 550 + 12802 / 21.6666667, 0.1);
 expect('FirstUT',               STD.FirstUT(A).sec,             240 + 12802 / 150 + (9600 / 750) * 2);
-expect('Expander #2 (N=21)',    STD.Expander(A, 'M2').sec,      165 + 21 * 7.5);
-expect('Expander #1 (N=21)',    STD.Expander(A, 'M1').sec,      177 + 21 * 12 + (12802 + 3500) / 300);
-expect('Expander #1·#2 동시',   STD.Expander(A, 'BOTH').sec,    Math.max(177 + 21 * 12 + (12802 + 3500) / 300, 165 + 21 * 7.5));
+/* 확관은 호기별 다이 스펙이 다르다 (specs.py die_specs_m1/m2/rb).
+   OD914 t9.3 → #1호기 9t(700mm), #2호기 9.5t(580mm) */
+const nM1 = expanderN(A, 'M1'), nM2 = expanderN(A, 'M2');
+expect('Expander #1 die step',  expanderStep(A, 'M1').step,     700, 0);
+expect('Expander #2 die step',  expanderStep(A, 'M2').step,     580, 0);
+expect('Expander #1 N (홀수)',   nM1,                            21, 0);
+expect('Expander #2 N (홀수)',   nM2,                            25, 0);
+expect('Expander #2',           STD.Expander(A, 'M2').sec,      165 + nM2 * 7.5);
+expect('Expander #1',           STD.Expander(A, 'M1').sec,      177 + nM1 * 12 + (12802 + 3500) / 300);
+expect('Expander #1·#2 동시',   STD.Expander(A, 'BOTH').sec,    Math.max(177 + nM1 * 12 + (12802 + 3500) / 300, 165 + nM2 * 7.5));
 expect('EndFacing 36" t9.3',    STD.EndFacing(A).sec,           363 + 221.61);
 expect('OuterBead',             STD.OuterBead(A).sec,           55 + 12802 / 20);
 expect('HydroTest 36"',         STD.HydroTest(A).sec,           90 + 85 + 30 + 60 + 300 + 180);
@@ -55,6 +62,31 @@ expect('EdgeMiller 18M 고강도', STD.EdgeMiller(B, '18M').sec,   348 - 123 / 2
 expect('PreBender 18M t31.2',   STD.PreBender(B, '18M').sec,    46.5 + (800 / 290 + 17.2) * Math.ceil((18288 - 2200) / 800));
 expect('InsideWelder t31.2 2pass', STD.InsideWelder(B, '18M').sec, 670 + 18288 / 8.953488372, 0.1);
 expect('RT 320kV 불량 2개소',   STD.RT(B).sec,                  345 + Math.ceil(18288 / 140) * 7.5 + 2 * 120);
+
+/* ---- C: 확관 공구 / 셋업 시간 (specs.get_tool_info · get_setup_time_val) --- */
+console.log('');
+const t914 = toolInfo(914, 9.3, 'M1');
+expect('toolInfo OD914 t9.3 헤드',  t914.head,   800, 0);
+expect('toolInfo OD914 t9.3 step',  t914.step,   700, 0);
+
+const S = (od, t) => ({ od, t, L: 12802 });
+expect('셋업 동일 스펙 → 0',        expanderSetup(S(914, 9.3),  S(914, 9.3),  'M1').sec,     0, 0);
+expect('셋업 다이만 교체 → 90분',   expanderSetup(S(914, 9.3),  S(914, 25.4), 'M1').sec, 5400, 0);
+expect('셋업 헤드 교체 → 150분',    expanderSetup(S(914, 9.3),  S(660, 9),    'M1').sec, 9000, 0);
+expect('셋업 드로바 교체 → 270분',  expanderSetup(S(914, 9.3),  S(508, 9),    'M1').sec, 16200, 0);
+console.log('  OD914→OD660 :', expanderSetup(S(914, 9.3), S(660, 9), 'M1').kind);
+console.log('  OD914→OD508 :', expanderSetup(S(914, 9.3), S(508, 9), 'M1').kind);
+
+/* ---- D: 확관 N 산출식 병기 (엑셀 vs 운영 최적화 모델) --------------------- */
+console.log('');
+console.log('N 산출식 비교 (OD914 t9.3 L12.802m)');
+setExpanderNMode('excel');
+const eM1 = expanderN(A, 'M1'), eM2 = expanderN(A, 'M2');
+setExpanderNMode('ortools');
+const oM1 = expanderN(A, 'M1'), oM2 = expanderN(A, 'M2');
+setExpanderNMode('excel');
+console.log(`  #1호기  엑셀 N=${eM1}  vs  운영모델 N=${oM1}   (${((oM1/eM1-1)*100).toFixed(0)}%)`);
+console.log(`  #2호기  엑셀 N=${eM2}  vs  운영모델 N=${oM2}   (${((oM2/eM2-1)*100).toFixed(0)}%)`);
 
 /* ---- 룩업 테이블 조회 ------------------------------------------------- */
 console.log('');

@@ -6,16 +6,20 @@ const PlanLoader = (() => {
 
 /* ---------- 열 자동 인식 키워드 (앞쪽일수록 우선) ---------- */
 const KEYS = {
-  no:   ['오더번호','오더 번호','order no','orderno','order','수주번호','수주','제번','작번','관리번호','lot no','lot','품번','no.'],
+  no:   ['판매오더','오더번호','오더 번호','order no','orderno','order','수주번호','수주','제번','작번','관리번호','lot no','lot','품번','no.'],
   od:   ['외경','외 경','o.d','od','outer','대구경','호칭경','규격'],
   t:    ['두께','육후','살두께','wt','thk','thickness','t(mm)','t'],
   L:    ['길이','장','length','len','l(mm)','l(m)','정척','l'],
   qty:  ['수량','본수','본','pcs','qty','q\'ty','ea','개수','투입본수'],
   date: ['계획일','투입일','착수일','생산일','조관일','일자','날짜','계획','plan date','start','date'],
   due:  ['납기','요청일','출하일','납기일','due','delivery','출하'],
+  /* 확관 최적화 운영 모델이 쓰는 두 열 — RB 강제 투입(Force_RB) 판정용 */
+  bn:   ['병목 공정 작업장','병목공정','병목 공정','작업장','bottleneck','병목'],
+  rawL: ['원재료내역','원재료 내역','원재료길이','자재내역','소재내역','원판내역','material desc'],
 };
 const REQUIRED = ['od','t','L','qty'];
-const FIELD_LABEL = { no:'오더번호', od:'외경', t:'두께', L:'길이', qty:'수량', date:'계획 투입일', due:'납기(선택)' };
+const FIELD_LABEL = { no:'오더번호', od:'외경', t:'두께', L:'길이', qty:'수량', date:'계획 투입일', due:'납기(선택)',
+                      bn:'병목 공정(선택)', rawL:'원재료 내역(선택)' };
 
 const norm = s => String(s == null ? '' : s).toLowerCase().replace(/[\s()[\]{}·・.,_/\\-]/g, '');
 const isNum = v => typeof v === 'number' && isFinite(v);
@@ -42,6 +46,25 @@ function toDate(v) {
 }
 const fmtDT = d => { const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+/* 원재료내역 문자열에서 길이[mm] 추출.
+   data_loader._extract_raw_length 와 같은 취지 — '...*12802' / '12.802M' / '25604mm' 등 */
+function extractRawLength(v) {
+  if (v == null) return 0;
+  if (isNum(v)) return v > 100 ? v : v * 1000;
+  const s = String(v);
+  let best = 0;
+  const re = /(\d+(?:\.\d+)?)\s*(mm|m|M|MM)?/g;
+  let m;
+  while ((m = re.exec(s))) {
+    let x = parseFloat(m[1]);
+    const u = (m[2] || '').toLowerCase();
+    if (u === 'm' && x < 100) x *= 1000;
+    else if (!u && x < 100) continue;            // 단위 없는 작은 수는 두께/수량일 수 있어 제외
+    if (x >= 3000 && x <= 60000 && x > best) best = x;
+  }
+  return best;
+}
 
 /* ---------- 헤더 행 탐지 ---------- */
 function detectHeader(rows) {
@@ -73,7 +96,7 @@ function detectHeader(rows) {
 function autoMap(headers, body) {
   const map = {};
   const used = new Set();
-  for (const f of ['no', 'od', 't', 'L', 'qty', 'date', 'due']) {
+  for (const f of ['no', 'od', 't', 'L', 'qty', 'date', 'due', 'bn', 'rawL']) {
     let hit = -1, hitRank = 1e9;
     headers.forEach((h, ci) => {
       if (used.has(ci)) return;
@@ -170,6 +193,12 @@ function buildOrders(body, map, units, opt) {
     const o = { no, od, t, L, qty, start: fmtDT(d) };
     const due = toDate(g('due'));
     if (due) o.due = fmtDT(due);
+    /* 병목 공정 작업장 (HT102 = 열처리 → RB 강제) */
+    const bn = g('bn');
+    if (bn != null && String(bn).trim() && String(bn).trim() !== '-') o.bottleneck = String(bn).trim();
+    /* 원재료 내역에서 원판 길이 추출 → 원재료/제품 길이비 ≥ 1.8 이면 배척(더블 파이프) */
+    const rl = extractRawLength(g('rawL'));
+    if (rl) o.rawL = rl;
     orders.push(o);
   });
 
@@ -294,7 +323,7 @@ function mount(el, opts) {
             ({ v: i, t: `${i + 1}행 · ${(r || []).filter(x => x != null && x !== '').slice(0, 4).join(' | ').slice(0, 40)}` })))}</div>
       </div>
       <div class="pl-row">
-        ${['no', 'od', 't', 'L', 'qty', 'date', 'due'].map(f =>
+        ${['no', 'od', 't', 'L', 'qty', 'date', 'due', 'bn', 'rawL'].map(f =>
           `<div class="pl-f ${REQUIRED.includes(f) ? 'req' : ''} ${REQUIRED.includes(f) && MAP[f] == null ? 'bad' : ''}" id="plF_${f}">
              <label>${FIELD_LABEL[f]}${REQUIRED.includes(f) ? ' *' : ''}</label>
              ${sel('plC_' + f, MAP[f] == null ? '' : MAP[f], colOpts)}</div>`).join('')}
@@ -310,7 +339,7 @@ function mount(el, opts) {
 
     $$('plSheet').onchange = e => renderCfg(e.target.value);
     $$('plHdr').onchange = e => { HDR = +e.target.value; reMap(); };
-    ['no', 'od', 't', 'L', 'qty', 'date', 'due'].forEach(f =>
+    ['no', 'od', 't', 'L', 'qty', 'date', 'due', 'bn', 'rawL'].forEach(f =>
       $$('plC_' + f).onchange = e => { MAP[f] = e.target.value === '' ? null : +e.target.value; refresh(); });
     ['od', 'L'].forEach(u => $$('plU_' + u).onchange = e => { UNITS[u] = e.target.value; refresh(); });
     $$('plStart').onchange = refresh;
