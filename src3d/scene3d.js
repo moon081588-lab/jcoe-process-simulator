@@ -469,12 +469,13 @@ function buildLogicalCurves(){
 }
 
 /* ---------------- 시뮬레이션 연동 ---------------- */
-let PLAN3 = null;
+let PLAN3 = null, SEED = 1, LOOP = false, seeking = false;
 function readCfg(){ return {
   startDate:(ORDERS[0]&&ORDERS[0].start?ORDERS[0].start.slice(0,10):'2026-03-02'), shifts:+$('cfgShifts').value, netHoursPerShift:7.5,
   skipWeekend:false, useRB:$('cfgRB').checked, useCP:false, processingFinalUT:false,
   holdSec:60, changeover:$('cfgCO').checked, freeStationSec:300, eventCap:1e9,
   dispatchRule: ($('cfgRule')||{}).value || 'EAT', sameODConcurrency:true, useM3:false,
+  seed: SEED, stochastic: { on: $('stOn') ? $('stOn').checked : false, mtbfH: 200 },
   applyOptSeq:true, plan:PLAN3 }; }
 const CO_BACKUP = JSON.stringify(CHANGEOVER);
 function runSim(){
@@ -486,10 +487,12 @@ function runSim(){
   SIM.events.sort((a,b)=>a.s-b.s);
   SIM.byR = SIM.events.slice().sort((a,b)=>a.r-b.r);
   animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
+  if($('seek')) $('seek').value=0;
   for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
   $('simInfo').textContent = `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
     + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
-    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '');
+    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
+    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '');
   buildStat(); updateStat(); refreshVisual();
 }
 const _oc={};
@@ -498,7 +501,7 @@ function orderHue(no){ if(_oc[no]===undefined) _oc[no]=(Object.keys(_oc).length*
 function step(dt){
   if(!SIM) return;
   animT += dt*speed;
-  if(animT>SIM.tEnd){ animT=SIM.tEnd; playing=false; $('btnPlay').textContent='▶'; }
+  if(animT>SIM.tEnd){ if(LOOP){ seekTo(SIM.t0); return; } animT=SIM.tEnd; playing=false; $('btnPlay').textContent='▶'; }
   const ev=SIM.events;
   for(const n of NODES){ const s=nodeState[n.id]; s.active=[]; s.q=0; }
   let lo=0,hi=ev.length-1,st=ev.length;
@@ -532,8 +535,8 @@ function step(dt){
     evIdx++;
   }
   $('simClock').textContent=fmtT(animT);
-  $('simProg').style.width=((animT-SIM.t0)/(SIM.tEnd-SIM.t0)*100).toFixed(2)+'%';
   $('doneCnt').textContent=completed.toLocaleString();
+  if(!seeking&&$('seek')) $('seek').value=Math.round((animT-SIM.t0)/Math.max(1,SIM.tEnd-SIM.t0)*1000);
   $('logBody').innerHTML=logs.slice(0,40).map(l=>`<div class="lg">${l}</div>`).join('');
   updateStat(); refreshVisual();
 }
@@ -710,6 +713,23 @@ function showInfo(){
   $('infoX').onclick=()=>{ selected=null; p.classList.remove('on'); };
 }
 
+/* ---------------- 재생 컨트롤 ---------------- */
+function seekTo(t){
+  if(!SIM) return;
+  animT=Math.max(SIM.t0,Math.min(SIM.tEnd,t));
+  evIdx=0; completed=0; started=0; logs.length=0;
+  for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+  const ev=SIM.events;
+  while(evIdx<ev.length && ev[evIdx].s<=animT){
+    const e=ev[evIdx];
+    nodeState[e.n].done++;
+    if(e.n==='EM12'||e.n==='EM18') started++;
+    if(e.n==='PACK') completed++;
+    evIdx++;
+  }
+  step(0);
+}
+
 /* ---------------- 계획서 로더 ---------------- */
 let PLAN_SRC = null;
 function applyOrders(list, srcLabel){
@@ -757,6 +777,10 @@ function boot(){
     `<option value="${k}">${v.label.replace(/\s*\(.*\)/,'')}</option>`).join('');
   $('cfgShifts').onchange=runSim; $('cfgRB').onchange=runSim; $('cfgCO').onchange=runSim;
   $('cfgRule').onchange=runSim;
+  $('stOn').onchange=runSim;
+  $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
+  $('loopChk').onchange=e=>LOOP=e.target.checked;
+  $('btnDice').onclick=()=>{ SEED=Math.floor(Math.random()*2147483646)+1; runSim(); };
   initPlanLoader();
   runSim(); requestAnimationFrame(loop);
 }

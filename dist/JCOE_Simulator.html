@@ -125,6 +125,22 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
 .mrow i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;font-style:normal}
 .imp{color:#7ee787;font-weight:600}
 .wors{color:#ff9a92;font-weight:600}
+#seek{width:190px;accent-color:#1f6feb}
+label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;cursor:pointer}
+#btnDice{background:#2a3444;border:none;color:#fff;border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1}
+#btnDice:hover{background:#36435a}
+.mcbar{height:7px;background:#21262d;border-radius:4px;overflow:hidden;margin-bottom:12px}
+#mcProg{height:100%;width:0;background:linear-gradient(90deg,#1f6feb,#58a6ff);transition:width .1s}
+.hist{background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:13px 16px;margin-bottom:13px}
+.hist h4{font-size:12px;color:var(--acc);margin-bottom:10px;display:flex;justify-content:space-between}
+.hist h4 span{color:var(--dim);font-weight:400}
+.hbars{display:flex;align-items:flex-end;gap:2px;height:96px}
+.hbars div{flex:1;background:#1f6feb;border-radius:2px 2px 0 0;min-height:1px;position:relative}
+.hbars div.mid{background:#2ea043}
+.hbars div.hi{background:#da3633}
+.haxis{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);margin-top:5px}
+.hpct{display:flex;gap:16px;font-size:11px;color:var(--dim);margin-top:9px;flex-wrap:wrap}
+.hpct b{color:#fff;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -133,10 +149,11 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
   <h1>세아제강 JCOE 공정 시뮬레이터<small>POSTECH × 세아제강 · 표준시간 기준 25.12.18</small></h1>
   <div class="tabs">
     <div class="tab on" data-p="pFlow">공정 흐름</div>
-    <div class="tab" data-p="pCalc">표준시간 계산기</div>
-    <div class="tab" data-p="pIO">In / Out 시간표</div>
-    <div class="tab" data-p="pOpt">확관 배분 · 최적화</div>
-    <div class="tab" data-p="pGantt">오더 스케줄</div>
+    <div class="tab" data-p="pCalc">표준시간</div>
+    <div class="tab" data-p="pIO">In · Out</div>
+    <div class="tab" data-p="pOpt">확관 최적화</div>
+    <div class="tab" data-p="pMC">반복 실행</div>
+    <div class="tab" data-p="pGantt">오더 간트</div>
     <div class="tab" data-p="pBn">병목 분석</div>
     <div class="tab" data-p="pCfg">계획서 · 설정</div>
   </div>
@@ -149,7 +166,9 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
       <button id="btnPlay">▶</button><button id="btnReset">↺</button>
       <span style="font-size:11px;color:var(--dim)">배속</span>
       <input type="range" id="spd" min="0" max="4" step="1" value="1"><span id="spdL" style="font-size:11px;color:var(--acc);width:48px">10분/s</span>
-      <div id="progWrap"><div id="simProg"></div></div>
+      <input type="range" id="seek" min="0" max="1000" value="0" title="타임라인 — 끌어서 원하는 시점으로">
+      <label class="mini"><input type="checkbox" id="loopChk">반복</label>
+      <button id="btnDice" title="새 시드로 다시 실행 (변동성 켜져 있을 때 매번 다른 결과)">🎲</button>
       <div class="lgnd">
         <span><i style="background:#238636"></i>대기(Idle)</span>
         <span><i style="background:#1f6feb"></i>가공중</span>
@@ -273,6 +292,43 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
       <th style="text-align:right">부하 편차(h)</th><th>확관 전환시간 비교</th></tr></thead><tbody id="cmpBody">
       <tr><td colspan="9" style="color:#6e7681">「전체 규칙 비교 실행」을 누르면 결과가 표시됩니다.</td></tr></tbody></table></div>
     <div id="cmpNote"></div>
+  </div></section>
+
+  <!-- ========== 반복 실행 (몬테카를로) ========== -->
+  <section class="pane" id="pMC"><div class="inner">
+    <h3>① 변동성 설정 <span class="sub">끄면 결정론 — 몇 번을 돌려도 결과가 같습니다</span></h3>
+    <div class="toolbar">
+      <div class="f ck"><input type="checkbox" id="stOn"><label for="stOn"><b>변동성 사용</b></label></div>
+      <div class="f"><label>작업시간 변동 CV</label><input type="number" id="stCvT" value="0.10" step="0.01" min="0" max="0.6"></div>
+      <div class="f"><label>전환시간 변동 CV</label><input type="number" id="stCvS" value="0.20" step="0.01" min="0" max="0.8"></div>
+      <div class="f"><label>불량률 (본당)</label><input type="number" id="stDef" value="0.02" step="0.005" min="0" max="0.3"></div>
+      <div class="f"><label>불량 중 용접문제 비율</label><input type="number" id="stWeld" value="0.65" step="0.05" min="0" max="1"></div>
+      <div class="f"><label>본당 최대 재작업</label><input type="number" id="stMaxRw" value="2" step="1" min="0" max="5"></div>
+      <div class="f"><label>설비 MTBF (h, 0=무고장)</label><input type="number" id="stMtbf" value="0" step="10" min="0"></div>
+      <div class="f"><label>평균 수리 MTTR (h)</label><input type="number" id="stMttr" value="1.5" step="0.5" min="0"></div>
+      <div class="f"><label>Repair (분)</label><input type="number" id="stRep" value="30" step="5" min="0"></div>
+      <div class="f"><label>보수 용접 (분)</label><input type="number" id="stRw" value="60" step="5" min="0"></div>
+      <div class="f"><label>재확관 처리 (분)</label><input type="number" id="stEp" value="45" step="5" min="0"></div>
+      <button id="btnStApply">적용 · 1회 실행</button>
+      <button id="btnStDice" class="ghost">🎲 새 시드로 실행</button>
+    </div>
+    <div class="note">변동성을 켜면 <b>F-X ray 에서 불량이 실제로 발생</b>해 Repair → 보수 용접(재검사) 또는
+      Expander 문제(재확관) 루프를 타게 됩니다. 지금까지 그려만 놓고 아무도 지나가지 않던 경로입니다.
+      작업시간은 로그정규분포로 흔들리고, MTBF 를 넣으면 설비 고장·수리 정지도 발생합니다.</div>
+
+    <h3>② 반복 실행</h3>
+    <div class="toolbar">
+      <div class="f"><label>반복 횟수</label><select id="mcN">
+        <option>20</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select></div>
+      <div class="f ck"><input type="checkbox" id="mcAllRules"><label for="mcAllRules">배분 규칙 5종 각각 반복</label></div>
+      <button id="btnMC">반복 실행</button>
+      <div class="hint" id="mcHint">각 실행마다 시드가 달라져 서로 다른 결과가 나옵니다. 분포로 “빠르면 며칠, 나쁘면 며칠”을 봅니다.</div>
+    </div>
+    <div id="mcProgWrap" style="display:none"><div class="mcbar"><div id="mcProg"></div></div></div>
+    <div class="kpis" id="mcSum"></div>
+    <div id="mcHist"></div>
+    <div id="mcTable"></div>
+    <div id="mcRules"></div>
   </div></section>
 
   <!-- ========== 간트 ========== -->
@@ -1374,6 +1430,108 @@ function specOf(o, cfg) {
   };
 }
 
+/* ====================================================================
+   확률 변동 (Stochastic) — 매 실행마다 다른 결과
+   기본값은 모두 0 이므로 변동성을 끄면 결정론 결과와 완전히 동일하다.
+   ==================================================================== */
+const STOCH_DEFAULT = {
+  on: false,
+  cvTime: 0.10,      // 작업시간 변동계수 (로그정규)
+  cvSetup: 0.20,     // 설비 전환시간 변동계수
+  pDefect: 0.02,     // F-X ray 불량 발생률 (본당)
+  pWeld: 0.65,       // 불량 중 용접 문제 비율 (나머지는 Expander 문제)
+  maxRework: 2,      // 본당 최대 재작업 횟수
+  mtbfH: 0,          // 설비 평균 고장 간격 [h] (0 = 고장 없음)
+  mttrH: 1.5,        // 평균 수리 시간 [h]
+  repairSec: 1800,   // Repair 소요
+  reweldSec: 3600,   // 보수 용접 소요
+  expIssueSec: 2700, // Expander 문제 처리 소요
+};
+/* mulberry32 — 시드 기반 결정론적 난수 */
+function makeRng(seed) {
+  let a = (seed >>> 0) || 1;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/* 로그정규 배수 — 평균 1, 변동계수 cv */
+function lnormMul(rng, cv) {
+  if (!cv) return 1;
+  const s2 = Math.log(1 + cv * cv), s = Math.sqrt(s2);
+  let u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  return Math.exp(z * s - s2 / 2);
+}
+const expo = (rng, mean) => -mean * Math.log(1 - rng());
+
+/* --------------------------------------------------------------------
+   반복 실행 (몬테카를로) — 시드를 바꿔가며 N 회 실행하고 분포를 낸다.
+   onProgress(i, n) 가 있으면 청크 단위로 비동기 실행한다.
+   -------------------------------------------------------------------- */
+function quantile(sorted, q) {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+function summarize(v) {
+  const s = v.slice().sort((a, b) => a - b);
+  const mean = v.reduce((a, x) => a + x, 0) / (v.length || 1);
+  const sd = Math.sqrt(v.reduce((a, x) => a + (x - mean) ** 2, 0) / Math.max(1, v.length - 1));
+  return { n: v.length, mean, sd, min: s[0] || 0, max: s[s.length - 1] || 0,
+           p10: quantile(s, 0.1), p50: quantile(s, 0.5), p90: quantile(s, 0.9), values: s };
+}
+function monteCarlo(orders, cfg, n, onProgress, done) {
+  const runs = [];
+  const base = { ...cfg, collectEvents: false };
+  let i = 0;
+  const chunk = () => {
+    const t0 = performance.now();
+    while (i < n && performance.now() - t0 < 120) {
+      const S = simulate(orders, { ...base, seed: (cfg.seed || 1) + i * 7919 });
+      const e = S.stats.find(x => x.id === 'EXP');
+      runs.push({
+        makespanD: S.kpi.makespanH / 24, expSetupH: S.kpi.expSetupH, totalSetupH: S.kpi.totalSetupH,
+        expUtil: S.kpi.expUtil, rework: S.kpi.rework, breakdowns: S.kpi.breakdowns,
+        downtimeH: S.kpi.downtimeH, thru: S.kpi.throughputPerDay,
+        topUtil: S.stats[0] ? S.stats[0].util : 0, topName: S.stats[0] ? S.stats[0].label : '',
+        u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0,
+      });
+      i++;
+    }
+    if (onProgress) onProgress(i, n);
+    if (i < n) setTimeout(chunk, 0);
+    else if (done) done(finish());
+  };
+  const finish = () => ({
+    n: runs.length, runs,
+    makespanD: summarize(runs.map(r => r.makespanD)),
+    expSetupH: summarize(runs.map(r => r.expSetupH)),
+    totalSetupH: summarize(runs.map(r => r.totalSetupH)),
+    expUtil: summarize(runs.map(r => r.expUtil)),
+    rework: summarize(runs.map(r => r.rework)),
+    downtimeH: summarize(runs.map(r => r.downtimeH)),
+    thru: summarize(runs.map(r => r.thru)),
+    topName: runs.length ? runs[0].topName : '',
+  });
+  if (onProgress || done) { chunk(); return null; }
+  while (i < n) {
+    const S = simulate(orders, { ...base, seed: (cfg.seed || 1) + i * 7919 });
+    const e = S.stats.find(x => x.id === 'EXP');
+    runs.push({ makespanD: S.kpi.makespanH / 24, expSetupH: S.kpi.expSetupH, totalSetupH: S.kpi.totalSetupH,
+      expUtil: S.kpi.expUtil, rework: S.kpi.rework, breakdowns: S.kpi.breakdowns, downtimeH: S.kpi.downtimeH,
+      thru: S.kpi.throughputPerDay, topUtil: S.stats[0] ? S.stats[0].util : 0,
+      topName: S.stats[0] ? S.stats[0].label : '',
+      u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0 });
+    i++;
+  }
+  return finish();
+}
+
 /* --------------------------------------------------------------------
    시뮬레이터 — 파이프 단위 FIFO 디스패치
    -------------------------------------------------------------------- */
@@ -1391,6 +1549,11 @@ function simulate(orders, cfg) {
       units.push({ id: n.id + '#' + (i + 1), idx: i, free: t0, last: null, busy: 0, setup: 0, jobs: 0 });
     pools[n.id] = units;
   }
+  const ST = Object.assign({}, STOCH_DEFAULT, cfg.stochastic || {});
+  const rng = makeRng(cfg.seed || 1);
+  const collect = cfg.collectEvents !== false;
+  let nRework = 0, nBreak = 0, downtime = 0;
+
   const events = [];
   const orderSpan = {};
   const ctx = { rr: 0 };
@@ -1416,10 +1579,12 @@ function simulate(orders, cfg) {
 
     for (let k = 1; k <= o.qty; k++) {
       seqGlobal++;
-      let ready = rel, prevId = null;
-      for (const nid of route) {
+      let ready = rel, prevId = null, rework = 0, guard = 0;
+      const queue = route.slice();
+      while (queue.length && guard++ < 300) {
+        const nid = queue.shift();
         const n = NODE[nid];
-        if (n.kind === 'buf') continue;
+        if (!n || n.kind === 'buf') continue;
         const units = pools[nid];
         let u, coUnits = null, machine;
 
@@ -1450,10 +1615,20 @@ function simulate(orders, cfg) {
         }
 
         const fn = n.free ? null : STD[n.st];
-        const res = fn ? fn(spec, line, k, machine) : { sec: cfg.freeStationSec, expr: '고정 시간(측정 대상 외)', terms: [] };
-        const dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
+        const freeSec = nid === 'RP' ? ST.repairSec : nid === 'RW' ? ST.reweldSec
+                      : nid === 'EP' ? ST.expIssueSec : cfg.freeStationSec;
+        const res = fn ? fn(spec, line, k, machine) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] };
+        let dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
         const seize = coUnits || [u];
-        const co = n.free ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+        let co = n.free ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+        if (ST.on) {
+          dur *= lnormMul(rng, ST.cvTime);
+          if (co > 0) co *= lnormMul(rng, ST.cvSetup);
+          if (ST.mtbfH > 0 && rng() < dur / (ST.mtbfH * 3600)) {      // 설비 고장
+            const dt = expo(rng, ST.mttrH * 3600);
+            dur += dt; nBreak++; downtime += dt;
+          }
+        }
 
         const arrive = ready;
         let cs = Math.max(ready, ...seize.map(x => x.free));
@@ -1465,11 +1640,18 @@ function simulate(orders, cfg) {
           x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
         }
         ready = en;
-        events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
-                      both: !!coUnits, mach: machine });
+        if (collect) events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
+                      both: !!coUnits, mach: machine, rw: rework > 0 });
         prevId = nid;
         if (st < oS) oS = st;
         if (en > oE) oE = en;
+
+        /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
+        if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
+          rework++; nRework++;
+          if (rng() < ST.pWeld) queue.unshift('RP', 'RW', ...route.slice(route.indexOf('FX')));
+          else                  queue.unshift('RP', 'EP', ...route.slice(route.indexOf('EXP')));
+        }
       }
     }
     orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route };
@@ -1505,6 +1687,9 @@ function simulate(orders, cfg) {
     expBalanceH: expStat ? Math.abs((expStat.units[0] ? expStat.units[0].busyH : 0)
                                   - (expStat.units[1] ? expStat.units[1].busyH : 0)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
+    rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
+    throughputPerDay: Object.values(orderSpan).reduce((a, v) => a + v.qty, 0) / (horizon / 86400),
+    seed: cfg.seed || 1, stochOn: !!ST.on,
   };
   return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, kpi,
            rule: cfg.dispatchRule, eligRule: cfg.eligRule };
@@ -1545,6 +1730,19 @@ function readCfg() {
     changeover: $('cfgCO').checked,
     freeStationSec: 300,
     eventCap: 1e9,
+    seed: SEED,
+    stochastic: readStoch(),
+  };
+}
+let SEED = 1;
+function readStoch(){
+  if(!$('stOn')) return { on:false };
+  return {
+    on: $('stOn').checked,
+    cvTime:+$('stCvT').value, cvSetup:+$('stCvS').value,
+    pDefect:+$('stDef').value, pWeld:+$('stWeld').value, maxRework:+$('stMaxRw').value,
+    mtbfH:+$('stMtbf').value, mttrH:+$('stMttr').value,
+    repairSec:+$('stRep').value*60, reweldSec:+$('stRw').value*60, expIssueSec:+$('stEp').value*60,
   };
 }
 function runSim() {
@@ -1558,10 +1756,13 @@ function runSim() {
   $('simInfo').textContent =
     `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
     + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`
-    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '');
+    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
+    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  if($('mcHint')) renderStNote();
+  if($('seek')) $('seek').value=0;
   $('logBody').innerHTML='<div class="lg">▶ 를 눌러 시뮬레이션을 재생하세요.</div>';
 }
 
@@ -1822,7 +2023,7 @@ function draw() {
 function stepAnim(dt) {
   if (!SIM) return;
   animT += dt * speed;
-  if (animT > SIM.tEnd) { animT = SIM.tEnd; playing = false; $('btnPlay').textContent='▶'; }
+  if (animT > SIM.tEnd) { if(LOOP){ seekTo(SIM.t0); return; } animT = SIM.tEnd; playing = false; $('btnPlay').textContent='▶'; }
   const ev = SIM.events;
   for (const n of NODES){ const s0=nodeState[n.id]; s0.active=[]; s0.q=0; }
   /* 활성/대기 이벤트: 도착시각 기준 이진탐색 후 스캔 */
@@ -1864,7 +2065,6 @@ function stepAnim(dt) {
     evIdx++;
   }
   $('simClock').textContent = fmtT(animT);
-  $('simProg').style.width = ((animT-SIM.t0)/(SIM.tEnd-SIM.t0)*100).toFixed(2)+'%';
   $('doneCnt').textContent = completed.toLocaleString();
   updateStatPanel();
   $('logBody').innerHTML = logs.slice(0,60).map(l=>`<div class="lg">${l}</div>`).join('');
@@ -2223,6 +2423,34 @@ function renderBottleneck(){
     </div>`).join('');
 }
 
+/* ================= 재생 컨트롤 ================= */
+let LOOP = false, seeking = false;
+function seekTo(t){
+  if(!SIM) return;
+  animT = Math.max(SIM.t0, Math.min(SIM.tEnd, t));
+  evIdx = 0; completed = 0; logs.length = 0;
+  for (const n of NODES) nodeState[n.id] = { active:[], q:0, done:0 };
+  const ev = SIM.events;
+  while (evIdx < ev.length && ev[evIdx].s <= animT) {
+    const e = ev[evIdx];
+    nodeState[e.n].done++;
+    if (e.n === 'PACK') completed++;
+    evIdx++;
+  }
+  stepAnim(0);
+}
+function syncSeek(){
+  if(!SIM || seeking) return;
+  const f = (animT - SIM.t0) / Math.max(1, SIM.tEnd - SIM.t0);
+  $('seek').value = Math.round(f*1000);
+}
+function newSeed(){
+  SEED = (Math.floor(Math.random()*2147483646)+1);
+  runSim();
+  if(!SIM.kpi.stochOn)
+    $('logBody').innerHTML='<div class="lg">변동성이 꺼져 있어 결과가 동일합니다 — 「반복 실행」 탭에서 변동성을 켜 주세요.</div>';
+}
+
 /* ================= 계획서 로더 연동 ================= */
 let PLAN_SRC = null;
 function applyOrders(list, meta, srcLabel){
@@ -2254,6 +2482,124 @@ function initPlanLoader(){
   });
 }
 
+
+/* ================= 반복 실행 (몬테카를로) ================= */
+let MC_LAST = null;
+function initMCTab(){
+  const re = ()=>{ if($('stOn').checked) runSim(); };
+  ['stOn','stCvT','stCvS','stDef','stWeld','stMaxRw','stMtbf','stMttr','stRep','stRw','stEp']
+    .forEach(id=>$(id).onchange=()=>{});
+  $('btnStApply').onclick=()=>{ runSim(); document.querySelector('.tab[data-p="pFlow"]').click(); };
+  $('btnStDice').onclick=()=>{ SEED=Math.floor(Math.random()*2147483646)+1; runSim(); renderStNote(); };
+  $('btnMC').onclick=runMC;
+  renderStNote();
+}
+function renderStNote(){
+  if(!SIM) return;
+  $('mcHint').innerHTML = SIM.kpi.stochOn
+    ? `현재 seed <b style="color:#58a6ff">${SIM.kpi.seed}</b> · 이번 실행 재작업 ${SIM.kpi.rework}본 · 고장 ${SIM.kpi.breakdowns}회`
+    : '변동성이 꺼져 있습니다. 위 「변동성 사용」을 켜야 실행할 때마다 다른 결과가 나옵니다.';
+}
+function runMC(){
+  const n = +$('mcN').value;
+  const allRules = $('mcAllRules').checked;
+  const cfg = readCfg();
+  if(!cfg.stochastic.on){
+    $('mcSum').innerHTML = `<div class="kpi bn"><b>변동성 꺼짐</b><span>모든 실행이 동일합니다 — 위에서 켜 주세요</span></div>`;
+    $('mcHist').innerHTML=''; $('mcTable').innerHTML=''; $('mcRules').innerHTML=''; return;
+  }
+  $('btnMC').disabled=true; $('mcProgWrap').style.display='block';
+  if(allRules && !PLAN){
+    $('mcHint').textContent='최적화 엔진 해를 먼저 계산하는 중…';
+    PLAN = optimizeExpander(ORDERS, cfg, {weights:{cmax:+$('wCmax').value,setup:+$('wSetup').value,bal:+$('wBal').value},
+                                          iters:+$('optIters').value});
+    cfg.plan = PLAN;
+  }
+  const rules = allRules ? Object.keys(DISPATCH_RULES) : [cfg.dispatchRule];
+  const results = {};
+  let ri = 0;
+  const next = () => {
+    if(ri >= rules.length){
+      $('btnMC').disabled=false; $('mcProgWrap').style.display='none';
+      MC_LAST = results; renderMC(results, rules, n); return;
+    }
+    const r = rules[ri];
+    monteCarlo(ORDERS, {...cfg, dispatchRule:r},  n,
+      (i,tot)=>{ $('mcProg').style.width = ((ri+i/tot)/rules.length*100).toFixed(1)+'%';
+                 $('mcHint').innerHTML = `실행 중… ${DISPATCH_RULES[r].label} ${i}/${tot}`; },
+      res => { results[r]=res; ri++; next(); });
+  };
+  next();
+}
+function histogram(sum, unit, digits, label){
+  const v = sum.values; if(!v.length) return '';
+  const lo = sum.min, hi = sum.max, span = (hi-lo)||1, B = 22;
+  const bins = new Array(B).fill(0);
+  v.forEach(x=>bins[Math.min(B-1, Math.floor((x-lo)/span*B))]++);
+  const mx = Math.max(...bins);
+  const cls = i => { const c = lo+(i+0.5)/B*span;
+    return c<=sum.p10?'':c>=sum.p90?'hi':(c>=sum.p10&&c<=sum.p90?'mid':''); };
+  return `<div class="hist"><h4>${label}<span>${sum.n}회 실행</span></h4>
+    <div class="hbars">${bins.map((b,i)=>
+      `<div class="${cls(i)}" style="height:${(b/mx*100).toFixed(1)}%" title="${(lo+i/B*span).toFixed(digits)}~${(lo+(i+1)/B*span).toFixed(digits)}${unit} : ${b}회"></div>`).join('')}</div>
+    <div class="haxis"><span>${lo.toFixed(digits)}${unit}</span><span>${hi.toFixed(digits)}${unit}</span></div>
+    <div class="hpct">
+      <span>P10 <b>${sum.p10.toFixed(digits)}${unit}</b></span>
+      <span>중앙값 P50 <b>${sum.p50.toFixed(digits)}${unit}</b></span>
+      <span>P90 <b>${sum.p90.toFixed(digits)}${unit}</b></span>
+      <span>평균 <b>${sum.mean.toFixed(digits)}${unit}</b> ± ${sum.sd.toFixed(digits)}</span>
+      <span>최소~최대 <b>${lo.toFixed(digits)}~${hi.toFixed(digits)}${unit}</b></span></div></div>`;
+}
+function renderMC(results, rules, n){
+  const cur = results[rules[0]];
+  const R = results[readCfg().dispatchRule] || cur;
+  $('mcHint').innerHTML = `완료 — 규칙 ${rules.length}종 × ${n}회`;
+  const spread = R.makespanD.p90 - R.makespanD.p10;
+  $('mcSum').innerHTML = `
+    <div class="kpi"><b>${R.makespanD.p50.toFixed(1)} 일</b><span>완료 소요 중앙값 (P50)</span></div>
+    <div class="kpi bn"><b>${R.makespanD.p90.toFixed(1)} 일</b><span>보수적 계획 기준 (P90)</span></div>
+    <div class="kpi"><b>± ${(spread/2).toFixed(1)} 일</b><span>P10~P90 폭 — 계획 불확실성</span></div>
+    <div class="kpi"><b>${R.rework.p50.toFixed(0)} 본</b><span>재작업 발생 (중앙값)</span></div>
+    <div class="kpi"><b>${R.thru.p50.toFixed(0)} 본/일</b><span>일 평균 산출</span></div>
+    <div class="kpi"><b>${R.downtimeH.p50.toFixed(0)} h</b><span>설비 고장 정지 (중앙값)</span></div>`;
+  $('mcHist').innerHTML =
+      histogram(R.makespanD, '일', 1, '완료 소요일 분포')
+    + histogram(R.expSetupH, 'h', 0, '확관 설비 전환시간 분포')
+    + histogram(R.rework, '본', 0, '재작업 발생 본수 분포');
+  $('mcTable').innerHTML = `<h4 class="sh">지표별 분포</h4><div class="tblwrap"><table>
+    <thead><tr><th>지표</th><th style="text-align:right">P10</th><th style="text-align:right">P50</th>
+      <th style="text-align:right">P90</th><th style="text-align:right">평균</th><th style="text-align:right">표준편차</th>
+      <th style="text-align:right">최소</th><th style="text-align:right">최대</th></tr></thead><tbody>
+    ${[['완료 소요(일)',R.makespanD,1],['확관 전환(h)',R.expSetupH,1],['총 전환(h)',R.totalSetupH,0],
+       ['확관 가동률(%)',R.expUtil,1],['재작업(본)',R.rework,0],['고장 정지(h)',R.downtimeH,1],
+       ['일 산출(본/일)',R.thru,1]].map(([lb,o,d])=>`<tr><td>${lb}</td>
+      <td class="num">${o.p10.toFixed(d)}</td><td class="num"><b>${o.p50.toFixed(d)}</b></td>
+      <td class="num">${o.p90.toFixed(d)}</td><td class="num">${o.mean.toFixed(d)}</td>
+      <td class="num">${o.sd.toFixed(d)}</td><td class="num">${o.min.toFixed(d)}</td>
+      <td class="num">${o.max.toFixed(d)}</td></tr>`).join('')}</tbody></table></div>`;
+
+  if(rules.length>1){
+    const best = Math.min(...rules.map(r=>results[r].makespanD.p50));
+    const bestS = Math.min(...rules.map(r=>results[r].expSetupH.p50));
+    $('mcRules').innerHTML = `<h4 class="sh">배분 규칙별 분포 비교 — 변동성을 감안해도 차이가 유의한가</h4>
+      <div class="tblwrap"><table><thead><tr><th>배분 규칙</th>
+        <th style="text-align:right">완료일 P50</th><th style="text-align:right">P10~P90</th>
+        <th style="text-align:right">확관 전환 P50</th><th style="text-align:right">± 편차</th>
+        <th style="text-align:right">재작업 P50</th></tr></thead><tbody>
+      ${rules.map(r=>{const o=results[r];
+        return `<tr class="${o.makespanD.p50===best?'bnrow':''}">
+          <td>${DISPATCH_RULES[r].label}</td>
+          <td class="num"><b>${o.makespanD.p50.toFixed(1)}일</b>${o.makespanD.p50===best?' ★':''}</td>
+          <td class="num">${o.makespanD.p10.toFixed(1)}~${o.makespanD.p90.toFixed(1)}</td>
+          <td class="num">${o.expSetupH.p50.toFixed(1)}h${o.expSetupH.p50===bestS?' ★':''}</td>
+          <td class="num">± ${o.expSetupH.sd.toFixed(1)}</td>
+          <td class="num">${o.rework.p50.toFixed(0)}</td></tr>`;}).join('')}
+      </tbody></table></div>
+      <div class="note">규칙 간 차이가 <b>P10~P90 폭보다 작다면</b> 그 차이는 변동성에 묻힙니다.
+        전환시간처럼 폭이 좁은 지표에서 규칙 차이가 크게 벌어질수록 개선 효과가 확실합니다.</div>`;
+  } else $('mcRules').innerHTML='';
+}
+
 /* ================= 부트 ================= */
 const CO_BACKUP = JSON.stringify(CHANGEOVER);
 function boot(){
@@ -2277,7 +2623,10 @@ function boot(){
   cvs.onmouseleave = ()=>{ hover=null; };
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  fit(); buildEdgeCache(); initOptTab(); initPlanLoader();
+  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab();
+  $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
+  $('loopChk').onchange=e=>LOOP=e.target.checked;
+  $('btnDice').onclick=newSeed;
   runSim(); calc(); requestAnimationFrame(loop);
 }
 </script>

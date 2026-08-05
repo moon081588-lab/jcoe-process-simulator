@@ -366,6 +366,108 @@ function specOf(o, cfg) {
   };
 }
 
+/* ====================================================================
+   확률 변동 (Stochastic) — 매 실행마다 다른 결과
+   기본값은 모두 0 이므로 변동성을 끄면 결정론 결과와 완전히 동일하다.
+   ==================================================================== */
+const STOCH_DEFAULT = {
+  on: false,
+  cvTime: 0.10,      // 작업시간 변동계수 (로그정규)
+  cvSetup: 0.20,     // 설비 전환시간 변동계수
+  pDefect: 0.02,     // F-X ray 불량 발생률 (본당)
+  pWeld: 0.65,       // 불량 중 용접 문제 비율 (나머지는 Expander 문제)
+  maxRework: 2,      // 본당 최대 재작업 횟수
+  mtbfH: 0,          // 설비 평균 고장 간격 [h] (0 = 고장 없음)
+  mttrH: 1.5,        // 평균 수리 시간 [h]
+  repairSec: 1800,   // Repair 소요
+  reweldSec: 3600,   // 보수 용접 소요
+  expIssueSec: 2700, // Expander 문제 처리 소요
+};
+/* mulberry32 — 시드 기반 결정론적 난수 */
+function makeRng(seed) {
+  let a = (seed >>> 0) || 1;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/* 로그정규 배수 — 평균 1, 변동계수 cv */
+function lnormMul(rng, cv) {
+  if (!cv) return 1;
+  const s2 = Math.log(1 + cv * cv), s = Math.sqrt(s2);
+  let u = 0, v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  return Math.exp(z * s - s2 / 2);
+}
+const expo = (rng, mean) => -mean * Math.log(1 - rng());
+
+/* --------------------------------------------------------------------
+   반복 실행 (몬테카를로) — 시드를 바꿔가며 N 회 실행하고 분포를 낸다.
+   onProgress(i, n) 가 있으면 청크 단위로 비동기 실행한다.
+   -------------------------------------------------------------------- */
+function quantile(sorted, q) {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+function summarize(v) {
+  const s = v.slice().sort((a, b) => a - b);
+  const mean = v.reduce((a, x) => a + x, 0) / (v.length || 1);
+  const sd = Math.sqrt(v.reduce((a, x) => a + (x - mean) ** 2, 0) / Math.max(1, v.length - 1));
+  return { n: v.length, mean, sd, min: s[0] || 0, max: s[s.length - 1] || 0,
+           p10: quantile(s, 0.1), p50: quantile(s, 0.5), p90: quantile(s, 0.9), values: s };
+}
+function monteCarlo(orders, cfg, n, onProgress, done) {
+  const runs = [];
+  const base = { ...cfg, collectEvents: false };
+  let i = 0;
+  const chunk = () => {
+    const t0 = performance.now();
+    while (i < n && performance.now() - t0 < 120) {
+      const S = simulate(orders, { ...base, seed: (cfg.seed || 1) + i * 7919 });
+      const e = S.stats.find(x => x.id === 'EXP');
+      runs.push({
+        makespanD: S.kpi.makespanH / 24, expSetupH: S.kpi.expSetupH, totalSetupH: S.kpi.totalSetupH,
+        expUtil: S.kpi.expUtil, rework: S.kpi.rework, breakdowns: S.kpi.breakdowns,
+        downtimeH: S.kpi.downtimeH, thru: S.kpi.throughputPerDay,
+        topUtil: S.stats[0] ? S.stats[0].util : 0, topName: S.stats[0] ? S.stats[0].label : '',
+        u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0,
+      });
+      i++;
+    }
+    if (onProgress) onProgress(i, n);
+    if (i < n) setTimeout(chunk, 0);
+    else if (done) done(finish());
+  };
+  const finish = () => ({
+    n: runs.length, runs,
+    makespanD: summarize(runs.map(r => r.makespanD)),
+    expSetupH: summarize(runs.map(r => r.expSetupH)),
+    totalSetupH: summarize(runs.map(r => r.totalSetupH)),
+    expUtil: summarize(runs.map(r => r.expUtil)),
+    rework: summarize(runs.map(r => r.rework)),
+    downtimeH: summarize(runs.map(r => r.downtimeH)),
+    thru: summarize(runs.map(r => r.thru)),
+    topName: runs.length ? runs[0].topName : '',
+  });
+  if (onProgress || done) { chunk(); return null; }
+  while (i < n) {
+    const S = simulate(orders, { ...base, seed: (cfg.seed || 1) + i * 7919 });
+    const e = S.stats.find(x => x.id === 'EXP');
+    runs.push({ makespanD: S.kpi.makespanH / 24, expSetupH: S.kpi.expSetupH, totalSetupH: S.kpi.totalSetupH,
+      expUtil: S.kpi.expUtil, rework: S.kpi.rework, breakdowns: S.kpi.breakdowns, downtimeH: S.kpi.downtimeH,
+      thru: S.kpi.throughputPerDay, topUtil: S.stats[0] ? S.stats[0].util : 0,
+      topName: S.stats[0] ? S.stats[0].label : '',
+      u1: e && e.units[0] ? e.units[0].jobs : 0, u2: e && e.units[1] ? e.units[1].jobs : 0 });
+    i++;
+  }
+  return finish();
+}
+
 /* --------------------------------------------------------------------
    시뮬레이터 — 파이프 단위 FIFO 디스패치
    -------------------------------------------------------------------- */
@@ -383,6 +485,11 @@ function simulate(orders, cfg) {
       units.push({ id: n.id + '#' + (i + 1), idx: i, free: t0, last: null, busy: 0, setup: 0, jobs: 0 });
     pools[n.id] = units;
   }
+  const ST = Object.assign({}, STOCH_DEFAULT, cfg.stochastic || {});
+  const rng = makeRng(cfg.seed || 1);
+  const collect = cfg.collectEvents !== false;
+  let nRework = 0, nBreak = 0, downtime = 0;
+
   const events = [];
   const orderSpan = {};
   const ctx = { rr: 0 };
@@ -408,10 +515,12 @@ function simulate(orders, cfg) {
 
     for (let k = 1; k <= o.qty; k++) {
       seqGlobal++;
-      let ready = rel, prevId = null;
-      for (const nid of route) {
+      let ready = rel, prevId = null, rework = 0, guard = 0;
+      const queue = route.slice();
+      while (queue.length && guard++ < 300) {
+        const nid = queue.shift();
         const n = NODE[nid];
-        if (n.kind === 'buf') continue;
+        if (!n || n.kind === 'buf') continue;
         const units = pools[nid];
         let u, coUnits = null, machine;
 
@@ -442,10 +551,20 @@ function simulate(orders, cfg) {
         }
 
         const fn = n.free ? null : STD[n.st];
-        const res = fn ? fn(spec, line, k, machine) : { sec: cfg.freeStationSec, expr: '고정 시간(측정 대상 외)', terms: [] };
-        const dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
+        const freeSec = nid === 'RP' ? ST.repairSec : nid === 'RW' ? ST.reweldSec
+                      : nid === 'EP' ? ST.expIssueSec : cfg.freeStationSec;
+        const res = fn ? fn(spec, line, k, machine) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] };
+        let dur = (n.st === 'Expander') ? STD.Expander(spec, machine === 'M3' ? 'M2' : machine).sec : res.sec;
         const seize = coUnits || [u];
-        const co = n.free ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+        let co = n.free ? 0 : Math.max(...seize.map(x => changeoverSec(n.st, x.last, spec)));
+        if (ST.on) {
+          dur *= lnormMul(rng, ST.cvTime);
+          if (co > 0) co *= lnormMul(rng, ST.cvSetup);
+          if (ST.mtbfH > 0 && rng() < dur / (ST.mtbfH * 3600)) {      // 설비 고장
+            const dt = expo(rng, ST.mttrH * 3600);
+            dur += dt; nBreak++; downtime += dt;
+          }
+        }
 
         const arrive = ready;
         let cs = Math.max(ready, ...seize.map(x => x.free));
@@ -457,11 +576,18 @@ function simulate(orders, cfg) {
           x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
         }
         ready = en;
-        events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
-                      both: !!coUnits, mach: machine });
+        if (collect) events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
+                      both: !!coUnits, mach: machine, rw: rework > 0 });
         prevId = nid;
         if (st < oS) oS = st;
         if (en > oE) oE = en;
+
+        /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
+        if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
+          rework++; nRework++;
+          if (rng() < ST.pWeld) queue.unshift('RP', 'RW', ...route.slice(route.indexOf('FX')));
+          else                  queue.unshift('RP', 'EP', ...route.slice(route.indexOf('EXP')));
+        }
       }
     }
     orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route };
@@ -497,6 +623,9 @@ function simulate(orders, cfg) {
     expBalanceH: expStat ? Math.abs((expStat.units[0] ? expStat.units[0].busyH : 0)
                                   - (expStat.units[1] ? expStat.units[1].busyH : 0)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
+    rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
+    throughputPerDay: Object.values(orderSpan).reduce((a, v) => a + v.qty, 0) / (horizon / 86400),
+    seed: cfg.seed || 1, stochOn: !!ST.on,
   };
   return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, kpi,
            rule: cfg.dispatchRule, eligRule: cfg.eligRule };

@@ -70,6 +70,8 @@ select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radi
 .pm-box{background:#0d1117;border:1px solid var(--ln);border-radius:12px;padding:16px 20px;width:min(1000px,100%)}
 .pm-hd{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:700;color:var(--acc);margin-bottom:12px}
 .pm-hd button{background:none;color:var(--dim);padding:0 4px;font-size:14px}
+#seek{width:170px;accent-color:#1f6feb}
+label.mini{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:4px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -82,7 +84,10 @@ select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radi
   <button id="btnPlay">▶</button><button id="btnReset">↺</button>
   <span style="font-size:11px;color:var(--dim)">배속</span>
   <input type="range" id="spd" min="0" max="4" step="1" value="1"><span id="spdL">1시간/s</span>
-  <div id="progWrap"><div id="simProg"></div></div>
+  <input type="range" id="seek" min="0" max="1000" value="0" title="타임라인 — 끌어서 원하는 시점으로">
+  <label class="mini"><input type="checkbox" id="loopChk">반복</label>
+  <span class="ck"><input type="checkbox" id="stOn">변동성</span>
+  <button class="g" id="btnDice" title="새 시드로 다시 실행">🎲</button>
   <div class="sep"></div>
   <button class="g" data-view="all">전체</button>
   <button class="g" data-view="top">평면</button>

@@ -33,6 +33,19 @@ function readCfg() {
     changeover: $('cfgCO').checked,
     freeStationSec: 300,
     eventCap: 1e9,
+    seed: SEED,
+    stochastic: readStoch(),
+  };
+}
+let SEED = 1;
+function readStoch(){
+  if(!$('stOn')) return { on:false };
+  return {
+    on: $('stOn').checked,
+    cvTime:+$('stCvT').value, cvSetup:+$('stCvS').value,
+    pDefect:+$('stDef').value, pWeld:+$('stWeld').value, maxRework:+$('stMaxRw').value,
+    mtbfH:+$('stMtbf').value, mttrH:+$('stMttr').value,
+    repairSec:+$('stRep').value*60, reweldSec:+$('stRw').value*60, expIssueSec:+$('stEp').value*60,
   };
 }
 function runSim() {
@@ -46,10 +59,13 @@ function runSim() {
   $('simInfo').textContent =
     `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
     + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`
-    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '');
+    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
+    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  if($('mcHint')) renderStNote();
+  if($('seek')) $('seek').value=0;
   $('logBody').innerHTML='<div class="lg">▶ 를 눌러 시뮬레이션을 재생하세요.</div>';
 }
 
@@ -310,7 +326,7 @@ function draw() {
 function stepAnim(dt) {
   if (!SIM) return;
   animT += dt * speed;
-  if (animT > SIM.tEnd) { animT = SIM.tEnd; playing = false; $('btnPlay').textContent='▶'; }
+  if (animT > SIM.tEnd) { if(LOOP){ seekTo(SIM.t0); return; } animT = SIM.tEnd; playing = false; $('btnPlay').textContent='▶'; }
   const ev = SIM.events;
   for (const n of NODES){ const s0=nodeState[n.id]; s0.active=[]; s0.q=0; }
   /* 활성/대기 이벤트: 도착시각 기준 이진탐색 후 스캔 */
@@ -352,7 +368,6 @@ function stepAnim(dt) {
     evIdx++;
   }
   $('simClock').textContent = fmtT(animT);
-  $('simProg').style.width = ((animT-SIM.t0)/(SIM.tEnd-SIM.t0)*100).toFixed(2)+'%';
   $('doneCnt').textContent = completed.toLocaleString();
   updateStatPanel();
   $('logBody').innerHTML = logs.slice(0,60).map(l=>`<div class="lg">${l}</div>`).join('');
@@ -711,6 +726,34 @@ function renderBottleneck(){
     </div>`).join('');
 }
 
+/* ================= 재생 컨트롤 ================= */
+let LOOP = false, seeking = false;
+function seekTo(t){
+  if(!SIM) return;
+  animT = Math.max(SIM.t0, Math.min(SIM.tEnd, t));
+  evIdx = 0; completed = 0; logs.length = 0;
+  for (const n of NODES) nodeState[n.id] = { active:[], q:0, done:0 };
+  const ev = SIM.events;
+  while (evIdx < ev.length && ev[evIdx].s <= animT) {
+    const e = ev[evIdx];
+    nodeState[e.n].done++;
+    if (e.n === 'PACK') completed++;
+    evIdx++;
+  }
+  stepAnim(0);
+}
+function syncSeek(){
+  if(!SIM || seeking) return;
+  const f = (animT - SIM.t0) / Math.max(1, SIM.tEnd - SIM.t0);
+  $('seek').value = Math.round(f*1000);
+}
+function newSeed(){
+  SEED = (Math.floor(Math.random()*2147483646)+1);
+  runSim();
+  if(!SIM.kpi.stochOn)
+    $('logBody').innerHTML='<div class="lg">변동성이 꺼져 있어 결과가 동일합니다 — 「반복 실행」 탭에서 변동성을 켜 주세요.</div>';
+}
+
 /* ================= 계획서 로더 연동 ================= */
 let PLAN_SRC = null;
 function applyOrders(list, meta, srcLabel){
@@ -742,6 +785,124 @@ function initPlanLoader(){
   });
 }
 
+
+/* ================= 반복 실행 (몬테카를로) ================= */
+let MC_LAST = null;
+function initMCTab(){
+  const re = ()=>{ if($('stOn').checked) runSim(); };
+  ['stOn','stCvT','stCvS','stDef','stWeld','stMaxRw','stMtbf','stMttr','stRep','stRw','stEp']
+    .forEach(id=>$(id).onchange=()=>{});
+  $('btnStApply').onclick=()=>{ runSim(); document.querySelector('.tab[data-p="pFlow"]').click(); };
+  $('btnStDice').onclick=()=>{ SEED=Math.floor(Math.random()*2147483646)+1; runSim(); renderStNote(); };
+  $('btnMC').onclick=runMC;
+  renderStNote();
+}
+function renderStNote(){
+  if(!SIM) return;
+  $('mcHint').innerHTML = SIM.kpi.stochOn
+    ? `현재 seed <b style="color:#58a6ff">${SIM.kpi.seed}</b> · 이번 실행 재작업 ${SIM.kpi.rework}본 · 고장 ${SIM.kpi.breakdowns}회`
+    : '변동성이 꺼져 있습니다. 위 「변동성 사용」을 켜야 실행할 때마다 다른 결과가 나옵니다.';
+}
+function runMC(){
+  const n = +$('mcN').value;
+  const allRules = $('mcAllRules').checked;
+  const cfg = readCfg();
+  if(!cfg.stochastic.on){
+    $('mcSum').innerHTML = `<div class="kpi bn"><b>변동성 꺼짐</b><span>모든 실행이 동일합니다 — 위에서 켜 주세요</span></div>`;
+    $('mcHist').innerHTML=''; $('mcTable').innerHTML=''; $('mcRules').innerHTML=''; return;
+  }
+  $('btnMC').disabled=true; $('mcProgWrap').style.display='block';
+  if(allRules && !PLAN){
+    $('mcHint').textContent='최적화 엔진 해를 먼저 계산하는 중…';
+    PLAN = optimizeExpander(ORDERS, cfg, {weights:{cmax:+$('wCmax').value,setup:+$('wSetup').value,bal:+$('wBal').value},
+                                          iters:+$('optIters').value});
+    cfg.plan = PLAN;
+  }
+  const rules = allRules ? Object.keys(DISPATCH_RULES) : [cfg.dispatchRule];
+  const results = {};
+  let ri = 0;
+  const next = () => {
+    if(ri >= rules.length){
+      $('btnMC').disabled=false; $('mcProgWrap').style.display='none';
+      MC_LAST = results; renderMC(results, rules, n); return;
+    }
+    const r = rules[ri];
+    monteCarlo(ORDERS, {...cfg, dispatchRule:r},  n,
+      (i,tot)=>{ $('mcProg').style.width = ((ri+i/tot)/rules.length*100).toFixed(1)+'%';
+                 $('mcHint').innerHTML = `실행 중… ${DISPATCH_RULES[r].label} ${i}/${tot}`; },
+      res => { results[r]=res; ri++; next(); });
+  };
+  next();
+}
+function histogram(sum, unit, digits, label){
+  const v = sum.values; if(!v.length) return '';
+  const lo = sum.min, hi = sum.max, span = (hi-lo)||1, B = 22;
+  const bins = new Array(B).fill(0);
+  v.forEach(x=>bins[Math.min(B-1, Math.floor((x-lo)/span*B))]++);
+  const mx = Math.max(...bins);
+  const cls = i => { const c = lo+(i+0.5)/B*span;
+    return c<=sum.p10?'':c>=sum.p90?'hi':(c>=sum.p10&&c<=sum.p90?'mid':''); };
+  return `<div class="hist"><h4>${label}<span>${sum.n}회 실행</span></h4>
+    <div class="hbars">${bins.map((b,i)=>
+      `<div class="${cls(i)}" style="height:${(b/mx*100).toFixed(1)}%" title="${(lo+i/B*span).toFixed(digits)}~${(lo+(i+1)/B*span).toFixed(digits)}${unit} : ${b}회"></div>`).join('')}</div>
+    <div class="haxis"><span>${lo.toFixed(digits)}${unit}</span><span>${hi.toFixed(digits)}${unit}</span></div>
+    <div class="hpct">
+      <span>P10 <b>${sum.p10.toFixed(digits)}${unit}</b></span>
+      <span>중앙값 P50 <b>${sum.p50.toFixed(digits)}${unit}</b></span>
+      <span>P90 <b>${sum.p90.toFixed(digits)}${unit}</b></span>
+      <span>평균 <b>${sum.mean.toFixed(digits)}${unit}</b> ± ${sum.sd.toFixed(digits)}</span>
+      <span>최소~최대 <b>${lo.toFixed(digits)}~${hi.toFixed(digits)}${unit}</b></span></div></div>`;
+}
+function renderMC(results, rules, n){
+  const cur = results[rules[0]];
+  const R = results[readCfg().dispatchRule] || cur;
+  $('mcHint').innerHTML = `완료 — 규칙 ${rules.length}종 × ${n}회`;
+  const spread = R.makespanD.p90 - R.makespanD.p10;
+  $('mcSum').innerHTML = `
+    <div class="kpi"><b>${R.makespanD.p50.toFixed(1)} 일</b><span>완료 소요 중앙값 (P50)</span></div>
+    <div class="kpi bn"><b>${R.makespanD.p90.toFixed(1)} 일</b><span>보수적 계획 기준 (P90)</span></div>
+    <div class="kpi"><b>± ${(spread/2).toFixed(1)} 일</b><span>P10~P90 폭 — 계획 불확실성</span></div>
+    <div class="kpi"><b>${R.rework.p50.toFixed(0)} 본</b><span>재작업 발생 (중앙값)</span></div>
+    <div class="kpi"><b>${R.thru.p50.toFixed(0)} 본/일</b><span>일 평균 산출</span></div>
+    <div class="kpi"><b>${R.downtimeH.p50.toFixed(0)} h</b><span>설비 고장 정지 (중앙값)</span></div>`;
+  $('mcHist').innerHTML =
+      histogram(R.makespanD, '일', 1, '완료 소요일 분포')
+    + histogram(R.expSetupH, 'h', 0, '확관 설비 전환시간 분포')
+    + histogram(R.rework, '본', 0, '재작업 발생 본수 분포');
+  $('mcTable').innerHTML = `<h4 class="sh">지표별 분포</h4><div class="tblwrap"><table>
+    <thead><tr><th>지표</th><th style="text-align:right">P10</th><th style="text-align:right">P50</th>
+      <th style="text-align:right">P90</th><th style="text-align:right">평균</th><th style="text-align:right">표준편차</th>
+      <th style="text-align:right">최소</th><th style="text-align:right">최대</th></tr></thead><tbody>
+    ${[['완료 소요(일)',R.makespanD,1],['확관 전환(h)',R.expSetupH,1],['총 전환(h)',R.totalSetupH,0],
+       ['확관 가동률(%)',R.expUtil,1],['재작업(본)',R.rework,0],['고장 정지(h)',R.downtimeH,1],
+       ['일 산출(본/일)',R.thru,1]].map(([lb,o,d])=>`<tr><td>${lb}</td>
+      <td class="num">${o.p10.toFixed(d)}</td><td class="num"><b>${o.p50.toFixed(d)}</b></td>
+      <td class="num">${o.p90.toFixed(d)}</td><td class="num">${o.mean.toFixed(d)}</td>
+      <td class="num">${o.sd.toFixed(d)}</td><td class="num">${o.min.toFixed(d)}</td>
+      <td class="num">${o.max.toFixed(d)}</td></tr>`).join('')}</tbody></table></div>`;
+
+  if(rules.length>1){
+    const best = Math.min(...rules.map(r=>results[r].makespanD.p50));
+    const bestS = Math.min(...rules.map(r=>results[r].expSetupH.p50));
+    $('mcRules').innerHTML = `<h4 class="sh">배분 규칙별 분포 비교 — 변동성을 감안해도 차이가 유의한가</h4>
+      <div class="tblwrap"><table><thead><tr><th>배분 규칙</th>
+        <th style="text-align:right">완료일 P50</th><th style="text-align:right">P10~P90</th>
+        <th style="text-align:right">확관 전환 P50</th><th style="text-align:right">± 편차</th>
+        <th style="text-align:right">재작업 P50</th></tr></thead><tbody>
+      ${rules.map(r=>{const o=results[r];
+        return `<tr class="${o.makespanD.p50===best?'bnrow':''}">
+          <td>${DISPATCH_RULES[r].label}</td>
+          <td class="num"><b>${o.makespanD.p50.toFixed(1)}일</b>${o.makespanD.p50===best?' ★':''}</td>
+          <td class="num">${o.makespanD.p10.toFixed(1)}~${o.makespanD.p90.toFixed(1)}</td>
+          <td class="num">${o.expSetupH.p50.toFixed(1)}h${o.expSetupH.p50===bestS?' ★':''}</td>
+          <td class="num">± ${o.expSetupH.sd.toFixed(1)}</td>
+          <td class="num">${o.rework.p50.toFixed(0)}</td></tr>`;}).join('')}
+      </tbody></table></div>
+      <div class="note">규칙 간 차이가 <b>P10~P90 폭보다 작다면</b> 그 차이는 변동성에 묻힙니다.
+        전환시간처럼 폭이 좁은 지표에서 규칙 차이가 크게 벌어질수록 개선 효과가 확실합니다.</div>`;
+  } else $('mcRules').innerHTML='';
+}
+
 /* ================= 부트 ================= */
 const CO_BACKUP = JSON.stringify(CHANGEOVER);
 function boot(){
@@ -765,6 +926,9 @@ function boot(){
   cvs.onmouseleave = ()=>{ hover=null; };
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  fit(); buildEdgeCache(); initOptTab(); initPlanLoader();
+  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab();
+  $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
+  $('loopChk').onchange=e=>LOOP=e.target.checked;
+  $('btnDice').onclick=newSeed;
   runSim(); calc(); requestAnimationFrame(loop);
 }

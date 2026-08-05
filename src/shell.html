@@ -125,6 +125,22 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
 .mrow i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;font-style:normal}
 .imp{color:#7ee787;font-weight:600}
 .wors{color:#ff9a92;font-weight:600}
+#seek{width:190px;accent-color:#1f6feb}
+label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;cursor:pointer}
+#btnDice{background:#2a3444;border:none;color:#fff;border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1}
+#btnDice:hover{background:#36435a}
+.mcbar{height:7px;background:#21262d;border-radius:4px;overflow:hidden;margin-bottom:12px}
+#mcProg{height:100%;width:0;background:linear-gradient(90deg,#1f6feb,#58a6ff);transition:width .1s}
+.hist{background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:13px 16px;margin-bottom:13px}
+.hist h4{font-size:12px;color:var(--acc);margin-bottom:10px;display:flex;justify-content:space-between}
+.hist h4 span{color:var(--dim);font-weight:400}
+.hbars{display:flex;align-items:flex-end;gap:2px;height:96px}
+.hbars div{flex:1;background:#1f6feb;border-radius:2px 2px 0 0;min-height:1px;position:relative}
+.hbars div.mid{background:#2ea043}
+.hbars div.hi{background:#da3633}
+.haxis{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);margin-top:5px}
+.hpct{display:flex;gap:16px;font-size:11px;color:var(--dim);margin-top:9px;flex-wrap:wrap}
+.hpct b{color:#fff;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -133,10 +149,11 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
   <h1>세아제강 JCOE 공정 시뮬레이터<small>POSTECH × 세아제강 · 표준시간 기준 25.12.18</small></h1>
   <div class="tabs">
     <div class="tab on" data-p="pFlow">공정 흐름</div>
-    <div class="tab" data-p="pCalc">표준시간 계산기</div>
-    <div class="tab" data-p="pIO">In / Out 시간표</div>
-    <div class="tab" data-p="pOpt">확관 배분 · 최적화</div>
-    <div class="tab" data-p="pGantt">오더 스케줄</div>
+    <div class="tab" data-p="pCalc">표준시간</div>
+    <div class="tab" data-p="pIO">In · Out</div>
+    <div class="tab" data-p="pOpt">확관 최적화</div>
+    <div class="tab" data-p="pMC">반복 실행</div>
+    <div class="tab" data-p="pGantt">오더 간트</div>
     <div class="tab" data-p="pBn">병목 분석</div>
     <div class="tab" data-p="pCfg">계획서 · 설정</div>
   </div>
@@ -149,7 +166,9 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
       <button id="btnPlay">▶</button><button id="btnReset">↺</button>
       <span style="font-size:11px;color:var(--dim)">배속</span>
       <input type="range" id="spd" min="0" max="4" step="1" value="1"><span id="spdL" style="font-size:11px;color:var(--acc);width:48px">10분/s</span>
-      <div id="progWrap"><div id="simProg"></div></div>
+      <input type="range" id="seek" min="0" max="1000" value="0" title="타임라인 — 끌어서 원하는 시점으로">
+      <label class="mini"><input type="checkbox" id="loopChk">반복</label>
+      <button id="btnDice" title="새 시드로 다시 실행 (변동성 켜져 있을 때 매번 다른 결과)">🎲</button>
       <div class="lgnd">
         <span><i style="background:#238636"></i>대기(Idle)</span>
         <span><i style="background:#1f6feb"></i>가공중</span>
@@ -273,6 +292,43 @@ h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase
       <th style="text-align:right">부하 편차(h)</th><th>확관 전환시간 비교</th></tr></thead><tbody id="cmpBody">
       <tr><td colspan="9" style="color:#6e7681">「전체 규칙 비교 실행」을 누르면 결과가 표시됩니다.</td></tr></tbody></table></div>
     <div id="cmpNote"></div>
+  </div></section>
+
+  <!-- ========== 반복 실행 (몬테카를로) ========== -->
+  <section class="pane" id="pMC"><div class="inner">
+    <h3>① 변동성 설정 <span class="sub">끄면 결정론 — 몇 번을 돌려도 결과가 같습니다</span></h3>
+    <div class="toolbar">
+      <div class="f ck"><input type="checkbox" id="stOn"><label for="stOn"><b>변동성 사용</b></label></div>
+      <div class="f"><label>작업시간 변동 CV</label><input type="number" id="stCvT" value="0.10" step="0.01" min="0" max="0.6"></div>
+      <div class="f"><label>전환시간 변동 CV</label><input type="number" id="stCvS" value="0.20" step="0.01" min="0" max="0.8"></div>
+      <div class="f"><label>불량률 (본당)</label><input type="number" id="stDef" value="0.02" step="0.005" min="0" max="0.3"></div>
+      <div class="f"><label>불량 중 용접문제 비율</label><input type="number" id="stWeld" value="0.65" step="0.05" min="0" max="1"></div>
+      <div class="f"><label>본당 최대 재작업</label><input type="number" id="stMaxRw" value="2" step="1" min="0" max="5"></div>
+      <div class="f"><label>설비 MTBF (h, 0=무고장)</label><input type="number" id="stMtbf" value="0" step="10" min="0"></div>
+      <div class="f"><label>평균 수리 MTTR (h)</label><input type="number" id="stMttr" value="1.5" step="0.5" min="0"></div>
+      <div class="f"><label>Repair (분)</label><input type="number" id="stRep" value="30" step="5" min="0"></div>
+      <div class="f"><label>보수 용접 (분)</label><input type="number" id="stRw" value="60" step="5" min="0"></div>
+      <div class="f"><label>재확관 처리 (분)</label><input type="number" id="stEp" value="45" step="5" min="0"></div>
+      <button id="btnStApply">적용 · 1회 실행</button>
+      <button id="btnStDice" class="ghost">🎲 새 시드로 실행</button>
+    </div>
+    <div class="note">변동성을 켜면 <b>F-X ray 에서 불량이 실제로 발생</b>해 Repair → 보수 용접(재검사) 또는
+      Expander 문제(재확관) 루프를 타게 됩니다. 지금까지 그려만 놓고 아무도 지나가지 않던 경로입니다.
+      작업시간은 로그정규분포로 흔들리고, MTBF 를 넣으면 설비 고장·수리 정지도 발생합니다.</div>
+
+    <h3>② 반복 실행</h3>
+    <div class="toolbar">
+      <div class="f"><label>반복 횟수</label><select id="mcN">
+        <option>20</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select></div>
+      <div class="f ck"><input type="checkbox" id="mcAllRules"><label for="mcAllRules">배분 규칙 5종 각각 반복</label></div>
+      <button id="btnMC">반복 실행</button>
+      <div class="hint" id="mcHint">각 실행마다 시드가 달라져 서로 다른 결과가 나옵니다. 분포로 “빠르면 며칠, 나쁘면 며칠”을 봅니다.</div>
+    </div>
+    <div id="mcProgWrap" style="display:none"><div class="mcbar"><div id="mcProg"></div></div></div>
+    <div class="kpis" id="mcSum"></div>
+    <div id="mcHist"></div>
+    <div id="mcTable"></div>
+    <div id="mcRules"></div>
   </div></section>
 
   <!-- ========== 간트 ========== -->
