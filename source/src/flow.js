@@ -152,21 +152,46 @@ function foldWindows(blocks) {
 function makeCalendar(cfg, shiftsOverride) {
   const shifts = shiftsOverride || cfg.shifts;   // 1 | 2 | '2E' | 3
   const netH = cfg.netHoursPerShift;             // 기본 7.5 — 실제 시간표와 일치
-  let blocks = (SHIFT_BLOCKS[shifts] || SHIFT_BLOCKS[2]).map(w => w.slice());
-  /* netH 를 7.5 에서 바꾸면(민감도 분석) 각 교대의 마지막 구간을 그만큼 늘리거나 줄인다.
-     기본값 7.5 에서는 실제 시간표와 정확히 같다. */
-  const per = (shifts === 1) ? 7.5 : 7.5;
-  if (Math.abs(netH - per) > 1e-6) {
-    const d = netH - per;
-    const nShift = (shifts === 1) ? 1 : (shifts === 3 ? 3 : 2);
-    const idx = [];
-    if (shifts === 1) idx.push(1);
-    else if (shifts === 2 || shifts === '2E') idx.push(1, 3);
-    else idx.push(1, 3, 5);
-    let shiftSeen = 0;
-    for (const i of idx) { if (blocks[i]) { blocks[i][1] += d; shiftSeen++; } if (shiftSeen >= nShift) break; }
+  const blocks = (SHIFT_BLOCKS[shifts] || SHIFT_BLOCKS[2]).map(w => w.slice());
+  let wins0 = foldWindows(blocks);
+  /* netH 를 7.5 에서 바꾸면(민감도 분석) 하루 가동창 전체를 비례 확대·축소한다.
+     종전에는 각 교대의 **마지막 구간만** 늘렸는데, 1근 끝(15:00)이 2근 시작(15:00)과 붙어 있어
+     늘린 만큼이 foldWindows 병합에 흡수됐다 — 3근에서는 한 시간도 늘지 않았다. */
+  const k = netH / 7.5;
+  if (Math.abs(k - 1) > 1e-9) {
+    const total = Math.min(24, wins0.reduce((a, w) => a + (w[1] - w[0]), 0) * k);
+    const pack = (shift) => {
+      const out = []; let prevEnd = 0;
+      for (const [a, b] of wins0) {
+        const st = Math.max(0, Math.max(a - shift, prevEnd));
+        const en = Math.min(24, st + (b - a) * k);
+        if (en > st) out.push([st, en]);
+        prevEnd = en;
+      }
+      return out;
+    };
+    let packed = pack(0);
+    const over = (packed.length ? packed[packed.length - 1][1] : 0) - (packed.length ? packed[0][0] : 0) - total;
+    /* 늘린 창이 자정을 넘으면 하루 전체를 그만큼 앞당겨 잘리지 않게 한다 */
+    const last = packed.length ? packed[packed.length - 1][1] : 0;
+    if (last >= 24 - 1e-9) {
+      const need = total + (packed.length ? packed[0][0] : 0);
+      packed = pack(Math.max(0, need - 24));
+    }
+    /* 자정에 걸려 잘린 만큼은 남는 틈에서 앞으로 당겨 채운다 — dayCap 이 정확히 total 이 되도록 */
+    let cap = packed.reduce((a, w) => a + (w[1] - w[0]), 0);
+    if (cap < total - 1e-9) {
+      let need = total - cap; const filled = []; let cursor = 0;
+      for (const w of packed) {
+        if (need > 1e-9 && w[0] > cursor) { const take = Math.min(need, w[0] - cursor); filled.push([w[0] - take, w[0]]); need -= take; }
+        filled.push(w); cursor = w[1];
+      }
+      if (need > 1e-9 && cursor < 24) filled.push([cursor, Math.min(24, cursor + need)]);
+      packed = filled;
+    }
+    wins0 = foldWindows(packed);
   }
-  const wins = foldWindows(blocks);
+  const wins = wins0;
   const dayCap = wins.reduce((a, w) => a + (w[1] - w[0]), 0) * 3600;
   return {
     wins, dayCap,
@@ -208,7 +233,7 @@ function makeCalendar(cfg, shiftsOverride) {
         const h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
         const w = wins.find(w => h >= w[0] && h < w[1]);
         const avail = w ? (w[1] - h) * 3600 : 0;
-        if (avail >= left) return cur + left;
+        if (avail + 1e-6 >= left) return cur + left;   // 부동소수 오차로 경계에서 다음 창까지 밀리던 문제
         left -= avail; cur = this.snap(cur + avail + 1);
       }
       return cur;
@@ -915,16 +940,22 @@ function simulate(orders, cfg) {
         if (st < oS) oS = st;
         if (en > oE) oE = en;
 
-        if (nid === 'PACK' && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
+        if ((nid === 'PACK' || nid === 'PACKRB') && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
 
         /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
-        if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
+        /* 검사 노드는 본류 F-X ray(FX) 와 R/B 라인의 R/B RT(RT104) 두 곳이다.
+           종전에는 FX 만 봐서 R/B 물량이 100% 무결점으로 흘렀다. */
+        const isRT = (nid === 'FX' || nid === 'RBRT');
+        if (ST.on && isRT && rework < ST.maxRework && rng() < ST.pDefect) {
           rework++; nRework++;
           /* 남아 있던 꼬리(예: PACK)를 비우고 다시 넣는다.
-             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다. */
+             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다.
+             indexOf 가 -1 이면 slice(-1) 이 마지막 1개만 남기므로 반드시 방어한다. */
+          const from = (id) => { const i = route.indexOf(id); return i < 0 ? [] : route.slice(i); };
+          const expId = route.includes('EXP') ? 'EXP' : 'RB';
           const back = (rng() < ST.pWeld)
-            ? ['RP', 'RW', ...route.slice(route.indexOf('FX'))]
-            : ['RP', 'EP', ...route.slice(route.indexOf('EXP'))];
+            ? ['RP', 'RW', ...from(nid)]
+            : ['RP', 'EP', ...from(expId)];
           queue.length = 0; queue.push(...back);
         }
       }
@@ -970,8 +1001,10 @@ function simulate(orders, cfg) {
       utilAvg: avail ? (busy + setup) / (avail * units.length) * 100 : 0,
       shifts: RB_LINE.has(n.id) ? (cfg.rbShifts || 1) : cfg.shifts,
       unitUtil, imbalance: utilMax - utilMin,
-      /* 전환 비중은 **설비 점유 기준**(호기별 합계)으로 센다 — busy 도 호기별 합계이므로 단위를 맞춘다 */
-      setupShare: (busy + setupUnits) ? setupUnits / (busy + setupUnits) * 100 : 0,
+      /* 전환 비중은 병목 탭 표에 함께 표시되는 가공(busyH)·전환(setupH) 두 값으로 검산이 되어야 한다.
+         그래서 표시값과 같은 조합(가공 호기합 + 전환 벽시계)을 쓴다.
+         호기 점유 기준 비중은 setupUnitsH 로 따로 계산할 수 있다. */
+      setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
       loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),
       units: units.map((u, i) => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600,
                                     jobs: u.jobs, util: unitUtil[i] }))

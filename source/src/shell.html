@@ -466,11 +466,11 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
 
     <h3>③ 시뮬레이션 파라미터</h3>
     <div id="cfgBar">
-      <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></div>
+      <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1근</option><option value="2" selected>2근</option><option value="2E">2근연장</option><option value="3">3근</option></select></div>
       <div class="f"><label>실가동 h/Shift</label><input type="number" id="cfgNetH" value="7.5" step="0.5"></div>
       <div class="hint" style="max-width:420px">교대 시간대는 세아제강 실제 시간표를 씁니다 —
         1근 07:00–11:30 · 12:00–15:00 / 2근 15:00–18:00 · 18:30–23:00 / 3근 23:00–02:45 · 03:15–07:00.
-        각 7.5h. <b>근무 형태가 월마다 달라 2근 고정으로 봅니다.</b></div>
+        각 7.5h. 2근연장은 2근에 23:30–03:00(+3.5h)이 붙습니다. <b>근무 형태가 월마다 달라 2근을 기본으로 봅니다.</b><br>「실가동 h/Shift」를 7.5 에서 바꾸면 하루 가동창 전체가 그 비율로 늘거나 줄어듭니다(민감도 분석용).</div>
       <div class="f"><label>수압 유지(초)</label><input type="number" id="cfgHold" value="60"></div>
       <div class="f ck"><input type="checkbox" id="cfgWeekend"><label for="cfgWeekend">주말 비가동</label></div>
       <div class="f ck"><input type="checkbox" id="cfgCO" checked><label for="cfgCO">설비 전환시간 반영</label></div>

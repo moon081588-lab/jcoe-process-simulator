@@ -225,7 +225,10 @@ function isApi5L(mat, use) {
   const u = String(use == null ? '' : use).trim();
   if (u.includes('송유관') || /line\s*pipe/i.test(u)) return true;
   const m = String(mat == null ? '' : mat).trim().toUpperCase();
-  return /^API/.test(m) || /\b5L\b/.test(m);
+  if (/\b5L\b/.test(m)) return true;
+  if (!/^API/.test(m)) return false;
+  /* API 5CT(케이싱·튜빙: J55·K55·N80·L80·P110 …)는 라인파이프가 아니다 */
+  return !/(J55|K55|N80|L80|P110|C90|T95|Q125|M65|H40|5CT)/.test(m);
 }
 /* 재질에서 고강도 판정 — API X70 이상. 재질 열이 없으면 두께 대리변수로 폴백한다. */
 function gradeOf(mat, t) {
@@ -246,9 +249,19 @@ function toNum(v) {
   return m ? parseFloat(m[0]) : null;
 }
 function toDate(v) {
-  if (v instanceof Date && !isNaN(v)) return v;
+  if (v instanceof Date && !isNaN(v)) {
+    /* 자정 ±2분 안이면 달력일 경계로 스냅한다.
+       SheetJS 의 cellDates 변환이 로컬 타임존(서울은 1899년 LMT +8:27:52)에서 52초 어긋나
+       모든 날짜가 **전날 23:59** 로 떨어지던 문제를 흡수한다. */
+    const d = new Date(v.getTime());
+    const mins = d.getHours() * 60 + d.getMinutes();
+    if (mins >= 1438) { d.setDate(d.getDate() + 1); d.setHours(0, 0, 0, 0); }
+    else if (mins <= 2) { d.setHours(0, 0, 0, 0); }
+    return d;
+  }
   if (isNum(v)) {                                  // 엑셀 serial
-    if (v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30 + Math.floor(v)));
+    /* **로컬** 달력일 자정으로 만든다. UTC 로 만들면 아래 fmtDT 의 로컬 게터로 읽을 때 타임존만큼 밀린다. */
+    if (v > 20000 && v < 80000) return new Date(1899, 11, 30 + Math.floor(v), 0, 0, 0, 0);
     return null;
   }
   if (!v) return null;
@@ -385,12 +398,14 @@ function guessUnits(body, map) {
 
 /* ---------- 오더 생성 ---------- */
 function buildOrders(body, map, units, opt) {
+  /* 스킵 안내 행번호는 **엑셀 실제 행번호** 여야 사용자가 찾을 수 있다 (헤더 오프셋 반영) */
+  const rowBase = (opt && opt.rowBase) || 0;
   const orders = [], skipped = [];
   const seen = {};
   let seqDate = opt.startDate ? new Date(opt.startDate + 'T08:00:00') : null;
 
   body.forEach((r, i) => {
-    const rowNo = i + 1;
+    const rowNo = rowBase + i + 1;
     const g = f => (map[f] == null ? null : r[map[f]]);
     let od = toNum(g('od')), t = toNum(g('t')), L = toNum(g('L')), qty = toNum(g('qty'));
 
@@ -615,7 +630,7 @@ function mount(el, opts) {
         위 드롭다운에서 해당 열을 직접 지정해 주세요.`);
       $$('plPrev').innerHTML = ''; $$('plAct').style.display = 'none'; BUILT = null; return;
     }
-    const r = buildOrders(body, MAP, UNITS, { startDate: $$('plStart').value });
+    const r = buildOrders(body, MAP, UNITS, { startDate: $$('plStart').value, rowBase: HDR + 1 });
     BUILT = r;
     const qty = r.orders.reduce((a, o) => a + o.qty, 0);
     if (!r.orders.length) {
@@ -847,7 +862,10 @@ function toolInfo(od, t, machine) {
                 : (best.head === 450 ? 'SMALL' : 'LARGE');
   /* die 식별자는 specs.py 와 동일하게 **입력 외경**을 쓴다 (die_id = (diameter, spec)).
      계획서 로더가 외경을 정수로 절사하므로 OD 711.0 과 711.2 는 같은 711 이 된다. */
-  return { head: best.head, drawbar, die: `${od}|${best.label}`, step: best.step,
+  /* die 식별자 — 정확 매칭(±5mm)일 때는 specs.py 와 같이 **입력 외경**을 쓴다(die_id=(diameter, spec)).
+     최근접 폴백으로 잡힌 경우에는 서로 다른 외경이 **같은 물리 다이 하나**로 매핑되므로,
+     매칭된 다이표 외경을 키로 써야 없는 다이 교체 90분이 붙지 않는다. */
+  return { head: best.head, drawbar, die: `${odGap > 0 ? best.od : od}|${best.label}`, step: best.step,
            label: best.label, tDiff: hit.tDiff, odGap,
            warn: hit.tDiff > TDIFF_WARN || odGap > 5,
            approx: odGap > 5 ? `외경 ${Math.round(od)} → 다이표 ${best.od} (${odGap.toFixed(0)}mm 차)` : null };
@@ -927,7 +945,7 @@ STD.EndFacing = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
   /* 두께 구간이 8~15 / 15~30 / 30~999 뿐이라 t < 8 이면 어떤 행도 매칭되지 않는다.
      종전 폴백은 표의 마지막 행(64" · t30~999 · 가장 느림)이라, 외경을 무시하고 최악값을 잡았다.
-     (t 7.9 → 880.1s / t 8.0 → 584.6s 로 0.1mm 차이에 +50% 점프)
+     (t 7.0 → 880.1s / t 8.0 → 506.6s 로 0.1mm 차이에 +74% 점프)
      구간 밖이면 pickRange 와 같은 원칙으로 **가장 가까운 두께 구간**을 쓴다. */
   let best = null, bd = 1e9;
   const score = (r) => {
@@ -1203,21 +1221,46 @@ function foldWindows(blocks) {
 function makeCalendar(cfg, shiftsOverride) {
   const shifts = shiftsOverride || cfg.shifts;   // 1 | 2 | '2E' | 3
   const netH = cfg.netHoursPerShift;             // 기본 7.5 — 실제 시간표와 일치
-  let blocks = (SHIFT_BLOCKS[shifts] || SHIFT_BLOCKS[2]).map(w => w.slice());
-  /* netH 를 7.5 에서 바꾸면(민감도 분석) 각 교대의 마지막 구간을 그만큼 늘리거나 줄인다.
-     기본값 7.5 에서는 실제 시간표와 정확히 같다. */
-  const per = (shifts === 1) ? 7.5 : 7.5;
-  if (Math.abs(netH - per) > 1e-6) {
-    const d = netH - per;
-    const nShift = (shifts === 1) ? 1 : (shifts === 3 ? 3 : 2);
-    const idx = [];
-    if (shifts === 1) idx.push(1);
-    else if (shifts === 2 || shifts === '2E') idx.push(1, 3);
-    else idx.push(1, 3, 5);
-    let shiftSeen = 0;
-    for (const i of idx) { if (blocks[i]) { blocks[i][1] += d; shiftSeen++; } if (shiftSeen >= nShift) break; }
+  const blocks = (SHIFT_BLOCKS[shifts] || SHIFT_BLOCKS[2]).map(w => w.slice());
+  let wins0 = foldWindows(blocks);
+  /* netH 를 7.5 에서 바꾸면(민감도 분석) 하루 가동창 전체를 비례 확대·축소한다.
+     종전에는 각 교대의 **마지막 구간만** 늘렸는데, 1근 끝(15:00)이 2근 시작(15:00)과 붙어 있어
+     늘린 만큼이 foldWindows 병합에 흡수됐다 — 3근에서는 한 시간도 늘지 않았다. */
+  const k = netH / 7.5;
+  if (Math.abs(k - 1) > 1e-9) {
+    const total = Math.min(24, wins0.reduce((a, w) => a + (w[1] - w[0]), 0) * k);
+    const pack = (shift) => {
+      const out = []; let prevEnd = 0;
+      for (const [a, b] of wins0) {
+        const st = Math.max(0, Math.max(a - shift, prevEnd));
+        const en = Math.min(24, st + (b - a) * k);
+        if (en > st) out.push([st, en]);
+        prevEnd = en;
+      }
+      return out;
+    };
+    let packed = pack(0);
+    const over = (packed.length ? packed[packed.length - 1][1] : 0) - (packed.length ? packed[0][0] : 0) - total;
+    /* 늘린 창이 자정을 넘으면 하루 전체를 그만큼 앞당겨 잘리지 않게 한다 */
+    const last = packed.length ? packed[packed.length - 1][1] : 0;
+    if (last >= 24 - 1e-9) {
+      const need = total + (packed.length ? packed[0][0] : 0);
+      packed = pack(Math.max(0, need - 24));
+    }
+    /* 자정에 걸려 잘린 만큼은 남는 틈에서 앞으로 당겨 채운다 — dayCap 이 정확히 total 이 되도록 */
+    let cap = packed.reduce((a, w) => a + (w[1] - w[0]), 0);
+    if (cap < total - 1e-9) {
+      let need = total - cap; const filled = []; let cursor = 0;
+      for (const w of packed) {
+        if (need > 1e-9 && w[0] > cursor) { const take = Math.min(need, w[0] - cursor); filled.push([w[0] - take, w[0]]); need -= take; }
+        filled.push(w); cursor = w[1];
+      }
+      if (need > 1e-9 && cursor < 24) filled.push([cursor, Math.min(24, cursor + need)]);
+      packed = filled;
+    }
+    wins0 = foldWindows(packed);
   }
-  const wins = foldWindows(blocks);
+  const wins = wins0;
   const dayCap = wins.reduce((a, w) => a + (w[1] - w[0]), 0) * 3600;
   return {
     wins, dayCap,
@@ -1259,7 +1302,7 @@ function makeCalendar(cfg, shiftsOverride) {
         const h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
         const w = wins.find(w => h >= w[0] && h < w[1]);
         const avail = w ? (w[1] - h) * 3600 : 0;
-        if (avail >= left) return cur + left;
+        if (avail + 1e-6 >= left) return cur + left;   // 부동소수 오차로 경계에서 다음 창까지 밀리던 문제
         left -= avail; cur = this.snap(cur + avail + 1);
       }
       return cur;
@@ -1966,16 +2009,22 @@ function simulate(orders, cfg) {
         if (st < oS) oS = st;
         if (en > oE) oE = en;
 
-        if (nid === 'PACK' && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
+        if ((nid === 'PACK' || nid === 'PACKRB') && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
 
         /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
-        if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
+        /* 검사 노드는 본류 F-X ray(FX) 와 R/B 라인의 R/B RT(RT104) 두 곳이다.
+           종전에는 FX 만 봐서 R/B 물량이 100% 무결점으로 흘렀다. */
+        const isRT = (nid === 'FX' || nid === 'RBRT');
+        if (ST.on && isRT && rework < ST.maxRework && rng() < ST.pDefect) {
           rework++; nRework++;
           /* 남아 있던 꼬리(예: PACK)를 비우고 다시 넣는다.
-             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다. */
+             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다.
+             indexOf 가 -1 이면 slice(-1) 이 마지막 1개만 남기므로 반드시 방어한다. */
+          const from = (id) => { const i = route.indexOf(id); return i < 0 ? [] : route.slice(i); };
+          const expId = route.includes('EXP') ? 'EXP' : 'RB';
           const back = (rng() < ST.pWeld)
-            ? ['RP', 'RW', ...route.slice(route.indexOf('FX'))]
-            : ['RP', 'EP', ...route.slice(route.indexOf('EXP'))];
+            ? ['RP', 'RW', ...from(nid)]
+            : ['RP', 'EP', ...from(expId)];
           queue.length = 0; queue.push(...back);
         }
       }
@@ -2021,8 +2070,10 @@ function simulate(orders, cfg) {
       utilAvg: avail ? (busy + setup) / (avail * units.length) * 100 : 0,
       shifts: RB_LINE.has(n.id) ? (cfg.rbShifts || 1) : cfg.shifts,
       unitUtil, imbalance: utilMax - utilMin,
-      /* 전환 비중은 **설비 점유 기준**(호기별 합계)으로 센다 — busy 도 호기별 합계이므로 단위를 맞춘다 */
-      setupShare: (busy + setupUnits) ? setupUnits / (busy + setupUnits) * 100 : 0,
+      /* 전환 비중은 병목 탭 표에 함께 표시되는 가공(busyH)·전환(setupH) 두 값으로 검산이 되어야 한다.
+         그래서 표시값과 같은 조합(가공 호기합 + 전환 벽시계)을 쓴다.
+         호기 점유 기준 비중은 setupUnitsH 로 따로 계산할 수 있다. */
+      setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
       loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),
       units: units.map((u, i) => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600,
                                     jobs: u.jobs, util: unitUtil[i] }))
@@ -2090,6 +2141,7 @@ const AISLES = [
   { row:3,   label:'확관 (Expansion) — 병목 공정',      color:0x8957e5, cs:'#a77bff', c0:-0.7, c1:7.7 },
   { row:4,   label:'검사 · 출하',                       color:0x238636, cs:'#3fbf5c', c0:-0.7, c1:5.7 },
   { row:5,   label:'보수 · 재작업',                     color:0xb06020, cs:'#e0913f', c0:1.3,  c1:5.7 },
+  { row:6,   label:'R/B 라인 (여분 · 열처리·배척)',     color:0xd29922, cs:'#e3b341', c0:1.3,  c1:4.7 },
 ];
 const px3 = col => (col - 3.5) * COL_X;
 const pz3 = row => ROW_Z0 + row * ROW_DZ;

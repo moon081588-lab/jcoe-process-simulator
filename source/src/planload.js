@@ -39,7 +39,10 @@ function isApi5L(mat, use) {
   const u = String(use == null ? '' : use).trim();
   if (u.includes('송유관') || /line\s*pipe/i.test(u)) return true;
   const m = String(mat == null ? '' : mat).trim().toUpperCase();
-  return /^API/.test(m) || /\b5L\b/.test(m);
+  if (/\b5L\b/.test(m)) return true;
+  if (!/^API/.test(m)) return false;
+  /* API 5CT(케이싱·튜빙: J55·K55·N80·L80·P110 …)는 라인파이프가 아니다 */
+  return !/(J55|K55|N80|L80|P110|C90|T95|Q125|M65|H40|5CT)/.test(m);
 }
 /* 재질에서 고강도 판정 — API X70 이상. 재질 열이 없으면 두께 대리변수로 폴백한다. */
 function gradeOf(mat, t) {
@@ -60,9 +63,19 @@ function toNum(v) {
   return m ? parseFloat(m[0]) : null;
 }
 function toDate(v) {
-  if (v instanceof Date && !isNaN(v)) return v;
+  if (v instanceof Date && !isNaN(v)) {
+    /* 자정 ±2분 안이면 달력일 경계로 스냅한다.
+       SheetJS 의 cellDates 변환이 로컬 타임존(서울은 1899년 LMT +8:27:52)에서 52초 어긋나
+       모든 날짜가 **전날 23:59** 로 떨어지던 문제를 흡수한다. */
+    const d = new Date(v.getTime());
+    const mins = d.getHours() * 60 + d.getMinutes();
+    if (mins >= 1438) { d.setDate(d.getDate() + 1); d.setHours(0, 0, 0, 0); }
+    else if (mins <= 2) { d.setHours(0, 0, 0, 0); }
+    return d;
+  }
   if (isNum(v)) {                                  // 엑셀 serial
-    if (v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30 + Math.floor(v)));
+    /* **로컬** 달력일 자정으로 만든다. UTC 로 만들면 아래 fmtDT 의 로컬 게터로 읽을 때 타임존만큼 밀린다. */
+    if (v > 20000 && v < 80000) return new Date(1899, 11, 30 + Math.floor(v), 0, 0, 0, 0);
     return null;
   }
   if (!v) return null;
@@ -199,12 +212,14 @@ function guessUnits(body, map) {
 
 /* ---------- 오더 생성 ---------- */
 function buildOrders(body, map, units, opt) {
+  /* 스킵 안내 행번호는 **엑셀 실제 행번호** 여야 사용자가 찾을 수 있다 (헤더 오프셋 반영) */
+  const rowBase = (opt && opt.rowBase) || 0;
   const orders = [], skipped = [];
   const seen = {};
   let seqDate = opt.startDate ? new Date(opt.startDate + 'T08:00:00') : null;
 
   body.forEach((r, i) => {
-    const rowNo = i + 1;
+    const rowNo = rowBase + i + 1;
     const g = f => (map[f] == null ? null : r[map[f]]);
     let od = toNum(g('od')), t = toNum(g('t')), L = toNum(g('L')), qty = toNum(g('qty'));
 
@@ -429,7 +444,7 @@ function mount(el, opts) {
         위 드롭다운에서 해당 열을 직접 지정해 주세요.`);
       $$('plPrev').innerHTML = ''; $$('plAct').style.display = 'none'; BUILT = null; return;
     }
-    const r = buildOrders(body, MAP, UNITS, { startDate: $$('plStart').value });
+    const r = buildOrders(body, MAP, UNITS, { startDate: $$('plStart').value, rowBase: HDR + 1 });
     BUILT = r;
     const qty = r.orders.reduce((a, o) => a + o.qty, 0);
     if (!r.orders.length) {

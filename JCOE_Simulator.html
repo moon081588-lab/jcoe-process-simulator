@@ -466,11 +466,11 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
 
     <h3>③ 시뮬레이션 파라미터</h3>
     <div id="cfgBar">
-      <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></div>
+      <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1근</option><option value="2" selected>2근</option><option value="2E">2근연장</option><option value="3">3근</option></select></div>
       <div class="f"><label>실가동 h/Shift</label><input type="number" id="cfgNetH" value="7.5" step="0.5"></div>
       <div class="hint" style="max-width:420px">교대 시간대는 세아제강 실제 시간표를 씁니다 —
         1근 07:00–11:30 · 12:00–15:00 / 2근 15:00–18:00 · 18:30–23:00 / 3근 23:00–02:45 · 03:15–07:00.
-        각 7.5h. <b>근무 형태가 월마다 달라 2근 고정으로 봅니다.</b></div>
+        각 7.5h. 2근연장은 2근에 23:30–03:00(+3.5h)이 붙습니다. <b>근무 형태가 월마다 달라 2근을 기본으로 봅니다.</b><br>「실가동 h/Shift」를 7.5 에서 바꾸면 하루 가동창 전체가 그 비율로 늘거나 줄어듭니다(민감도 분석용).</div>
       <div class="f"><label>수압 유지(초)</label><input type="number" id="cfgHold" value="60"></div>
       <div class="f ck"><input type="checkbox" id="cfgWeekend"><label for="cfgWeekend">주말 비가동</label></div>
       <div class="f ck"><input type="checkbox" id="cfgCO" checked><label for="cfgCO">설비 전환시간 반영</label></div>
@@ -579,7 +579,10 @@ function isApi5L(mat, use) {
   const u = String(use == null ? '' : use).trim();
   if (u.includes('송유관') || /line\s*pipe/i.test(u)) return true;
   const m = String(mat == null ? '' : mat).trim().toUpperCase();
-  return /^API/.test(m) || /\b5L\b/.test(m);
+  if (/\b5L\b/.test(m)) return true;
+  if (!/^API/.test(m)) return false;
+  /* API 5CT(케이싱·튜빙: J55·K55·N80·L80·P110 …)는 라인파이프가 아니다 */
+  return !/(J55|K55|N80|L80|P110|C90|T95|Q125|M65|H40|5CT)/.test(m);
 }
 /* 재질에서 고강도 판정 — API X70 이상. 재질 열이 없으면 두께 대리변수로 폴백한다. */
 function gradeOf(mat, t) {
@@ -600,9 +603,19 @@ function toNum(v) {
   return m ? parseFloat(m[0]) : null;
 }
 function toDate(v) {
-  if (v instanceof Date && !isNaN(v)) return v;
+  if (v instanceof Date && !isNaN(v)) {
+    /* 자정 ±2분 안이면 달력일 경계로 스냅한다.
+       SheetJS 의 cellDates 변환이 로컬 타임존(서울은 1899년 LMT +8:27:52)에서 52초 어긋나
+       모든 날짜가 **전날 23:59** 로 떨어지던 문제를 흡수한다. */
+    const d = new Date(v.getTime());
+    const mins = d.getHours() * 60 + d.getMinutes();
+    if (mins >= 1438) { d.setDate(d.getDate() + 1); d.setHours(0, 0, 0, 0); }
+    else if (mins <= 2) { d.setHours(0, 0, 0, 0); }
+    return d;
+  }
   if (isNum(v)) {                                  // 엑셀 serial
-    if (v > 20000 && v < 80000) return new Date(Date.UTC(1899, 11, 30 + Math.floor(v)));
+    /* **로컬** 달력일 자정으로 만든다. UTC 로 만들면 아래 fmtDT 의 로컬 게터로 읽을 때 타임존만큼 밀린다. */
+    if (v > 20000 && v < 80000) return new Date(1899, 11, 30 + Math.floor(v), 0, 0, 0, 0);
     return null;
   }
   if (!v) return null;
@@ -739,12 +752,14 @@ function guessUnits(body, map) {
 
 /* ---------- 오더 생성 ---------- */
 function buildOrders(body, map, units, opt) {
+  /* 스킵 안내 행번호는 **엑셀 실제 행번호** 여야 사용자가 찾을 수 있다 (헤더 오프셋 반영) */
+  const rowBase = (opt && opt.rowBase) || 0;
   const orders = [], skipped = [];
   const seen = {};
   let seqDate = opt.startDate ? new Date(opt.startDate + 'T08:00:00') : null;
 
   body.forEach((r, i) => {
-    const rowNo = i + 1;
+    const rowNo = rowBase + i + 1;
     const g = f => (map[f] == null ? null : r[map[f]]);
     let od = toNum(g('od')), t = toNum(g('t')), L = toNum(g('L')), qty = toNum(g('qty'));
 
@@ -969,7 +984,7 @@ function mount(el, opts) {
         위 드롭다운에서 해당 열을 직접 지정해 주세요.`);
       $$('plPrev').innerHTML = ''; $$('plAct').style.display = 'none'; BUILT = null; return;
     }
-    const r = buildOrders(body, MAP, UNITS, { startDate: $$('plStart').value });
+    const r = buildOrders(body, MAP, UNITS, { startDate: $$('plStart').value, rowBase: HDR + 1 });
     BUILT = r;
     const qty = r.orders.reduce((a, o) => a + o.qty, 0);
     if (!r.orders.length) {
@@ -1201,7 +1216,10 @@ function toolInfo(od, t, machine) {
                 : (best.head === 450 ? 'SMALL' : 'LARGE');
   /* die 식별자는 specs.py 와 동일하게 **입력 외경**을 쓴다 (die_id = (diameter, spec)).
      계획서 로더가 외경을 정수로 절사하므로 OD 711.0 과 711.2 는 같은 711 이 된다. */
-  return { head: best.head, drawbar, die: `${od}|${best.label}`, step: best.step,
+  /* die 식별자 — 정확 매칭(±5mm)일 때는 specs.py 와 같이 **입력 외경**을 쓴다(die_id=(diameter, spec)).
+     최근접 폴백으로 잡힌 경우에는 서로 다른 외경이 **같은 물리 다이 하나**로 매핑되므로,
+     매칭된 다이표 외경을 키로 써야 없는 다이 교체 90분이 붙지 않는다. */
+  return { head: best.head, drawbar, die: `${odGap > 0 ? best.od : od}|${best.label}`, step: best.step,
            label: best.label, tDiff: hit.tDiff, odGap,
            warn: hit.tDiff > TDIFF_WARN || odGap > 5,
            approx: odGap > 5 ? `외경 ${Math.round(od)} → 다이표 ${best.od} (${odGap.toFixed(0)}mm 차)` : null };
@@ -1281,7 +1299,7 @@ STD.EndFacing = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
   /* 두께 구간이 8~15 / 15~30 / 30~999 뿐이라 t < 8 이면 어떤 행도 매칭되지 않는다.
      종전 폴백은 표의 마지막 행(64" · t30~999 · 가장 느림)이라, 외경을 무시하고 최악값을 잡았다.
-     (t 7.9 → 880.1s / t 8.0 → 584.6s 로 0.1mm 차이에 +50% 점프)
+     (t 7.0 → 880.1s / t 8.0 → 506.6s 로 0.1mm 차이에 +74% 점프)
      구간 밖이면 pickRange 와 같은 원칙으로 **가장 가까운 두께 구간**을 쓴다. */
   let best = null, bd = 1e9;
   const score = (r) => {
@@ -1557,21 +1575,46 @@ function foldWindows(blocks) {
 function makeCalendar(cfg, shiftsOverride) {
   const shifts = shiftsOverride || cfg.shifts;   // 1 | 2 | '2E' | 3
   const netH = cfg.netHoursPerShift;             // 기본 7.5 — 실제 시간표와 일치
-  let blocks = (SHIFT_BLOCKS[shifts] || SHIFT_BLOCKS[2]).map(w => w.slice());
-  /* netH 를 7.5 에서 바꾸면(민감도 분석) 각 교대의 마지막 구간을 그만큼 늘리거나 줄인다.
-     기본값 7.5 에서는 실제 시간표와 정확히 같다. */
-  const per = (shifts === 1) ? 7.5 : 7.5;
-  if (Math.abs(netH - per) > 1e-6) {
-    const d = netH - per;
-    const nShift = (shifts === 1) ? 1 : (shifts === 3 ? 3 : 2);
-    const idx = [];
-    if (shifts === 1) idx.push(1);
-    else if (shifts === 2 || shifts === '2E') idx.push(1, 3);
-    else idx.push(1, 3, 5);
-    let shiftSeen = 0;
-    for (const i of idx) { if (blocks[i]) { blocks[i][1] += d; shiftSeen++; } if (shiftSeen >= nShift) break; }
+  const blocks = (SHIFT_BLOCKS[shifts] || SHIFT_BLOCKS[2]).map(w => w.slice());
+  let wins0 = foldWindows(blocks);
+  /* netH 를 7.5 에서 바꾸면(민감도 분석) 하루 가동창 전체를 비례 확대·축소한다.
+     종전에는 각 교대의 **마지막 구간만** 늘렸는데, 1근 끝(15:00)이 2근 시작(15:00)과 붙어 있어
+     늘린 만큼이 foldWindows 병합에 흡수됐다 — 3근에서는 한 시간도 늘지 않았다. */
+  const k = netH / 7.5;
+  if (Math.abs(k - 1) > 1e-9) {
+    const total = Math.min(24, wins0.reduce((a, w) => a + (w[1] - w[0]), 0) * k);
+    const pack = (shift) => {
+      const out = []; let prevEnd = 0;
+      for (const [a, b] of wins0) {
+        const st = Math.max(0, Math.max(a - shift, prevEnd));
+        const en = Math.min(24, st + (b - a) * k);
+        if (en > st) out.push([st, en]);
+        prevEnd = en;
+      }
+      return out;
+    };
+    let packed = pack(0);
+    const over = (packed.length ? packed[packed.length - 1][1] : 0) - (packed.length ? packed[0][0] : 0) - total;
+    /* 늘린 창이 자정을 넘으면 하루 전체를 그만큼 앞당겨 잘리지 않게 한다 */
+    const last = packed.length ? packed[packed.length - 1][1] : 0;
+    if (last >= 24 - 1e-9) {
+      const need = total + (packed.length ? packed[0][0] : 0);
+      packed = pack(Math.max(0, need - 24));
+    }
+    /* 자정에 걸려 잘린 만큼은 남는 틈에서 앞으로 당겨 채운다 — dayCap 이 정확히 total 이 되도록 */
+    let cap = packed.reduce((a, w) => a + (w[1] - w[0]), 0);
+    if (cap < total - 1e-9) {
+      let need = total - cap; const filled = []; let cursor = 0;
+      for (const w of packed) {
+        if (need > 1e-9 && w[0] > cursor) { const take = Math.min(need, w[0] - cursor); filled.push([w[0] - take, w[0]]); need -= take; }
+        filled.push(w); cursor = w[1];
+      }
+      if (need > 1e-9 && cursor < 24) filled.push([cursor, Math.min(24, cursor + need)]);
+      packed = filled;
+    }
+    wins0 = foldWindows(packed);
   }
-  const wins = foldWindows(blocks);
+  const wins = wins0;
   const dayCap = wins.reduce((a, w) => a + (w[1] - w[0]), 0) * 3600;
   return {
     wins, dayCap,
@@ -1613,7 +1656,7 @@ function makeCalendar(cfg, shiftsOverride) {
         const h = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
         const w = wins.find(w => h >= w[0] && h < w[1]);
         const avail = w ? (w[1] - h) * 3600 : 0;
-        if (avail >= left) return cur + left;
+        if (avail + 1e-6 >= left) return cur + left;   // 부동소수 오차로 경계에서 다음 창까지 밀리던 문제
         left -= avail; cur = this.snap(cur + avail + 1);
       }
       return cur;
@@ -2320,16 +2363,22 @@ function simulate(orders, cfg) {
         if (st < oS) oS = st;
         if (en > oE) oE = en;
 
-        if (nid === 'PACK' && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
+        if ((nid === 'PACK' || nid === 'PACKRB') && deadlineTs != null) { if (en <= deadlineTs) doneInPeriod++; else overflow++; }
 
         /* 불량 발생 → Repair → 용접 문제(보수 용접·재검사) / Expander 문제(재확관) */
-        if (ST.on && nid === 'FX' && rework < ST.maxRework && rng() < ST.pDefect) {
+        /* 검사 노드는 본류 F-X ray(FX) 와 R/B 라인의 R/B RT(RT104) 두 곳이다.
+           종전에는 FX 만 봐서 R/B 물량이 100% 무결점으로 흘렀다. */
+        const isRT = (nid === 'FX' || nid === 'RBRT');
+        if (ST.on && isRT && rework < ST.maxRework && rng() < ST.pDefect) {
           rework++; nRework++;
           /* 남아 있던 꼬리(예: PACK)를 비우고 다시 넣는다.
-             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다. */
+             비우지 않으면 재작업 1회마다 PACK 이 두 번 실행돼 포장 부하가 과대 계상된다.
+             indexOf 가 -1 이면 slice(-1) 이 마지막 1개만 남기므로 반드시 방어한다. */
+          const from = (id) => { const i = route.indexOf(id); return i < 0 ? [] : route.slice(i); };
+          const expId = route.includes('EXP') ? 'EXP' : 'RB';
           const back = (rng() < ST.pWeld)
-            ? ['RP', 'RW', ...route.slice(route.indexOf('FX'))]
-            : ['RP', 'EP', ...route.slice(route.indexOf('EXP'))];
+            ? ['RP', 'RW', ...from(nid)]
+            : ['RP', 'EP', ...from(expId)];
           queue.length = 0; queue.push(...back);
         }
       }
@@ -2375,8 +2424,10 @@ function simulate(orders, cfg) {
       utilAvg: avail ? (busy + setup) / (avail * units.length) * 100 : 0,
       shifts: RB_LINE.has(n.id) ? (cfg.rbShifts || 1) : cfg.shifts,
       unitUtil, imbalance: utilMax - utilMin,
-      /* 전환 비중은 **설비 점유 기준**(호기별 합계)으로 센다 — busy 도 호기별 합계이므로 단위를 맞춘다 */
-      setupShare: (busy + setupUnits) ? setupUnits / (busy + setupUnits) * 100 : 0,
+      /* 전환 비중은 병목 탭 표에 함께 표시되는 가공(busyH)·전환(setupH) 두 값으로 검산이 되어야 한다.
+         그래서 표시값과 같은 조합(가공 호기합 + 전환 벽시계)을 쓴다.
+         호기 점유 기준 비중은 setupUnitsH 로 따로 계산할 수 있다. */
+      setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
       loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),
       units: units.map((u, i) => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600,
                                     jobs: u.jobs, util: unitUtil[i] }))
@@ -2464,7 +2515,7 @@ function readCfg() {
     deadline: $('cfgDeadline') && $('cfgDeadline').value ? $('cfgDeadline').value : null,
     dateMode: ($('cfgDateMode')||{}).value || 'plan',
     seqGapH: numIn('cfgSeqGap', 6, 0.5, 240),
-    shifts: +$('cfgShifts').value || 2,
+    shifts: (($('cfgShifts')||{}).value === '2E') ? '2E' : (+(($('cfgShifts')||{}).value) || 2),
     netHoursPerShift: numIn('cfgNetH', 7.5, 0.5, 24),
     skipWeekend: $('cfgWeekend').checked,
     useRB: $('cfgRB').checked,
@@ -2754,7 +2805,7 @@ function draw() {
       L.push(`설비 ${st.cap}대 · 처리 ${st.jobs.toLocaleString()}본`);
       L.push(`가공 ${st.busyH.toFixed(1)}h · 전환 ${st.setupH.toFixed(1)}h`);
       L.push(`가동률 ${st.util.toFixed(1)}%`);
-      st.units.forEach(u=>L.push(`  ${u.id} : ${u.jobs}본 / ${u.busyH.toFixed(1)}h`));
+      st.units.forEach(u=>L.push(`  ${u.id} : ${u.jobs}본 / ${(u.busyH+u.setupH).toFixed(1)}h`));
     } else if (hover.kind==='dec') L.push('분기 조건 (Decision)');
     else if (hover.kind==='buf') L.push('버퍼 · 최대 4,000톤 적재');
     else L.push('표준시간 측정 대상 외 공정');
@@ -2850,20 +2901,24 @@ function updateStatPanel(){
   }
   const win = Math.max(3600, Math.min(86400*3, animT - SIM.t0));
   const ev = SIM.events;
+  /* 병목 탭과 정의를 맞춘다 — ① 전환시간 포함 ② 설비별 캘린더(R/B 라인은 1근) ③ **호기 1대** 기준.
+     종전에는 전 호기를 합산해 1대 용량으로 나눠 병렬 설비가 대수만큼 부풀려졌고(슬러그 4대 → 4배),
+     R/B 후속 3개 노드는 2근 캘린더를 분모로 써서 절반으로 표시됐다. */
   const busy = {};
+  const add = (n, u, v) => { (busy[n] || (busy[n] = {}))[u] = (busy[n][u] || 0) + v; };
   let lo=0, hi=ev.length-1, st=ev.length;
   while (lo<=hi){ const m=(lo+hi)>>1; if (ev[m].e>=animT-win){ st=m; hi=m-1; } else lo=m+1; }
   for (let i=Math.max(0,st-2000);i<ev.length && ev[i].s<=animT;i++){
     const e=ev[i]; const a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
-    if (b>a) busy[e.n]=(busy[e.n]||0)+(b-a);
-    /* 전환시간도 설비 점유다 — 병목 탭 util 과 같은 기준 */
-    if (e.co>0){ const ca=Math.max(e.s-e.co,animT-win), cb=Math.min(e.s,animT); if (cb>ca) busy[e.n]=(busy[e.n]||0)+(cb-ca); }
+    if (b>a) add(e.n, e.u, b-a);
+    if (e.co>0){ const ca=Math.max(e.s-e.co,animT-win), cb=Math.min(e.s,animT); if (cb>ca) add(e.n, e.u, cb-ca); }
   }
+  const RB_NODES = new Set(['RB','RBEF','RBRT','PACKRB']);
   for (const s of SIM.stats){
-    /* 병목 탭과 정의를 맞춘다 — ① 전환시간 포함 ② 설비별 캘린더(RB 는 1근) ③ 호기 1대 기준(대수로 나누지 않음).
-       종전에는 세 가지가 모두 달라 RB 가 실제의 절반으로, EXP 가 23%(병목 탭 51%)로 보였다. */
-    const dayCap = ((s.id==='RB' ? SIM.calRB : SIM.cal) || SIM.cal).dayCap;
-    const u = Math.min(100, (busy[s.id]||0)/(win*(dayCap/86400))*100);
+    const dayCap = ((RB_NODES.has(s.id) ? SIM.calRB : SIM.cal) || SIM.cal).dayCap;
+    const per = busy[s.id] || {};
+    const top = Object.keys(per).length ? Math.max(...Object.values(per)) : 0;
+    const u = Math.min(100, top/(win*(dayCap/86400))*100);
     const el=$('sf_'+s.id); if(!el) continue;
     el.style.width=u.toFixed(0)+'%';
     el.style.background = u>=85?C.bneck:u>=60?C.setup:C.done;
@@ -3052,6 +3107,12 @@ function invalidatePlan(){
   }
   if($('optSum')) $('optSum').innerHTML=`<div class="kpi bn"><b>재실행 필요</b><span>제약이 바뀌어 이전 최적화 해는 무효입니다</span></div>`;
   if($('optSeq')) $('optSeq').innerHTML='';
+  /* 규칙 비교표·반복 실행 결과도 이전 조건의 것이다 — 같이 지운다.
+     종전에는 남아 있어서 조건을 바꾼 뒤에도 옛 조건의 Makespan 이 "현재 값" 처럼 보였다. */
+  if($('cmpBody')) $('cmpBody').innerHTML='<tr><td colspan="9" style="color:#6e7681">조건이 바뀌었습니다. 「전체 규칙 비교 실행」을 다시 눌러 주세요.</td></tr>';
+  if($('cmpNote')) $('cmpNote').innerHTML='';
+  MC_LAST = null;
+  ['mcSum','mcHist','mcTable','mcRules'].forEach(id=>{ if($(id)) $(id).innerHTML=''; });
   runSim();
 }
 function initOptTab(){
@@ -3102,7 +3163,7 @@ function renderEligWarn(){
     const why = {};
     for(const no of fixed){
       const o = ORDERS.find(x=>String(x.no)===String(no)); if(!o) continue;
-      const em = expanderMode({no:o.no,od:o.od,t:o.t,L:o.L,qty:o.qty}, CFG||readCfg());
+      const em = expanderMode(specOf(o, CFG||readCfg()), CFG||readCfg());
       const k = (em.why||'').includes('외경') ? `외경 48"↑/22"↓ → #2호기` : `${R.L2}m 초과 → #1호기`;
       why[k]=(why[k]||0)+1;
     }
@@ -3125,7 +3186,8 @@ function renderRuleDiff(){
   const sum=(rs)=>{
     const cfg={...base, expRuleSet:rs}, q={M1:0,M2:0,FREE:0,BOTH:0,RB:0};
     for(const o of ORDERS){
-      const sp={no:o.no,od:o.od,t:o.t,L:o.L,qty:o.qty,bottleneck:o.bottleneck,rawL:o.rawL};
+      /* 시뮬레이션과 같은 정규화(외경 절사·두께 반올림)를 적용해야 화면 분류와 실제가 일치한다 */
+      const sp=specOf(o, cfg);
       let k;
       if(useRBLine(sp,cfg)) k='RB';
       else { const em=expanderMode(sp,cfg);
@@ -3264,7 +3326,7 @@ function optKpiHtml(ms){
     <div class="kpi"><b>${P.nJobs}</b><span>확관 대상 오더 (작업 j)</span></div>
     <div class="kpi"><b>${P.nFree} / ${P.nFixed} / ${P.nBoth}</b><span>선택가능 / 단일호기 전용 / 동시가동</span></div>
     <div class="kpi"><b>${P.cmaxH.toFixed(1)} h</b><span>확관 Makespan (Cmax)</span></div>
-    <div class="kpi bn"><b>${P.setupH.toFixed(1)} h</b><span>총 설비 전환시간 Σs<sub>ij</sub></span></div>
+    <div class="kpi bn"><b>${P.setupH.toFixed(1)} h</b><span>확관 전환시간 Σs<sub>ij</sub></span></div>
     <div class="kpi"><b>${P.balH.toFixed(1)} h</b><span>호기간 부하 편차</span></div>
     <div class="kpi"><b>${P.machines.map((m,i)=>`#${i+1} ${(P.loadH[m]||0).toFixed(0)}h`).join(' / ')}</b><span>호기별 부하</span></div>
     <div class="kpi"><b>${(ms||0).toFixed(0)} ms</b><span>SA ${P.iters.toLocaleString()}회 탐색</span></div>`;
@@ -3385,14 +3447,15 @@ function renderBottleneck(){
   }).join('');
 
   const top = s[0];
-  const setupTop = s.slice().sort((a,b)=>b.setupH-a.setupH)[0];
-  const eligTop = s.slice().sort((a,b)=>b.imbalance-a.imbalance)[0];
+  /* 전환·제약 병목 카드는 값이 0 이면 지목하지 않는다 — 전환시간을 끄면 "JCOE 포장이 전환 병목 0.0h" 가 나왔다 */
+  const setupTop = s.slice().sort((a,b)=>b.setupH-a.setupH).filter(x=>x.setupH>0.05)[0];
+  const eligTop = s.slice().sort((a,b)=>b.imbalance-a.imbalance).filter(x=>x.imbalance>1)[0];
   const totSetup = s.reduce((a,x)=>a+x.setupH,0);
   const exp = s.find(x=>x.id==='EXP') || {imbalance:0, setupH:0, util:0, unitUtil:[0,0]};
   $('bnCall').innerHTML = `
     <div class="kpi bn"><b>${top.label.replace('\n',' ')}</b><span>가공 병목 · 대당 가동률 ${top.util.toFixed(1)}%</span></div>
-    <div class="kpi" style="border-color:#d2992266;background:#d2992214"><b style="color:#e3b341">${setupTop.label.replace('\n',' ')}</b><span>전환 병목 · ${setupTop.setupH.toFixed(1)}h (전체 전환의 ${pct(setupTop.setupH, totSetup)})</span></div>
-    <div class="kpi" style="border-color:#8957e566;background:#8957e514"><b style="color:#a77bff">${eligTop.label.replace('\n',' ')}</b><span>제약 병목 · 호기 편차 ${eligTop.imbalance.toFixed(0)}%p</span></div>
+    ${setupTop?`<div class="kpi" style="border-color:#d2992266;background:#d2992214"><b style="color:#e3b341">${setupTop.label.replace('\n',' ')}</b><span>전환 병목 · ${setupTop.setupH.toFixed(1)}h (전체 전환의 ${pct(setupTop.setupH, totSetup)})</span></div>`:''}
+    ${eligTop?`<div class="kpi" style="border-color:#8957e566;background:#8957e514"><b style="color:#a77bff">${eligTop.label.replace('\n',' ')}</b><span>제약 병목 · 호기 편차 ${eligTop.imbalance.toFixed(0)}%p</span></div>`:'<div class="kpi"><b>없음</b><span>제약 병목 — 호기 편중이 유의하지 않습니다</span></div>'}
     <div class="kpi"><b>${totSetup.toFixed(0)} h</b><span>총 설비 전환 시간</span></div>
     <div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>전체 계획 소요</span></div>`;
 
@@ -3400,8 +3463,8 @@ function renderBottleneck(){
   const ctSample = () => {
     const rep = ORDERS.slice().sort((a,b)=>b.qty-a.qty)[0];
     if(!rep) return '';
-    const sp = {no:rep.no, od:rep.od, t:rep.t, L:rep.L, qty:rep.qty, grade:rep.t>25?'high':'normal',
-                api5l:rep.qty>=50, markSpec:2, markEnd:2, defects:0, holdSec:(CFG||readCfg()).holdSec, rtType:'450kV'};
+    /* 시뮬 본체와 같은 specOf 를 써야 재질·API 5L 판정이 어긋나지 않는다 */
+    const sp = specOf(rep, CFG||readCfg());
     const line = rep.L/1000 > 13 ? '18M' : '12M';
     const list = [['포장', STD.Packing(sp,line,1).sec], ['수압', STD.HydroTest(sp).sec],
                   ['슬러그 제거', STD.OuterBead(sp).sec], ['면취기', STD.EndFacing(sp).sec],
@@ -3429,8 +3492,8 @@ function renderBottleneck(){
     <b style="color:#ff7b72">① 가공 병목</b> — <b>${top.label.replace('\n',' ')} ${top.util.toFixed(0)}%</b>.
     1본당 소요가 길고 설비가 ${top.cap}대뿐이라 물리적으로 가장 느립니다.
     ${ctSample()}<br><br>
-    <b style="color:#e3b341">② 전환 병목</b> — <b>${setupTop.label.replace('\n',' ')} ${setupTop.setupH.toFixed(0)}h</b>,
-    전체 설비 전환의 ${pct(setupTop.setupH, totSetup)}가 여기서 발생합니다. 다이·헤드 교체 때문에 규격이 바뀔 때마다 멈춥니다.
+    <b style="color:#e3b341">② 전환 병목</b> — ${setupTop?`<b>${setupTop.label.replace('\n',' ')} ${setupTop.setupH.toFixed(0)}h</b>,
+    전체 설비 전환의 ${pct(setupTop.setupH, totSetup)}가 여기서 발생합니다. 다이·헤드 교체 때문에 규격이 바뀔 때마다 멈춥니다.`:'전환시간이 반영되지 않아 판정할 수 없습니다.'}
     <b>PPT가 말한 “확관 병목”은 이쪽</b>입니다 — “타 공정 대비 긴 설비 전환 시간이 전체 공정의 병목을 유발”.<br><br>
     <b style="color:#a77bff">③ 제약 병목</b> — 확관 호기 간 가동률 차이 <b>${exp.imbalance.toFixed(0)}%p</b>
     (${exp.unitUtil.map(v=>v.toFixed(0)+'%').join(' / ')}).
@@ -3443,7 +3506,7 @@ function renderBottleneck(){
   $('bnUnits').innerHTML = s.filter(x=>x.cap>1).map(x=>`
     <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap} units)</h4>
       ${x.units.map((u,i)=>`<div class="tr2"><span>${x.id==='EXP'?('확관 #'+(i+1)+'호기'):u.id}</span>
-        <b>${u.jobs.toLocaleString()}본 · ${u.busyH.toFixed(1)}h · ${u.util.toFixed(0)}%</b></div>`).join('')}
+        <b>${u.jobs.toLocaleString()}본 · ${(u.busyH+u.setupH).toFixed(1)}h · ${u.util.toFixed(0)}%</b></div>`).join('')}
     </div>`).join('');
 }
 
@@ -3599,7 +3662,7 @@ function renderWiz(){
      <div class="kpi"><b>${k.expSetupH.toFixed(1)}h</b><span>확관 전환시간</span></div>
      <div class="kpi"><b>${k.expBalanceH.toFixed(1)}h</b><span>확관 호기 부하 편차</span></div>
      <div class="kpi"><b>${k.expUtil.toFixed(1)}%</b><span>확관 가동률 (최다 1대)</span></div>`
-   + (k.deadline ? `<div class="kpi"><b>${pct(k.doneInPeriod, k.doneInPeriod+k.overflow)}</b><span>마감 ${k.deadline} 내 달성률</span></div>` : '');
+   + (k.deadline ? `<div class="kpi"><b>${pct(k.doneInPeriod, k.doneInPeriod+k.overflow)}</b><span>마감 ${esc(cfg.deadline||'')} 내 달성률</span></div>` : '');
 
   if(PLAN && rule==='OPT') renderOptResultInto('wizOptSum');
   else $('wizOptSum').innerHTML =

@@ -178,7 +178,10 @@ function toolInfo(od, t, machine) {
                 : (best.head === 450 ? 'SMALL' : 'LARGE');
   /* die 식별자는 specs.py 와 동일하게 **입력 외경**을 쓴다 (die_id = (diameter, spec)).
      계획서 로더가 외경을 정수로 절사하므로 OD 711.0 과 711.2 는 같은 711 이 된다. */
-  return { head: best.head, drawbar, die: `${od}|${best.label}`, step: best.step,
+  /* die 식별자 — 정확 매칭(±5mm)일 때는 specs.py 와 같이 **입력 외경**을 쓴다(die_id=(diameter, spec)).
+     최근접 폴백으로 잡힌 경우에는 서로 다른 외경이 **같은 물리 다이 하나**로 매핑되므로,
+     매칭된 다이표 외경을 키로 써야 없는 다이 교체 90분이 붙지 않는다. */
+  return { head: best.head, drawbar, die: `${odGap > 0 ? best.od : od}|${best.label}`, step: best.step,
            label: best.label, tDiff: hit.tDiff, odGap,
            warn: hit.tDiff > TDIFF_WARN || odGap > 5,
            approx: odGap > 5 ? `외경 ${Math.round(od)} → 다이표 ${best.od} (${odGap.toFixed(0)}mm 차)` : null };
@@ -258,7 +261,7 @@ STD.EndFacing = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
   /* 두께 구간이 8~15 / 15~30 / 30~999 뿐이라 t < 8 이면 어떤 행도 매칭되지 않는다.
      종전 폴백은 표의 마지막 행(64" · t30~999 · 가장 느림)이라, 외경을 무시하고 최악값을 잡았다.
-     (t 7.9 → 880.1s / t 8.0 → 584.6s 로 0.1mm 차이에 +50% 점프)
+     (t 7.0 → 880.1s / t 8.0 → 506.6s 로 0.1mm 차이에 +74% 점프)
      구간 밖이면 pickRange 와 같은 원칙으로 **가장 가까운 두께 구간**을 쓴다. */
   let best = null, bd = 1e9;
   const score = (r) => {

@@ -30,6 +30,7 @@ const AISLES = [
   { row:3,   label:'확관 (Expansion) — 병목 공정',      color:0x8957e5, cs:'#a77bff', c0:-0.7, c1:7.7 },
   { row:4,   label:'검사 · 출하',                       color:0x238636, cs:'#3fbf5c', c0:-0.7, c1:5.7 },
   { row:5,   label:'보수 · 재작업',                     color:0xb06020, cs:'#e0913f', c0:1.3,  c1:5.7 },
+  { row:6,   label:'R/B 라인 (여분 · 열처리·배척)',     color:0xd29922, cs:'#e3b341', c0:1.3,  c1:4.7 },
 ];
 const px3 = col => (col - 3.5) * COL_X;
 const pz3 = row => ROW_Z0 + row * ROW_DZ;
