@@ -177,14 +177,15 @@ function expanderStep(s, machine) {
 }
 
 /* 확관 횟수 N — 산출 근거가 두 가지로 갈려 있어 토글로 병기한다.
-   'excel'   : 「JCOE 공정 생산 표준 시간 분석」 시트 산출식
-               N = ceil((L−500)/step) + 2, 짝수면 +1 → 항상 홀수
-   'ortools' : 세아제강 운영 최적화 모델(specs.py) 구현
+   'ortools' : 세아제강 운영 최적화 모델(specs.py) 구현 — 기본값(정본)
                M1  N = round(L / (step − (step≤150 ? 100 : 150)))
                M2  N = ceil((L−500)/step) + 2, 홀수면 +1 → 항상 짝수
-   두 식은 step 이 작을수록(=두꺼운 관) 크게 벌어진다. 세아제강 확인 필요 항목. */
-let EXP_NMODE = 'excel';
-function setExpanderNMode(m) { EXP_NMODE = (m === 'ortools') ? 'ortools' : 'excel'; }
+   'excel'   : 「JCOE 공정 생산 표준 시간 분석」 시트 산출식 — 대조용
+               N = ceil((L−500)/step) + 2, 짝수면 +1 → 항상 홀수
+   두 식은 step 이 작을수록(=두꺼운 관) 크게 벌어진다.
+   2026-08-06 세아제강 피드백 — "specs.py 가 맞습니다" → 운영 모델 식을 기본값으로 채택. */
+let EXP_NMODE = 'ortools';
+function setExpanderNMode(m) { EXP_NMODE = (m === 'excel') ? 'excel' : 'ortools'; }
 function expanderNMode() { return EXP_NMODE; }
 
 function expanderN(s, machine) {

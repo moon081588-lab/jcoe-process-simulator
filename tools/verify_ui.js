@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
   const e2=[]; p.on('pageerror',e=>e2.push(''+e)); p.on('console',m=>{if(m.type()==='error')e2.push(m.text());});
   await p.goto('file://'+process.cwd()+'/dist/JCOE_Simulator.html',{waitUntil:'load'});
   await p.waitForTimeout(2200);
-  for (const t of ['pFlow','pCalc','pIO','pOpt','pGantt','pBn','pCfg']) {
+  for (const t of ['pWiz','pFlow','pCalc','pIO','pOpt','pGantt','pBn','pCfg']) {
     await p.click(`.tab[data-p="${t}"]`); await p.waitForTimeout(350);
   }
   await p.click('.tab[data-p="pOpt"]'); await p.waitForTimeout(400);
@@ -37,7 +37,21 @@ const { chromium } = require('playwright');
   // CSV
   const csvOk = await p.evaluate(()=>{ try{ ioCsv(); return true; }catch(e){ return String(e); } });
   console.log('  CSV', csvOk);
+  // ---- 계획 실행 위저드 (원클릭) ----
+  await p.click('.tab[data-p="pWiz"]'); await p.waitForTimeout(500);
+  console.log('  위저드 단계:', (await p.textContent('#wizSteps')).replace(/\s+/g,' ').trim().slice(0,200));
+  await p.click('#wizRunAll'); await p.waitForTimeout(2500);
+  console.log('  원클릭 후 규칙:', await p.evaluate(()=>({rule:document.getElementById('optRule').value, plan:!!PLAN,
+      mk:(SIM.kpi.makespanH/24).toFixed(1)+'일', exp:SIM.kpi.expSetupH.toFixed(1)+'h'})));
+  console.log('  위저드 결과 KPI:', (await p.textContent('#wizSimSum')).replace(/\s+/g,' ').trim().slice(0,160));
+  console.log('  최적화 KPI 렌더:', (await p.textContent('#wizOptSum')).replace(/\s+/g,' ').trim().slice(0,120));
+  console.log('  전후 비교:', (await p.textContent('#wizDelta')).replace(/\s+/g,' ').trim().slice(0,180));
+  await p.screenshot({path:'/tmp/v_wiz.png', fullPage:false});
+  // 기본 제약 기준이 운영 모델(정본)인지
+  console.log('  기본 제약/N:', await p.evaluate(()=>({rs:document.getElementById('optRuleSet').value,
+      n:document.getElementById('cfgExpN').value})));
   console.log('2D errors:', e2.slice(0,6)); if(e2.length) fail++;
+  await p.click('.tab[data-p="pFlow"]'); await p.waitForTimeout(400);
   await p.screenshot({path:'/tmp/v_2d.png'});
   await p.close();
   // ---- 3D ----

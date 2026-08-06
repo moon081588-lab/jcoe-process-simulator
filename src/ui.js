@@ -33,14 +33,14 @@ const esc = v => String(v == null ? '' : v)
 function readCfg() {
   /* 확관 셋업/N 산출 방식은 엔진 전역 상태이므로 설정을 읽을 때 함께 반영 */
   setExpSetupMode(($('cfgExpSetup') || {}).value || 'tool');
-  setExpanderNMode(($('cfgExpN') || {}).value || 'excel');
+  setExpanderNMode(($('cfgExpN') || {}).value || 'ortools');
   return {
     expSetupMode: ($('cfgExpSetup') || {}).value || 'tool',
-    expNMode: ($('cfgExpN') || {}).value || 'excel',
+    expNMode: ($('cfgExpN') || {}).value || 'ortools',
     dispatchRule: ($('optRule')||{}).value || 'EAT',
     sameODConcurrency: $('optSameOD') ? $('optSameOD').checked : true,
     useM3: $('optM3') ? $('optM3').checked : false,
-    expRuleSet: ($('optRuleSet')||{}).value || 'ppt',
+    expRuleSet: ($('optRuleSet')||{}).value || 'ortools',
     rbMode: ($('optRbMode')||{}).value || 'capable',
     rbShifts: +(($('optRbShift')||{}).value || 1),
     applyOptSeq: $('optApplySeq') ? $('optApplySeq').checked : true,
@@ -91,6 +91,7 @@ function runSim() {
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
   if($('mcHint')) renderStNote();
   if($('periodSum')) renderPeriod();
+  if($('wizSteps')) renderWiz();
   if($('seek')) $('seek').value=0;
   $('logBody').innerHTML='<div class="lg">▶ 를 눌러 시뮬레이션을 재생하세요.</div>';
 }
@@ -687,7 +688,7 @@ function renderEligWarn(){
 /* 두 제약 기준의 차이를 한눈에 — 확인 요청 자료로 쓰기 위한 표 */
 function renderRuleDiff(){
   const el=$('ruleDiff'); if(!el) return;
-  const cur=($('optRuleSet')||{}).value||'ppt';
+  const cur=($('optRuleSet')||{}).value||'ortools';
   const base=readCfg();
   const sum=(rs)=>{
     const cfg={...base, expRuleSet:rs}, q={M1:0,M2:0,FREE:0,BOTH:0,RB:0};
@@ -711,30 +712,35 @@ function renderRuleDiff(){
   if($('bnR1')) $('bnR1').textContent = '→ 적용: ' + r1;
   if($('bnR2')) $('bnR2').textContent = '→ 적용: ' + r2;
   if($('bnR3')) $('bnR3').textContent = '→ 적용: ' + r3;
-  if($('eligOk')) $('eligOk').innerHTML = cur === 'ppt'
-    ? `위 제약을 그대로 풀면 다이어그램 주석과 일치합니다 — <b>${R.L2}m 초과 ~ ${R.L1}m 제품은 #2·#3호기가 불가하므로 “Only #1 Expander 가동”</b>,
-       <b>${R.L1}m 초과 제품은 어느 호기도 단독 불가하므로 “#1·#2 Expander 동시 가동”</b> (소요시간 = max(#1, #2)).`
-    : `<b>확관 최적화 운영 모델 기준</b>을 적용 중입니다 — #2호기 상한 ${R.L2}m, #1호기 상한 ${R.L1}m,
-       외경 48"↑/22"↓ 는 #2호기 전용(hard), RB 는 다이표 외경(24"~48") · 두께 9~25.4mm.
-       이 기준에서는 다이어그램 주석 “12.8M~14M 제품 Only #1 Expander 가동” 이 성립하지 않습니다 — 아래 비교표를 확인하세요.`;
+  if($('eligOk')) $('eligOk').innerHTML = cur === 'ortools'
+    ? `<b>확관 최적화 운영 모델(specs.py) 기준 — 정본</b>을 적용 중입니다. #2호기 상한 ${R.L2}m, #1호기 상한 ${R.L1}m,
+       외경 48"↑/22"↓ 는 #2호기 전용(hard), RB 는 다이표 외경(24"~48") · 두께 9~25.4mm.<br>
+       <b>12.802m 제품은 #1·#2호기 모두 투입 가능</b>합니다 — 세아제강 실제 생산 로그에서 Expander #2호기 작업 이력이 확인되었습니다(2026-08-06 김명건님).`
+    : `<b>구버전(PPT 공정 다이어그램 · 제약표) 기준</b>으로 보고 있습니다 — 대조용입니다.
+       이 기준에서는 <b>${R.L2}m 초과 ~ ${R.L1}m 제품이 #1호기 전용</b>("Only #1 Expander 가동")이 되는데,
+       실제 로그에서는 12.802m 제품이 #2호기에서 생산된 이력이 있어 <b>현장과 맞지 않습니다.</b>`;
   const a=sum('ppt'), b=sum('ortools');
   const row=(lbl,ka)=>`<tr><td>${lbl}</td><td class="num">${a[ka].toLocaleString()}</td><td class="num">${b[ka].toLocaleString()}</td></tr>`;
-  el.innerHTML=`<div class="warn" style="margin-bottom:10px">
-    <b>두 자료의 확관 제약이 서로 다릅니다 — 세아제강 확인 필요</b>
-    <table style="margin-top:8px"><thead><tr><th>항목</th><th>공정 다이어그램·제약표</th><th>확관 최적화 운영 모델</th></tr></thead><tbody>
+  el.innerHTML=`<div class="${cur==='ortools'?'ok':'warn'}" style="margin-bottom:10px">
+    <b>확관 제약 — 정본 확정 (2026-08-06 세아제강 피드백)</b>
+    <div style="margin-top:6px">문세희님 — “PPT 자료와 ortools 안의 <code>specs.py</code> 사이에 간극이 있다면 <b>specs.py 가 맞습니다.</b>
+      PPT 제작 이후에 계속 수정사항이 있었고, PPT 에는 생략된 내용도 있습니다.”<br>
+      김명건님 — “12.802m → 1·2호기. 실제 로그를 확인해보니 <b>Expander 2호기에서 만든 로그가 있어</b> ortools 파일 기준으로 보시면 됩니다.”</div>
+    <table style="margin-top:8px"><thead><tr><th>항목</th><th>PPT 다이어그램·제약표 (구버전)</th><th>운영 모델 specs.py (정본)</th></tr></thead><tbody>
       <tr><td>#2호기 길이 상한</td><td>12.8m 이상 불가</td><td class="hi2">12.8384m 초과 불가</td></tr>
       <tr><td>#1호기 길이 상한</td><td>14m 이상 불가</td><td>14.021m 초과 불가</td></tr>
       <tr><td>외경 48"↑ / 22"↓</td><td>#2호기 <b>우선</b> 투입</td><td class="hi2">#2호기 <b>전용</b> (hard)</td></tr>
       <tr><td>RB 투입 조건</td><td>두께 25T 이하 &amp; 외경 24" 이하</td><td class="hi2">RB 다이표 외경(24"~48") &amp; 9≤t≤25.4</td></tr>
       <tr><td>RB 강제 투입</td><td>(제약표) 열처리 &amp; 배척 제품 우선</td><td>병목공정 HT102 · 원재료/제품 길이비 ≥ 1.8</td></tr>
+      <tr><td>확관 횟수 N</td><td>(엑셀 표준시간 분석) N 항상 홀수</td><td class="hi2">#1 round(L/(step−150)) · #2 짝수 보정</td></tr>
     </tbody></table>
     <div style="margin-top:9px">현재 오더셋 <b>${ORDERS.reduce((x,o)=>x+o.qty,0).toLocaleString()}본</b>을 기준별로 분류하면:</div>
-    <table style="margin-top:6px"><thead><tr><th>구분 (본)</th><th style="text-align:right">다이어그램 기준</th><th style="text-align:right">운영 모델 기준</th></tr></thead><tbody>
+    <table style="margin-top:6px"><thead><tr><th>구분 (본)</th><th style="text-align:right">구버전 기준</th><th style="text-align:right">정본 기준</th></tr></thead><tbody>
       ${row('#1호기 전용','M1')}${row('#2호기 전용','M2')}${row('두 호기 다 가능 — 배분 규칙 대상','FREE')}${row('#1·#2 동시 가동','BOTH')}${row('RB 라인','RB')}
     </tbody></table>
-    <div style="margin-top:9px">12.802m 제품(전체의 66%)이 <b>12.8m 기준에서는 #1호기 전용</b>, <b>12.8384m 기준에서는 두 호기 다 가능</b>으로 갈립니다.
-      호기 부하 편중이 여기서 통째로 결정되므로, 실제 상한이 어느 쪽인지가 이 모델에서 가장 영향이 큰 미확인 항목입니다.
-      현재 적용 기준: <b>${cur==='ortools'?'확관 최적화 운영 모델':'공정 다이어그램 · 제약표'}</b></div></div>`;
+    <div style="margin-top:9px">12.802m 제품(전체의 66%)이 정본 기준에서 <b>두 호기 다 가능</b>으로 바뀌면서 호기 편중이 사라집니다.
+      구버전 기준에서 내렸던 “호기 부하 편차는 배분 규칙이 아니라 제품 길이 구성 때문” 이라는 진단은 <b>더 이상 유효하지 않습니다.</b><br>
+      현재 적용 기준: <b>${cur==='ortools'?'운영 모델 specs.py (정본)':'PPT 다이어그램 · 제약표 (구버전 · 대조용)'}</b></div></div>`;
 }
 
 /* ================= 외부 최적화 스케줄 가져오기 (OR-Tools CP-SAT) ================= */
@@ -820,17 +826,25 @@ function runOptimizer(){
   runSim();
   renderOptResult(ms);
 }
-function renderOptResult(ms){
-  if(!PLAN){ return; }
+function optKpiHtml(ms){
   const P=PLAN;
-  $('optSum').innerHTML=`
+  return `
     <div class="kpi"><b>${P.nJobs}</b><span>확관 대상 오더 (작업 j)</span></div>
-    <div class="kpi"><b>${P.nFree} / ${P.nFixed} / ${P.nBoth}</b><span>선택가능 / #1전용 / 동시가동</span></div>
+    <div class="kpi"><b>${P.nFree} / ${P.nFixed} / ${P.nBoth}</b><span>선택가능 / 단일호기 전용 / 동시가동</span></div>
     <div class="kpi"><b>${P.cmaxH.toFixed(1)} h</b><span>확관 Makespan (Cmax)</span></div>
     <div class="kpi bn"><b>${P.setupH.toFixed(1)} h</b><span>총 설비 전환시간 Σs<sub>ij</sub></span></div>
     <div class="kpi"><b>${P.balH.toFixed(1)} h</b><span>호기간 부하 편차</span></div>
     <div class="kpi"><b>${P.machines.map((m,i)=>`#${i+1} ${(P.loadH[m]||0).toFixed(0)}h`).join(' / ')}</b><span>호기별 부하</span></div>
     <div class="kpi"><b>${(ms||0).toFixed(0)} ms</b><span>SA ${P.iters.toLocaleString()}회 탐색</span></div>`;
+}
+function renderOptResultInto(id, ms){
+  const el=$(id); if(!el||!PLAN) return;
+  el.innerHTML = optKpiHtml(ms != null ? ms : (LAST_OPT && LAST_OPT.ms));
+}
+function renderOptResult(ms){
+  if(!PLAN){ return; }
+  const P=PLAN;
+  $('optSum').innerHTML = optKpiHtml(ms);
   const byM={}; P.machines.forEach(m=>byM[m]=[]);
   P.detail.forEach(d=>{ if(d.m==='BOTH'){ byM.M1.push(d); byM.M2.push(d); } else byM[d.m].push(d); });
   const colorOf=no=>{ const v=SIM.orderSpan[no]; return v?`hsl(${(Math.round(v.od/25.4)*17)%360},62%,55%)`:'#666'; };
@@ -1081,7 +1095,8 @@ function initPlanLoader(){
       const first=list[0] && list[0].start ? list[0].start.slice(0,10) : null;
       if(first) $('cfgStart').value=first;
       applyOrders(list, meta, '업로드 계획서');
-      document.querySelector('.tab[data-p="pFlow"]').click();
+      /* 위저드 안에 있으므로 탭을 옮기지 않는다 — 2·3단계로 그대로 이어진다 */
+      const w=$('wizSteps'); if(w) w.scrollIntoView({behavior:'smooth', block:'start'});
     },
     onReset:()=>{
       const d0=ORDERS_DEFAULT[0] && ORDERS_DEFAULT[0].start ? ORDERS_DEFAULT[0].start.slice(0,10) : '2026-03-02';
@@ -1089,6 +1104,79 @@ function initPlanLoader(){
       applyOrders(ORDERS_DEFAULT.slice(), null, null);
     },
   });
+}
+
+/* ================= 계획 실행 위저드 (업로드 → 최적화 → 시뮬레이션) ================= */
+let WIZ_BASE = null;                  /* 최적화 직전(현 규칙) 결과 — 개선폭 비교용 */
+function goTab(p){ const t=document.querySelector(`.tab[data-p="${p}"]`); if(t) t.click(); }
+function initWizard(){
+  if(!$('wizSteps')) return;
+  const keepBase = () => { const s = snapKpi(); if (s && s.rule !== 'OPT') WIZ_BASE = s; };
+  $('wizRunAll').onclick = () => {
+    keepBase();
+    runOptimizer();                    /* 내부에서 optRule=OPT 설정 + runSim() 까지 수행 */
+    renderWiz();
+  };
+  $('wizOpt').onclick  = () => { keepBase(); runOptimizer(); renderWiz(); };
+  $('wizSim').onclick  = () => { runSim(); renderWiz(); };
+  $('wizGoOpt').onclick  = () => goTab('pOpt');
+  $('wizGoCfg').onclick  = () => goTab('pCfg');
+  $('wizGoFlow').onclick = () => goTab('pFlow');
+  $('wizGoBn').onclick   = () => goTab('pBn');
+  if($('cfgGoWiz')) $('cfgGoWiz').onclick = () => goTab('pWiz');
+  renderWiz();
+}
+function snapKpi(){
+  if(!SIM) return null;
+  return { rule:($('optRule')||{}).value||'EAT', mk:SIM.kpi.makespanH, setup:SIM.kpi.expSetupH,
+           bal:SIM.kpi.expBalanceH };
+}
+function renderWiz(){
+  if(!$('wizSteps') || !SIM) return;
+  const cfg   = CFG || readCfg();
+  const R     = expRules(cfg);
+  const rule  = ($('optRule')||{}).value || 'EAT';
+  const qty   = ORDERS.reduce((a,o)=>a+o.qty,0);
+  const optOn = !!PLAN && rule === 'OPT';
+
+  const step = (n, title, val, cls) =>
+    `<div class="wstep ${cls}"><div class="wn">${cls==='done'?'✓ ':''}${n}단계</div><div class="wt">${title}</div><div class="wv">${val}</div></div>`;
+  $('wizSteps').innerHTML =
+    step(1,'계획서', `${PLAN_SRC ? esc(PLAN_SRC) : '기본 데이터'} · <b>${ORDERS.length}오더 / ${qty.toLocaleString()}본</b>`, 'done')
+  + step(2,'제약 · 조건', `${esc(R.label)}<br>배분 규칙: ${esc(DISPATCH_RULES[rule].label)}`, 'done')
+  + step(3,'최적화 엔진', optOn
+        ? `해 적용중 · 확관 Cmax ${PLAN.cmaxH.toFixed(1)}h · 전환 ${PLAN.setupH.toFixed(1)}h`
+        : (PLAN ? '해는 있으나 배분 규칙이 다릅니다' : '아직 실행하지 않았습니다'), optOn?'done':'need')
+  + step(4,'시뮬레이션', `${(SIM.kpi.makespanH/24).toFixed(1)}일 · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`, 'done');
+
+  $('wizCond').innerHTML =
+    `<div class="kpi"><b>${esc(R.label.replace(/\s*\(.*\)$/,''))}</b><span>확관 제약 기준 — #1 ≤ ${R.L1}m · #2 ≤ ${R.L2}m</span></div>
+     <div class="kpi"><b>${cfg.expNMode==='ortools'?'운영 모델 N식':'엑셀 N식'}</b><span>확관 횟수 산출 근거</span></div>
+     <div class="kpi"><b>${cfg.shifts}교대 × ${cfg.netHoursPerShift}h</b><span>가용 시간${cfg.skipWeekend?' · 주말 비가동':''}</span></div>
+     <div class="kpi"><b>${cfg.startDate}</b><span>계획 시작일${cfg.deadline?` · 마감 ${cfg.deadline}`:''}</span></div>
+     <div class="kpi"><b>${esc(DISPATCH_RULES[rule].label)}</b><span>확관 배분 규칙</span></div>`;
+
+  const k = SIM.kpi;
+  const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
+  $('wizSimSum').innerHTML =
+    `<div class="kpi"><b>${(k.makespanH/24).toFixed(1)}일</b><span>Makespan (${fmtT(SIM.tEnd)} 완료)</span></div>
+     <div class="kpi bn"><b>${top?top.label:'—'} ${top?top.util.toFixed(0)+'%':''}</b><span>1위 병목 설비</span></div>
+     <div class="kpi"><b>${k.expSetupH.toFixed(1)}h</b><span>확관 전환시간</span></div>
+     <div class="kpi"><b>${k.expBalanceH.toFixed(1)}h</b><span>확관 호기 부하 편차</span></div>
+     <div class="kpi"><b>${k.expUtil.toFixed(1)}%</b><span>확관 가동률 (최다 1대)</span></div>`
+   + (k.deadline ? `<div class="kpi"><b>${pct(k.doneInPeriod, k.doneInPeriod+k.overflow)}</b><span>마감 ${k.deadline} 내 달성률</span></div>` : '');
+
+  if(PLAN && rule==='OPT') renderOptResultInto('wizOptSum');
+  else $('wizOptSum').innerHTML =
+    `<div class="kpi bn"><b>미실행</b><span>「전체 자동 실행」 또는 「최적화 엔진만 실행」을 눌러 주세요</span></div>`;
+
+  const B=WIZ_BASE;
+  $('wizDelta').innerHTML = (B && optOn && B.rule!=='OPT')
+    ? `<div class="note"><b>최적화 전후</b> — 배분 규칙 「${esc(DISPATCH_RULES[B.rule].label)}」 대비:
+        Makespan ${(B.mk/24).toFixed(1)}일 → <b>${(k.makespanH/24).toFixed(1)}일</b> (${delta(k.makespanH,B.mk)}) ·
+        확관 전환 ${B.setup.toFixed(1)}h → <b>${k.expSetupH.toFixed(1)}h</b> (${delta(k.expSetupH,B.setup)}) ·
+        호기 부하 편차 ${B.bal.toFixed(1)}h → <b>${k.expBalanceH.toFixed(1)}h</b> (${delta(k.expBalanceH,B.bal)})</div>`
+    : '';
 }
 
 
@@ -1235,7 +1323,7 @@ function boot(){
   cvs.onmouseleave = ()=>{ hover=null; };
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod();
+  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod(); initWizard();
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
   $('btnDice').onclick=newSeed;

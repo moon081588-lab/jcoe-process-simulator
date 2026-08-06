@@ -107,6 +107,23 @@ tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
 .hint{font-size:11px;color:var(--dim);padding-bottom:6px;max-width:520px;line-height:1.5}
 button.ghost{background:#2a3444}
 h3 .sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:8px}
+/* ---- 계획 실행 위저드 ---- */
+.wizhero{display:flex;gap:18px;justify-content:space-between;align-items:center;flex-wrap:wrap;
+  background:linear-gradient(90deg,#12233d,#101720);border:1px solid #1f3a5f;border-radius:12px;padding:15px 18px;margin-bottom:14px}
+.wizquote{font-size:11.5px;color:#9fb4cc;line-height:1.75}
+.wizrun{text-align:right;min-width:250px}
+.wizrun button{font-size:14px;padding:11px 22px}
+.wizrun .hint{padding:6px 0 0;max-width:280px;text-align:left;display:inline-block}
+.wizsteps{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.wstep{flex:1 1 190px;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:10px 13px;position:relative}
+.wstep .wn{font-size:10px;color:var(--dim);letter-spacing:.5px}
+.wstep .wt{font-size:12.5px;color:#fff;font-weight:600;margin:3px 0 4px}
+.wstep .wv{font-size:11px;color:#9fb4cc;line-height:1.5}
+.wstep.done{border-color:#2ea04366;background:#2ea04310}
+.wstep.done .wn{color:#3fb950}
+.wstep.wait{opacity:.62}
+.wstep.need{border-color:#d2992266;background:#d2992212}
+.wstep.need .wn{color:#e3b341}
 h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase;letter-spacing:.5px}
 .tblwrap{max-height:none;overflow:auto;border:1px solid var(--ln);border-radius:9px}
 .mdl{font-size:11.5px;color:var(--tx);background:#12182099;border:1px solid var(--ln);border-radius:9px;padding:10px 14px;margin:11px 0;line-height:1.9}
@@ -153,7 +170,8 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
 <header>
   <h1>세아제강 JCOE 공정 시뮬레이터<small>POSTECH × 세아제강 · 표준시간 기준 25.12.18</small></h1>
   <div class="tabs">
-    <div class="tab on" data-p="pFlow">공정 흐름</div>
+    <div class="tab on" data-p="pWiz">계획 실행</div>
+    <div class="tab" data-p="pFlow">공정 흐름</div>
     <div class="tab" data-p="pCalc">표준시간</div>
     <div class="tab" data-p="pIO">In · Out</div>
     <div class="tab" data-p="pOpt">확관 최적화</div>
@@ -165,8 +183,53 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
   <div id="simInfo"></div>
 </header>
 <main>
+  <!-- ========== 계획 실행 (원클릭 워크플로우) ========== -->
+  <section class="pane on" id="pWiz"><div class="inner">
+    <div class="wizhero">
+      <div>
+        <h3 style="margin:0 0 6px">조관계획서 한 장으로 끝까지 — 업로드 → 최적화 → 시뮬레이션</h3>
+        <div class="wizquote">“최적화 엔진을 한 번 돌리고 거기서 나온 스케줄대로 시뮬레이션에 흘러가게끔 하면 되려나” — 문세희<br>
+          “다른 조관계획서 있으면 파일 업로드 하는 과정 추가해서 다른 계획서에도 흘러볼 수 있게” — 김명건</div>
+      </div>
+      <div class="wizrun">
+        <button id="wizRunAll">▶ 전체 자동 실행</button>
+        <div class="hint">현재 계획서 · 현재 제약으로 최적화 엔진을 돌리고, 그 스케줄 그대로 시뮬레이션합니다.</div>
+      </div>
+    </div>
+    <div class="wizsteps" id="wizSteps"></div>
+
+    <h3>1단계 · 조관계획서 불러오기 <span class="sub">건너뛰면 기본 데이터(2026-03 포항공장)로 진행합니다</span></h3>
+    <div id="planLoader"></div>
+    <div class="note">현재 기본 데이터는 <b>2026년 3월 포항공장 조관계획서</b> 기준 58오더 / 1,446본입니다.
+      다른 계획서를 넣으면 공정 흐름·간트·병목·In/Out·최적화가 모두 새 데이터로 다시 계산됩니다.
+      필요한 열은 <b>외경 · 두께 · 길이 · 수량</b> 네 가지이며, 오더번호·계획 투입일·납기·병목 공정 작업장·원재료내역은 있으면 함께 읽습니다.</div>
+
+    <h3>2단계 · 조건 확인 <span class="sub">기본값은 운영 모델 specs.py 기준입니다</span></h3>
+    <div class="kpis" id="wizCond"></div>
+    <div class="toolbar">
+      <button class="ghost" id="wizGoOpt">확관 최적화 탭에서 제약·규칙 바꾸기</button>
+      <button class="ghost" id="wizGoCfg">설정 탭에서 기간·교대 바꾸기</button>
+    </div>
+
+    <h3>3단계 · 최적화 엔진 실행 <span class="sub">z(j,m) 호기 배정 + x(i,j) 투입 순서</span></h3>
+    <div class="toolbar">
+      <button id="wizOpt">최적화 엔진만 실행</button>
+      <div class="hint">배분 규칙이 <b>「최적화 엔진 스케줄」</b>로 바뀌고, 해가 시뮬레이션에 그대로 반영됩니다.</div>
+    </div>
+    <div class="kpis" id="wizOptSum"></div>
+
+    <h3>4단계 · 결과 <span class="sub">최적해 스케줄대로 흘린 전체 공정 시뮬레이션</span></h3>
+    <div class="toolbar">
+      <button id="wizSim">시뮬레이션만 다시 실행</button>
+      <button class="ghost" id="wizGoFlow">공정 흐름 애니메이션 보기</button>
+      <button class="ghost" id="wizGoBn">병목 분석 보기</button>
+    </div>
+    <div class="kpis" id="wizSimSum"></div>
+    <div id="wizDelta"></div>
+  </div></section>
+
   <!-- ========== 공정 흐름 ========== -->
-  <section class="pane on" id="pFlow">
+  <section class="pane" id="pFlow">
     <div id="flowbar">
       <button id="btnPlay">▶</button><button id="btnReset">↺</button>
       <span style="font-size:11px;color:var(--dim)">배속</span>
@@ -249,16 +312,16 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
   <!-- ========== 확관 배분 · 최적화 ========== -->
   <section class="pane" id="pOpt"><div class="inner">
     <h3>① 확관기 공정 제약 (적격집합 ℰ)</h3>
-    <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:130px">설비</th><th>공정 제약 (자료 원문)</th><th style="width:250px">현재 적용 기준</th></tr></thead><tbody>
-      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td><td id="rmR1">L ≤ 14.0m 단독 가능</td></tr>
-      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td><td id="rmR2">L ≤ 12.8m 단독 가능</td></tr>
+    <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:130px">설비</th><th>공정 제약 (PPT 제약표 원문 — 구버전)</th><th style="width:250px">현재 적용 기준</th></tr></thead><tbody>
+      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td><td id="rmR1">L ≤ 14.021m 단독 가능</td></tr>
+      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td><td id="rmR2">L ≤ 12.8384m 단독 가능</td></tr>
       <tr><td>확관 3호기</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입</td><td id="rmR3">= RB 라인 (열처리 HT102 · 배척 제품)</td></tr>
     </tbody></table></div>
     <div class="ok" style="margin-bottom:12px" id="eligOk"></div>
     <div class="toolbar">
       <div class="f" style="min-width:300px"><label>확관 제약 기준</label><select id="optRuleSet" style="width:100%">
-        <option value="ppt" selected>공정 다이어그램 · 제약표 (L2≤12.8m · RB 24"↓)</option>
-        <option value="ortools">확관 최적화 운영 모델 (L2≤12.8384m · RB 다이표)</option>
+        <option value="ortools" selected>확관 최적화 운영 모델 specs.py (정본 · L2≤12.8384m)</option>
+        <option value="ppt">공정 다이어그램 · 제약표 (구버전 · L2≤12.8m)</option>
       </select></div>
       <div class="f" style="min-width:230px"><label>RB 라인 투입</label><select id="optRbMode" style="width:100%">
         <option value="capable" selected>적격 제품 전량 RB</option>
@@ -383,10 +446,8 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
   <!-- ========== 설정 ========== -->
   <section class="pane" id="pCfg"><div class="inner">
     <h3>① 조관계획서 불러오기</h3>
-    <div id="planLoader"></div>
-    <div class="note">현재 기본 데이터는 <b>2026년 3월 포항공장 조관계획서</b> 기준 58오더 / 1,446본입니다.
-      다른 계획서를 넣으면 공정 흐름·간트·병목·In/Out·최적화가 모두 새 데이터로 다시 계산됩니다.
-      필요한 열은 <b>외경 · 두께 · 길이 · 수량</b> 네 가지이며, 오더번호·계획 투입일·납기는 있으면 함께 읽습니다.</div>
+    <div class="note">계획서 업로드는 <b>「계획 실행」 탭 1단계</b>로 옮겼습니다 — 업로드 → 최적화 → 시뮬레이션이 한 화면에서 이어집니다.
+      <button class="ghost" id="cfgGoWiz" style="margin-left:8px">계획 실행 탭 열기</button></div>
 
     <h3>② 계획 기간</h3>
     <div class="toolbar">
@@ -415,8 +476,8 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
         <option value="tool" selected>공구 계층 (드로바270 / 헤드150 / 다이90분)</option>
         <option value="legacy">치수 변화폭 (추정치)</option></select></div>
       <div class="f" style="min-width:260px"><label>확관 N 산출식</label><select id="cfgExpN" style="width:100%">
-        <option value="excel" selected>엑셀 표준시간 분석 (N 홀수)</option>
-        <option value="ortools">운영 최적화 모델 (M1 round식 / M2 짝수)</option></select></div>
+        <option value="ortools" selected>운영 최적화 모델 specs.py (정본)</option>
+        <option value="excel">엑셀 표준시간 분석 (N 홀수 · 대조용)</option></select></div>
       <div class="f ck"><input type="checkbox" id="cfgRB" checked><label for="cfgRB">RB 라인 활용</label></div>
       <div class="f ck"><input type="checkbox" id="cfgCP"><label for="cfgCP">Calibration Press 투입</label></div>
       <div class="f ck"><input type="checkbox" id="cfgPFUT"><label for="cfgPFUT">프로세싱 파이프 Final U.T</label></div>
@@ -430,7 +491,8 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
       · 전환시간: 확관 외 설비는 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.<br>
       · 확관 셋업(공구 계층): 호기별 다이 스펙표에서 장착 공구를 판정해 <b>드로바 교체 270분 &gt; 헤드 교체 150분 &gt; 다이 교체 90분 &gt; 동일 0</b>을 적용합니다. (확관 최적화 운영 모델 산출 근거)<br>
-      · 확관 N: 「표준시간 분석」 산출식(N 홀수)과 운영 최적화 모델 구현(#1호기 round식 / #2호기 짝수)이 서로 다릅니다. 두 식을 병기해 두었으니 전환해 가며 차이를 확인하실 수 있습니다.
+      · 확관 N: <b>운영 최적화 모델(specs.py) 산출식이 기본값</b>입니다 — #1호기 <code>round(L / (step−150))</code>, #2호기 <code>ceil((L−500)/step)+2</code>(짝수 보정).
+      「표준시간 분석」 엑셀 산출식(N 홀수)과는 결과가 다르며, 대조용으로 전환해 볼 수 있습니다.
     </div>
     <h3>④ 제품군</h3>
     <table><thead><tr><th style="width:200px">제품군</th><th>특징</th></tr></thead><tbody>

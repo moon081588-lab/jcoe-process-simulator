@@ -38,11 +38,17 @@ expect('OutsideWelder 12M',     STD.OutsideWelder(A, '12M').sec, 550 + 12802 / 2
 expect('FirstUT',               STD.FirstUT(A).sec,             240 + 12802 / 150 + (9600 / 750) * 2);
 /* 확관은 호기별 다이 스펙이 다르다 (specs.py die_specs_m1/m2/rb).
    OD914 t9.3 → #1호기 9t(700mm), #2호기 9.5t(580mm) */
-const nM1 = expanderN(A, 'M1'), nM2 = expanderN(A, 'M2');
 expect('Expander #1 die step',  expanderStep(A, 'M1').step,     700, 0);
 expect('Expander #2 die step',  expanderStep(A, 'M2').step,     580, 0);
-expect('Expander #1 N (홀수)',   nM1,                            21, 0);
-expect('Expander #2 N (홀수)',   nM2,                            25, 0);
+/* 기본값은 운영 모델(specs.py) N식 — 2026-08-06 세아제강 확정.
+   엑셀 표준시간 분석 식은 대조용으로 남아 있으므로 두 모드를 각각 검증한다. */
+api.setExpanderNMode('excel');
+expect('Expander #1 N [엑셀·홀수]',   expanderN(A, 'M1'),        21, 0);
+expect('Expander #2 N [엑셀·홀수]',   expanderN(A, 'M2'),        25, 0);
+api.setExpanderNMode('ortools');
+expect('Expander #1 N [운영모델]',    expanderN(A, 'M1'),        23, 0);
+expect('Expander #2 N [운영모델·짝수]', expanderN(A, 'M2'),      24, 0);
+const nM1 = expanderN(A, 'M1'), nM2 = expanderN(A, 'M2');
 expect('Expander #2',           STD.Expander(A, 'M2').sec,      165 + nM2 * 7.5);
 expect('Expander #1',           STD.Expander(A, 'M1').sec,      177 + nM1 * 12 + (12802 + 3500) / 300);
 expect('Expander #1·#2 동시',   STD.Expander(A, 'BOTH').sec,    Math.max(177 + nM1 * 12 + (12802 + 3500) / 300, 165 + nM2 * 7.5));
