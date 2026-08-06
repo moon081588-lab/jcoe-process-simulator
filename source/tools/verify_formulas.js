@@ -121,6 +121,17 @@ expect('면취기 t7.0 (구간 밖)',  STD.EndFacing({ od:508, t:7.0,  L:12000 }
 /* Edge Miller 25T 경계는 t > 25 (Gap Press·재질 대리변수와 통일) */
 expect('EdgeMiller t25.0↔t24 전환 0', changeoverSec('EdgeMiller', {od:914,t:25.0,L:12802}, {od:914,t:24.0,L:12802}), 0);
 
+/* 다이표에 외경이 없으면 가장 가까운 외경의 공구로 매핑한다 (2026-08-06 세아제강 방침).
+   OD457 은 RB 다이표(610~1219)에 없으므로 610 의 공구를 쓴다 — 종전에는 '공구 미상' 이었다. */
+{
+  const ti = toolInfo(457, 9.5, 'RB');
+  expect('폴백: OD457 RB step', ti.step, 550, 0);
+  expect('폴백: OD457 RB 헤드', ti.head, 600, 0);
+  console.log(`  → ${ti.approx}`);
+}
+/* OD1219 t44 는 엑셀·specs.py 모두 44t(250mm)/44t(700mm) 가 중복. 먼저 나온 250mm 를 쓴다(세아제강 지시) */
+expect('OD1219 t44 #1 step (중복 → 250)', expanderStep({ od:1219, t:44, L:12802 }, 'M1').step, 250, 0);
+
 /* ---- 룩업 테이블 조회 ------------------------------------------------- */
 console.log('');
 console.log('확관 step (36" t9.3) :', JSON.stringify(expanderStep(A)), ' N =', expanderN(A));
