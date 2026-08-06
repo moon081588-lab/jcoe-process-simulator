@@ -145,20 +145,28 @@ function toolInfo(od, t, machine) {
   let best = null, bestDiff = Infinity;
   for (const r of rows) {
     const [head, rod, tmin, tmax, step, label] = r;
-    if (Math.abs(rod - od) > 5) continue;              // 외경 ±5mm 이내만 후보
+    if (Math.abs(rod - od) > 5) continue;              // 외경 ±5mm 이내만 후보 (specs.get_tool_info)
+    /* 두께 판정 — specs.py 와 동일하게:
+       · 구간 표기(18.6~38.1t) 는 구간 안이면 차이 0, 밖이면 가까운 경계까지의 거리
+       · 단일 표기(18.9t) 는 math.isclose(abs_tol=0.1) 로 ±0.1mm 까지 "일치"(차이 0) 로 본다.
+       이 ±0.1 규칙이 없으면 OD914 t18.8 에서 18.9t(580mm) 대신 18.6~38.1t(340mm) 가 잡혀
+       확관 횟수가 25 → 39 회로 튄다. */
     let diff;
-    if (t >= tmin && t <= tmax) diff = 0;
-    else diff = Math.min(Math.abs(t - tmin), Math.abs(t - tmax));
+    if (tmin !== tmax) diff = (t >= tmin && t <= tmax) ? 0 : Math.min(Math.abs(t - tmin), Math.abs(t - tmax));
+    else               diff = (Math.abs(t - tmin) <= 0.1) ? 0 : Math.abs(t - tmin);
     if (diff < bestDiff) { bestDiff = diff; best = { head, od: rod, step, label }; }
   }
   if (!best) {
-    /* 다이표에 없는 규격 — 규격을 키로 삼아 서로 다른 제품이 "동일 공구" 로 판정되지 않게 한다 */
+    /* 다이표에 없는 규격 — 규격을 키로 삼아 서로 다른 제품이 "동일 공구" 로 판정되지 않게 한다.
+       (specs.py 는 여기서 모두 UNKNOWN 을 반환해 서로 다른 규격 사이도 셋업 0 이 된다 — 의도적 차이) */
     return { head: null, drawbar: `NA_${Math.round(od)}`, die: `NA|${Math.round(od)}|${t}`,
              step: null, label: '해당 다이 없음', unknown: true, tDiff: null };
   }
   const drawbar = (DIE_KEY[machine] === 'RB') ? `RB_${best.head}`
                 : (best.head === 450 ? 'SMALL' : 'LARGE');
-  return { head: best.head, drawbar, die: `${best.od}|${best.label}`, step: best.step,
+  /* die 식별자는 specs.py 와 동일하게 **입력 외경**을 씁니다 (die_id = (diameter, spec)).
+     같은 다이를 쓰는 OD 711.0 ↔ 711.2 도 다이 교체(90분)로 계상됩니다 — 세아제강 확인 항목. */
+  return { head: best.head, drawbar, die: `${od}|${best.label}`, step: best.step,
            label: best.label, tDiff: bestDiff, warn: bestDiff > TDIFF_WARN };
 }
 
@@ -191,9 +199,13 @@ function expanderNMode() { return EXP_NMODE; }
 function expanderN(s, machine) {
   const { step } = expanderStep(s, machine);
   if (EXP_NMODE === 'ortools' && (machine === 'M1' || machine === 'BOTH')) {
-    /* step 151mm 에서 분모가 1 이 되어 N 이 12,802 까지 튀는 불연속이 있어 하한을 둔다 */
-    const den = Math.max(50, step - (step <= 150 ? 100 : 150));
-    return Math.round(s.L / den);
+    /* specs.calculate_time_m1 그대로 — 하한을 두지 않는다.
+       step 이 작을수록 분모(step−150 또는 step−100)가 급격히 줄어 N 이 크게 튄다.
+       예) OD508 t9.5 step170 → 분모 20 → 11.5m 에서 N=575 회 (2,987s → 7,127s).
+       종전에는 하한 50 을 두었으나 정본과 어긋나므로 제거했다.
+       분모가 0 이하가 되는 표상의 step 은 없지만, 만약을 대비해 0 나눗셈만 막는다. */
+    const den = step - (step <= 150 ? 100 : 150);
+    return Math.round(s.L / (den > 0 ? den : 1));
   }
   let n = ceil((s.L - 500) / step) + 2;
   if (EXP_NMODE === 'ortools') { if (n % 2 === 1) n += 1; }   // 짝수 보정
@@ -230,10 +242,16 @@ STD.Expander = (s, machine) => {
 /* 14. End-Facing (면취기) */
 STD.EndFacing = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
+  /* 두께 구간이 8~15 / 15~30 / 30~999 뿐이라 t < 8 이면 어떤 행도 매칭되지 않는다.
+     종전 폴백은 표의 마지막 행(64" · t30~999 · 가장 느림)이라, 외경을 무시하고 최악값을 잡았다.
+     (t 7.9 → 880.1s / t 8.0 → 584.6s 로 0.1mm 차이에 +50% 점프)
+     구간 밖이면 pickRange 와 같은 원칙으로 **가장 가까운 두께 구간**을 쓴다. */
   let best = null, bd = 1e9;
-  for (const r of T.endFacing) {
-    if (s.t >= r[1] && s.t < r[2]) { const d = Math.abs(r[0] - inch); if (d < bd) { bd = d; best = r; } }
-  }
+  const score = (r) => {
+    const tGap = (s.t >= r[1] && s.t < r[2]) ? 0 : Math.min(Math.abs(s.t - r[1]), Math.abs(s.t - r[2]));
+    return tGap * 1000 + Math.abs(r[0] - inch);        // 두께 구간 적합도 우선, 그다음 외경 근접
+  };
+  for (const r of T.endFacing) { const d = score(r); if (d < bd) { bd = d; best = r; } }
   if (!best) best = T.endFacing[T.endFacing.length - 1];
   const sec = 363 + best[3];
   return { sec, expr: `363 + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = 363 + ${best[3]}s`,
@@ -321,7 +339,6 @@ function expanderSetup(prev, cur, machine) {
   if (!prev) return { sec: 0, kind: '없음' };
   const a = toolInfo(prev.od, prev.t, machine || 'M2');
   const b = toolInfo(cur.od,  cur.t,  machine || 'M2');
-  const same = Math.abs(a.od - b.od) < 0.5 && Math.abs(prev.t - cur.t) < 0.05;
   /* 한쪽이라도 다이표에 없는 규격이면 판정 불가.
      규격이 다르면 최소 다이 교체는 일어난다고 보고 보수적으로 부과한다. */
   if (a.unknown || b.unknown) {
@@ -344,6 +361,7 @@ function changeoverSec(station, prev, cur, machine) {
   if (Math.abs(prev.t - cur.t) > 0.5) s += c.t;
   if (Math.abs(prev.L - cur.L) > 1) s += c.L;
   // Edge Miller 은 25T 경계를 넘을 때만 Tool 교체
-  if (station === 'EdgeMiller' && (prev.t >= 25) === (cur.t >= 25)) s = 0;
+  /* 경계는 Gap Press 투입 조건·재질 대리변수와 같은 `t > 25` 로 통일 (종전 `>= 25` 는 t=25.0 에서 어긋남) */
+  if (station === 'EdgeMiller' && (prev.t > 25) === (cur.t > 25)) s = 0;
   return s;
 }

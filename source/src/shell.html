@@ -478,6 +478,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       <div class="f" style="min-width:260px"><label>확관 N 산출식</label><select id="cfgExpN" style="width:100%">
         <option value="ortools" selected>운영 최적화 모델 specs.py (정본)</option>
         <option value="excel">엑셀 표준시간 분석 (N 홀수 · 대조용)</option></select></div>
+      <div class="f" style="min-width:270px"><label>API 5L 판정 (계획서에 열 없음)</label><select id="cfgApi5l" style="width:100%">
+        <option value="proxy" selected>수량 50본 이상을 API 5L 로 간주</option>
+        <option value="none">API 5L 없음 (Final U.T · 관단 X-ray 미투입)</option></select></div>
       <div class="f ck"><input type="checkbox" id="cfgRB" checked><label for="cfgRB">RB 라인 활용</label></div>
       <div class="f ck"><input type="checkbox" id="cfgCP"><label for="cfgCP">Calibration Press 투입</label></div>
       <div class="f ck"><input type="checkbox" id="cfgPFUT"><label for="cfgPFUT">프로세싱 파이프 Final U.T</label></div>
@@ -491,6 +494,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
       · 전환시간: 확관 외 설비는 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.<br>
       · 확관 셋업(공구 계층): 호기별 다이 스펙표에서 장착 공구를 판정해 <b>드로바 교체 270분 &gt; 헤드 교체 150분 &gt; 다이 교체 90분 &gt; 동일 0</b>을 적용합니다. (확관 최적화 운영 모델 산출 근거)<br>
+      · API 5L: 조관계획서에 재질·규격 열이 없어 <b>수량 50본 이상</b>을 API 5L 대리변수로 씁니다.
+      다이어그램에서 1차 U.T 는 「API 5L <b>또는</b> 50PCS 이상」, Final U.T·관단 X-ray 는 「API 5L」로 조건이 다릅니다 —
+      대리변수를 쓰면 두 조건이 같아지므로, 끄면 Final U.T·관단 X-ray 물량이 0 이 됩니다. (세아제강 확인 항목)<br>
       · 확관 N: <b>운영 최적화 모델(specs.py) 산출식이 기본값</b>입니다 — #1호기 <code>round(L / (step−150))</code>, #2호기 <code>ceil((L−500)/step)+2</code>(짝수 보정).
       「표준시간 분석」 엑셀 산출식(N 홀수)과는 결과가 다르며, 대조용으로 전환해 볼 수 있습니다.
     </div>

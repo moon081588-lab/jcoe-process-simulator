@@ -478,6 +478,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       <div class="f" style="min-width:260px"><label>확관 N 산출식</label><select id="cfgExpN" style="width:100%">
         <option value="ortools" selected>운영 최적화 모델 specs.py (정본)</option>
         <option value="excel">엑셀 표준시간 분석 (N 홀수 · 대조용)</option></select></div>
+      <div class="f" style="min-width:270px"><label>API 5L 판정 (계획서에 열 없음)</label><select id="cfgApi5l" style="width:100%">
+        <option value="proxy" selected>수량 50본 이상을 API 5L 로 간주</option>
+        <option value="none">API 5L 없음 (Final U.T · 관단 X-ray 미투입)</option></select></div>
       <div class="f ck"><input type="checkbox" id="cfgRB" checked><label for="cfgRB">RB 라인 활용</label></div>
       <div class="f ck"><input type="checkbox" id="cfgCP"><label for="cfgCP">Calibration Press 투입</label></div>
       <div class="f ck"><input type="checkbox" id="cfgPFUT"><label for="cfgPFUT">프로세싱 파이프 Final U.T</label></div>
@@ -491,6 +494,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
       · 전환시간: 확관 외 설비는 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.<br>
       · 확관 셋업(공구 계층): 호기별 다이 스펙표에서 장착 공구를 판정해 <b>드로바 교체 270분 &gt; 헤드 교체 150분 &gt; 다이 교체 90분 &gt; 동일 0</b>을 적용합니다. (확관 최적화 운영 모델 산출 근거)<br>
+      · API 5L: 조관계획서에 재질·규격 열이 없어 <b>수량 50본 이상</b>을 API 5L 대리변수로 씁니다.
+      다이어그램에서 1차 U.T 는 「API 5L <b>또는</b> 50PCS 이상」, Final U.T·관단 X-ray 는 「API 5L」로 조건이 다릅니다 —
+      대리변수를 쓰면 두 조건이 같아지므로, 끄면 Final U.T·관단 X-ray 물량이 0 이 됩니다. (세아제강 확인 항목)<br>
       · 확관 N: <b>운영 최적화 모델(specs.py) 산출식이 기본값</b>입니다 — #1호기 <code>round(L / (step−150))</code>, #2호기 <code>ceil((L−500)/step)+2</code>(짝수 보정).
       「표준시간 분석」 엑셀 산출식(N 홀수)과는 결과가 다르며, 대조용으로 전환해 볼 수 있습니다.
     </div>
@@ -1120,20 +1126,28 @@ function toolInfo(od, t, machine) {
   let best = null, bestDiff = Infinity;
   for (const r of rows) {
     const [head, rod, tmin, tmax, step, label] = r;
-    if (Math.abs(rod - od) > 5) continue;              // 외경 ±5mm 이내만 후보
+    if (Math.abs(rod - od) > 5) continue;              // 외경 ±5mm 이내만 후보 (specs.get_tool_info)
+    /* 두께 판정 — specs.py 와 동일하게:
+       · 구간 표기(18.6~38.1t) 는 구간 안이면 차이 0, 밖이면 가까운 경계까지의 거리
+       · 단일 표기(18.9t) 는 math.isclose(abs_tol=0.1) 로 ±0.1mm 까지 "일치"(차이 0) 로 본다.
+       이 ±0.1 규칙이 없으면 OD914 t18.8 에서 18.9t(580mm) 대신 18.6~38.1t(340mm) 가 잡혀
+       확관 횟수가 25 → 39 회로 튄다. */
     let diff;
-    if (t >= tmin && t <= tmax) diff = 0;
-    else diff = Math.min(Math.abs(t - tmin), Math.abs(t - tmax));
+    if (tmin !== tmax) diff = (t >= tmin && t <= tmax) ? 0 : Math.min(Math.abs(t - tmin), Math.abs(t - tmax));
+    else               diff = (Math.abs(t - tmin) <= 0.1) ? 0 : Math.abs(t - tmin);
     if (diff < bestDiff) { bestDiff = diff; best = { head, od: rod, step, label }; }
   }
   if (!best) {
-    /* 다이표에 없는 규격 — 규격을 키로 삼아 서로 다른 제품이 "동일 공구" 로 판정되지 않게 한다 */
+    /* 다이표에 없는 규격 — 규격을 키로 삼아 서로 다른 제품이 "동일 공구" 로 판정되지 않게 한다.
+       (specs.py 는 여기서 모두 UNKNOWN 을 반환해 서로 다른 규격 사이도 셋업 0 이 된다 — 의도적 차이) */
     return { head: null, drawbar: `NA_${Math.round(od)}`, die: `NA|${Math.round(od)}|${t}`,
              step: null, label: '해당 다이 없음', unknown: true, tDiff: null };
   }
   const drawbar = (DIE_KEY[machine] === 'RB') ? `RB_${best.head}`
                 : (best.head === 450 ? 'SMALL' : 'LARGE');
-  return { head: best.head, drawbar, die: `${best.od}|${best.label}`, step: best.step,
+  /* die 식별자는 specs.py 와 동일하게 **입력 외경**을 씁니다 (die_id = (diameter, spec)).
+     같은 다이를 쓰는 OD 711.0 ↔ 711.2 도 다이 교체(90분)로 계상됩니다 — 세아제강 확인 항목. */
+  return { head: best.head, drawbar, die: `${od}|${best.label}`, step: best.step,
            label: best.label, tDiff: bestDiff, warn: bestDiff > TDIFF_WARN };
 }
 
@@ -1166,9 +1180,13 @@ function expanderNMode() { return EXP_NMODE; }
 function expanderN(s, machine) {
   const { step } = expanderStep(s, machine);
   if (EXP_NMODE === 'ortools' && (machine === 'M1' || machine === 'BOTH')) {
-    /* step 151mm 에서 분모가 1 이 되어 N 이 12,802 까지 튀는 불연속이 있어 하한을 둔다 */
-    const den = Math.max(50, step - (step <= 150 ? 100 : 150));
-    return Math.round(s.L / den);
+    /* specs.calculate_time_m1 그대로 — 하한을 두지 않는다.
+       step 이 작을수록 분모(step−150 또는 step−100)가 급격히 줄어 N 이 크게 튄다.
+       예) OD508 t9.5 step170 → 분모 20 → 11.5m 에서 N=575 회 (2,987s → 7,127s).
+       종전에는 하한 50 을 두었으나 정본과 어긋나므로 제거했다.
+       분모가 0 이하가 되는 표상의 step 은 없지만, 만약을 대비해 0 나눗셈만 막는다. */
+    const den = step - (step <= 150 ? 100 : 150);
+    return Math.round(s.L / (den > 0 ? den : 1));
   }
   let n = ceil((s.L - 500) / step) + 2;
   if (EXP_NMODE === 'ortools') { if (n % 2 === 1) n += 1; }   // 짝수 보정
@@ -1205,10 +1223,16 @@ STD.Expander = (s, machine) => {
 /* 14. End-Facing (면취기) */
 STD.EndFacing = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
+  /* 두께 구간이 8~15 / 15~30 / 30~999 뿐이라 t < 8 이면 어떤 행도 매칭되지 않는다.
+     종전 폴백은 표의 마지막 행(64" · t30~999 · 가장 느림)이라, 외경을 무시하고 최악값을 잡았다.
+     (t 7.9 → 880.1s / t 8.0 → 584.6s 로 0.1mm 차이에 +50% 점프)
+     구간 밖이면 pickRange 와 같은 원칙으로 **가장 가까운 두께 구간**을 쓴다. */
   let best = null, bd = 1e9;
-  for (const r of T.endFacing) {
-    if (s.t >= r[1] && s.t < r[2]) { const d = Math.abs(r[0] - inch); if (d < bd) { bd = d; best = r; } }
-  }
+  const score = (r) => {
+    const tGap = (s.t >= r[1] && s.t < r[2]) ? 0 : Math.min(Math.abs(s.t - r[1]), Math.abs(s.t - r[2]));
+    return tGap * 1000 + Math.abs(r[0] - inch);        // 두께 구간 적합도 우선, 그다음 외경 근접
+  };
+  for (const r of T.endFacing) { const d = score(r); if (d < bd) { bd = d; best = r; } }
   if (!best) best = T.endFacing[T.endFacing.length - 1];
   const sec = 363 + best[3];
   return { sec, expr: `363 + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = 363 + ${best[3]}s`,
@@ -1296,7 +1320,6 @@ function expanderSetup(prev, cur, machine) {
   if (!prev) return { sec: 0, kind: '없음' };
   const a = toolInfo(prev.od, prev.t, machine || 'M2');
   const b = toolInfo(cur.od,  cur.t,  machine || 'M2');
-  const same = Math.abs(a.od - b.od) < 0.5 && Math.abs(prev.t - cur.t) < 0.05;
   /* 한쪽이라도 다이표에 없는 규격이면 판정 불가.
      규격이 다르면 최소 다이 교체는 일어난다고 보고 보수적으로 부과한다. */
   if (a.unknown || b.unknown) {
@@ -1319,7 +1342,8 @@ function changeoverSec(station, prev, cur, machine) {
   if (Math.abs(prev.t - cur.t) > 0.5) s += c.t;
   if (Math.abs(prev.L - cur.L) > 1) s += c.L;
   // Edge Miller 은 25T 경계를 넘을 때만 Tool 교체
-  if (station === 'EdgeMiller' && (prev.t >= 25) === (cur.t >= 25)) s = 0;
+  /* 경계는 Gap Press 투입 조건·재질 대리변수와 같은 `t > 25` 로 통일 (종전 `>= 25` 는 t=25.0 에서 어긋남) */
+  if (station === 'EdgeMiller' && (prev.t > 25) === (cur.t > 25)) s = 0;
   return s;
 }
 </script>
@@ -1872,8 +1896,11 @@ function importOptPlan(rows) {
 
   const cnt = { M1:0, M2:0, M3:0, RB:0, BOTH:0 };
   Object.values(assign).forEach(m => cnt[m]++);
-  const unit = detail[0] && detail[0].en != null && detail[detail.length-1].en > 20000 ? 'sec' : 'min';
-  const spanRaw = Math.max(...detail.map(d => d.en == null ? 0 : d.en));
+  /* 초/분 단위 판정 — 종전에는 "정렬 후 마지막 행의 en" 하나만 봐서
+     ① 마지막 행 en 이 null 이면 무조건 'min', ② st 정렬이라 마지막 시작 ≠ 마지막 종료,
+     ③ makespan 이 20,000초(5.6h) 이하인 초 단위 파일을 분으로 오판했다. 전 행의 최댓값으로 판정한다. */
+  const spanRaw = detail.reduce((a, d) => Math.max(a, d.en == null ? 0 : d.en), 0);
+  const unit = spanRaw > 20000 ? 'sec' : 'min';
   return {
     src: 'IMPORT', assign, seq: uniq, detail, warn,
     nRows: detail.length, nOrders: uniq.length, count: cnt,
@@ -1886,13 +1913,22 @@ function importOptPlan(rows) {
 /* 오더 → spec */
 function specOf(o, cfg) {
   return {
-    no:o.no, od:o.od, t:o.t, L:o.L, qty:o.qty,
+    no:o.no,
+    /* 운영 모델은 계획서를 읽을 때 외경을 정수로 **절사**하고 두께를 소수 2자리로 반올림한다
+       (`data_loader.py:51-52` — `df["외경"].astype(int)` / `df["두께"].astype(float).round(2)`).
+       이 정규화를 거쳐야 OD 711.0 과 711.2 가 같은 다이(711)로 판정돼 헛된 다이 교체 90분이 사라지고,
+       RB 적격의 외경 정확일치(`d not in valid_rb_diameters`)도 정본과 같은 답을 낸다. */
+    od:Math.trunc(o.od), t:Math.round(o.t * 100) / 100, L:o.L, qty:o.qty,
     bottleneck: o.bottleneck || null,     // 병목 공정 작업장 (HT102 = 열처리 → RB 강제)
     rawL: o.rawL || 0,                    // 원재료 길이 [mm] — 더블 파이프 판정용
     /* 계획서에 재질 열이 없어 두께를 재질 대리변수로 쓴다 (세아제강 확인 항목).
        경계를 Gap Press 투입 조건(t > 25)과 일치시킨다 — 종전 t >= 25 는 t=25.0 제품에서 어긋났다. */
     grade: o.grade || (o.t > 25 ? 'high' : 'normal'),
-    api5l: o.api5l != null ? o.api5l : (o.qty >= 50),
+    /* 계획서에 API 5L 열이 없다. 종전에는 `qty >= 50` 을 무조건 대리변수로 썼는데,
+       그러면 다이어그램에서 조건이 서로 다른 D2(API 5L **또는** 50PCS↑ → 1차 U.T)와
+       D5(API 5L → Final U.T + 관단 X-ray)가 같은 조건이 되어 버린다.
+       기본값은 종전 동작을 유지하되(cfg.api5lProxy !== false), 끌 수 있게 노출한다. */
+    api5l: o.api5l != null ? o.api5l : ((cfg.api5lProxy !== false) && o.qty >= 50),
     markSpec:2, markEnd:2, defects:0, holdSec:cfg.holdSec, rtType:'450kV'
   };
 }
@@ -2054,6 +2090,7 @@ function simulate(orders, cfg) {
 
   const events = [];
   const pipeCount = {};
+  const setupWall = {};      // 노드별 벽시계 전환시간 (BOTH 이중 계상 방지)
   const orderSpan = {};
   const ctx = { rr: 0 };
   const bothOrders = new Set(), fixedOrders = new Set();
@@ -2148,7 +2185,11 @@ function simulate(orders, cfg) {
         if (nid === 'EXP' && !coUnits) cs = sameODBlockUntil(units, u, spec, cs, cfg);  // 동시 가동 시 동일 외경
         const CAL = (nid === 'RB') ? calRB : cal;
         let st = cs;
-        if (co > 0) { st = CAL.run(cs, co); seize.forEach(x => x.setup += co); }
+        if (co > 0) {
+          st = CAL.run(cs, co);
+          seize.forEach(x => x.setup += co);            // 호기별 점유(BOTH 는 2대가 각각 점유)
+          setupWall[nid] = (setupWall[nid] || 0) + co;  // 노드 벽시계 전환시간 (BOTH 도 1회)
+        }
         const en = CAL.run(st, dur);
         for (const x of seize) {
           x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
@@ -2198,7 +2239,10 @@ function simulate(orders, cfg) {
     const avail = (n.id === 'RB') ? availRB : availPerUnit;
     const units = pools[n.id];
     const busy = units.reduce((a, u) => a + u.busy, 0);
-    const setup = units.reduce((a, u) => a + u.setup, 0);
+    const setupUnits = units.reduce((a, u) => a + u.setup, 0);
+    /* 노드 전환시간은 **벽시계 기준**으로 센다. BOTH 작업은 한 번의 셋업이 두 호기를 동시에 묶으므로
+       호기별 합계(setupUnits)로 세면 이중 계상된다. 호기별 가동률에는 점유 기준(u.setup)을 그대로 쓴다. */
+    const setup = (setupWall[n.id] != null) ? setupWall[n.id] : setupUnits;
     const jobs = units.reduce((a, u) => a + u.jobs, 0);
     if (!jobs) continue;
     const unitUtil = units.map(u => avail ? (u.busy + u.setup) / avail * 100 : 0);
@@ -2207,13 +2251,14 @@ function simulate(orders, cfg) {
       id: n.id, label: n.label, st: n.st, cap: units.length,
       jobs: pipeCount[n.id] || jobs,          // 처리 본수 = 실제 파이프 수
       unitJobs: jobs,                          // 호기별 합계 (BOTH 는 2대가 각각 계상)
-      busyH: busy / 3600, setupH: setup / 3600,
+      busyH: busy / 3600, setupH: setup / 3600, setupUnitsH: setupUnits / 3600,
       /* util = 설비 1대 기준 가동률의 최댓값. 대수로 나눈 평균은 호기 편중을 가려서 쓰지 않는다 */
       util: utilMax,
       utilAvg: avail ? (busy + setup) / (avail * units.length) * 100 : 0,
       shifts: (n.id === 'RB') ? (cfg.rbShifts || 1) : cfg.shifts,
       unitUtil, imbalance: utilMax - utilMin,
-      setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
+      /* 전환 비중은 **설비 점유 기준**(호기별 합계)으로 센다 — busy 도 호기별 합계이므로 단위를 맞춘다 */
+      setupShare: (busy + setupUnits) ? setupUnits / (busy + setupUnits) * 100 : 0,
       loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),
       units: units.map((u, i) => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600,
                                     jobs: u.jobs, util: unitUtil[i] }))
@@ -2230,8 +2275,13 @@ function simulate(orders, cfg) {
     expUtil: expStat ? expStat.util : 0,
     expUtilAvg: expStat ? expStat.utilAvg : 0,
     expUnitUtil: expStat ? expStat.unitUtil.slice() : [],
-    /* 호기 부하 편차 = 전 호기(3호기 포함) 최대−최소 */
+    /* 호기 부하 편차 = 전 호기(3호기 포함) 최대−최소.
+       **가공 + 전환** 으로 센다. 종전에는 가공시간만 세서, 최적화 엔진이 실제로 최소화하는
+       목적항(evalSchedule 의 bal = setup+processing)과 정의가 달랐다. 그 결과 화면 두 곳이
+       같은 이름으로 다른 값을 말했고, "최적화로 편차가 줄었다" 는 결론도 뒤집힌다. */
     expBalanceH: expStat && expStat.units.length
+      ? Math.max(...expStat.units.map(u => u.busyH + u.setupH)) - Math.min(...expStat.units.map(u => u.busyH + u.setupH)) : 0,
+    expBalanceBusyH: expStat && expStat.units.length
       ? Math.max(...expStat.units.map(u => u.busyH)) - Math.min(...expStat.units.map(u => u.busyH)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
     rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
@@ -2240,7 +2290,7 @@ function simulate(orders, cfg) {
     throughputPerDay: Object.values(orderSpan).reduce((a, v) => a + v.qty, 0) / (horizon / 86400),
     seed: cfg.seed || 1, stochOn: !!ST.on,
   };
-  return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, kpi,
+  return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, calRB, kpi,
            rule: cfg.dispatchRule, eligRule: cfg.eligRule };
 }
 </script>
@@ -2283,6 +2333,7 @@ function readCfg() {
   return {
     expSetupMode: ($('cfgExpSetup') || {}).value || 'tool',
     expNMode: ($('cfgExpN') || {}).value || 'ortools',
+    api5lProxy: (($('cfgApi5l') || {}).value || 'proxy') !== 'none',
     dispatchRule: ($('optRule')||{}).value || 'EAT',
     sameODConcurrency: $('optSameOD') ? $('optSameOD').checked : true,
     useM3: $('optM3') ? $('optM3').checked : false,
@@ -2687,9 +2738,14 @@ function updateStatPanel(){
   for (let i=Math.max(0,st-2000);i<ev.length && ev[i].s<=animT;i++){
     const e=ev[i]; const a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
     if (b>a) busy[e.n]=(busy[e.n]||0)+(b-a);
+    /* 전환시간도 설비 점유다 — 병목 탭 util 과 같은 기준 */
+    if (e.co>0){ const ca=Math.max(e.s-e.co,animT-win), cb=Math.min(e.s,animT); if (cb>ca) busy[e.n]=(busy[e.n]||0)+(cb-ca); }
   }
   for (const s of SIM.stats){
-    const u = Math.min(100, (busy[s.id]||0)/(win*s.cap*(SIM.cal.dayCap/86400))*100);
+    /* 병목 탭과 정의를 맞춘다 — ① 전환시간 포함 ② 설비별 캘린더(RB 는 1근) ③ 호기 1대 기준(대수로 나누지 않음).
+       종전에는 세 가지가 모두 달라 RB 가 실제의 절반으로, EXP 가 23%(병목 탭 51%)로 보였다. */
+    const dayCap = ((s.id==='RB' ? SIM.calRB : SIM.cal) || SIM.cal).dayCap;
+    const u = Math.min(100, (busy[s.id]||0)/(win*(dayCap/86400))*100);
     const el=$('sf_'+s.id); if(!el) continue;
     el.style.width=u.toFixed(0)+'%';
     el.style.background = u>=85?C.bneck:u>=60?C.setup:C.done;
@@ -2698,6 +2754,14 @@ function updateStatPanel(){
 }
 
 /* ================= 표준시간 계산기 ================= */
+/* 계산기 입력도 시뮬 설정과 같은 검증을 적용한다 — 길이를 비우면 0 이 되어
+   "1본 1.55h · 확관 N 0회" 같은 그럴듯한 오답이 그대로 나왔다. */
+function calcIn(id, def, lo, hi){
+  const el = $(id); if (!el) return def;
+  const v = parseFloat(el.value);
+  if (!isFinite(v) || v < lo || v > hi) { el.value = def; return def; }
+  return v;
+}
 const CALC_ORDER = [
   ['EdgeMiller','면취 (Edge Miller)'], ['PreBender','Pre Bender'], ['PressBender','Press Bender'],
   ['GapPress','Gap Press'], ['TackWelder','태그 웰딩'], ['InsideWelder','내면 SAW'],
@@ -2707,10 +2771,11 @@ const CALC_ORDER = [
 ];
 function calc(){
   const s = {
-    od: +$('cOD').value, t: +$('cT').value, L: +$('cL').value*1000, qty:+$('cQ').value,
+    od: calcIn('cOD', 914, 100, 3000), t: calcIn('cT', 9.3, 1, 100),
+    L: calcIn('cL', 12.802, 0.5, 30) * 1000, qty: calcIn('cQ', 1, 1, 100000),
     grade: $('cGrade').value, api5l: $('cAPI').checked,
-    markSpec:+$('cMS').value, markEnd:+$('cME').value, defects:+$('cDF').value,
-    holdSec:+$('cHold').value, rtType:$('cRT').value,
+    markSpec:+$('cMS').value, markEnd:+$('cME').value, defects: calcIn('cDF', 0, 0, 50),
+    holdSec: calcIn('cHold', 60, 0, 36000), rtType:$('cRT').value,
   };
   const line = s.L/1000 > 13 ? '18M':'12M';
   const mach = $('cExp').value;
@@ -2783,7 +2848,7 @@ function buildIOFilters(){
   const od=$('ioOrder'); const cur2=od.value;
   od.innerHTML='<option value="">전체 오더</option>'+Object.keys(SIM.orderSpan)
     .map(no=>{const v=SIM.orderSpan[no];
-      return `<option value="${esc(no)}">${no} · OD${v.od}×t${v.t}×${(v.L/1000).toFixed(1)}m · ${v.qty}본</option>`;}).join('');
+      return `<option value="${esc(no)}">${esc(no)} · OD${v.od}×t${v.t}×${(v.L/1000).toFixed(1)}m · ${v.qty}본</option>`;}).join('');
   if(cur2) od.value=cur2;
 }
 let IO_ROWS=[];
@@ -2807,7 +2872,7 @@ function renderIO(){
       <th>Input (도착)</th><th>착수</th><th>Output (완료)</th>
       <th style="text-align:right">대기(분)</th><th style="text-align:right">전환(분)</th><th style="text-align:right">가공(분)</th></tr>`;
     $('ioBody').innerHTML=rows.slice(0,limit).map(r=>`<tr>
-      <td>${r.o}</td><td class="num">${r.k}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td>
+      <td>${esc(r.o)}</td><td class="num">${r.k}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td>
       <td>${fmtT(r.inT)}</td><td>${fmtT(r.start)}</td><td>${fmtT(r.out)}</td>
       <td class="num">${r.wait.toFixed(1)}</td><td class="num ${r.co>0?'hi2':''}">${r.co.toFixed(0)}</td><td class="num">${r.proc.toFixed(1)}</td></tr>`).join('');
   } else {
@@ -2823,7 +2888,7 @@ function renderIO(){
       <th>Input (최초 도착)</th><th>착수</th><th>Output (최종 완료)</th>
       <th style="text-align:right">체류(h)</th><th style="text-align:right">가공(h)</th><th style="text-align:right">전환(분)</th><th style="text-align:right">평균 대기(분)</th></tr>`;
     $('ioBody').innerHTML=rows.slice(0,limit).map(r=>`<tr>
-      <td>${r.o}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td><td class="num">${r.n}</td>
+      <td>${esc(r.o)}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td><td class="num">${r.n}</td>
       <td>${fmtT(r.inT)}</td><td>${fmtT(r.start)}</td><td>${fmtT(r.out)}</td>
       <td class="num">${((r.out-r.inT)/3600).toFixed(1)}</td><td class="num">${(r.proc/3600).toFixed(1)}</td>
       <td class="num ${r.co>0?'hi2':''}">${(r.co/60).toFixed(0)}</td><td class="num">${(r.wait/60/r.n).toFixed(1)}</td></tr>`).join('');
@@ -2862,7 +2927,8 @@ function ioCsv(){
    pickExpander 에 'OPT' 분기가 없어 조용히 EAT 로 떨어지므로 규칙도 되돌린다. */
 function invalidatePlan(){
   PLAN=null;
-  if($('optRule') && $('optRule').value==='OPT'){
+  /* OPT 뿐 아니라 IMPORT(외부 CP-SAT 스케줄)도 되돌린다 — 제약이 바뀌면 가져온 배정도 근거를 잃는다 */
+  if($('optRule') && ($('optRule').value==='OPT' || $('optRule').value==='IMPORT')){
     $('optRule').value='EAT';
     if($('ruleDesc')) $('ruleDesc').textContent=DISPATCH_RULES.EAT.desc;
   }
@@ -2876,7 +2942,10 @@ function initOptTab(){
   $('optSameOD').onchange=invalidatePlan;
   $('optM3').onchange=invalidatePlan;
   if($('cfgRB')) $('cfgRB').onchange=invalidatePlan;
-  ['optRuleSet','optRbMode','optRbShift'].forEach(id=>{ if($(id)) $(id).onchange=invalidatePlan; });
+  /* 확관 N·셋업 산출식은 확관 가공시간·전환시간을 직접 바꾸므로 최적화 해도 함께 무효화해야 한다.
+     종전에는 runSim() 만 돌아서, ③ 패널·위저드 3단계가 옛 해의 Cmax·전환시간을 계속 표시했다. */
+  ['optRuleSet','optRbMode','optRbShift','cfgExpN','cfgExpSetup','cfgApi5l']
+    .forEach(id=>{ if($(id)) $(id).onchange=invalidatePlan; });
   $('optRule').onchange=()=>{ upd(); renderImport(); }; upd();
   initImportTab();
   $('btnApplyRule').onclick=()=>{
@@ -3099,9 +3168,9 @@ function renderOptResult(ms){
     return `<div class="mcard"><h5>확관 #${m[1]}호기 <span>${rows.length}오더 · ${(tot/3600).toFixed(1)}h · 전환 ${(rows.reduce((a,r)=>a+r.setup,0)/3600).toFixed(1)}h</span></h5>
       <div class="mseqbar">${rows.map(r=>
         `<div style="width:${r.setup/tot*100}%;background:#d29922" title="전환 ${(r.setup/60).toFixed(0)}분"></div>
-         <div style="width:${r.p/tot*100}%;background:${colorOf(r.no)}" title="${r.no} ${(r.p/3600).toFixed(1)}h"></div>`).join('')}</div>
+         <div style="width:${r.p/tot*100}%;background:${colorOf(r.no)}" title="${esc(r.no)} ${(r.p/3600).toFixed(1)}h"></div>`).join('')}</div>
       ${rows.map((r,i)=>{const v=SIM.orderSpan[r.no]||{};
-        return `<div class="mrow"><span><i style="background:${colorOf(r.no)}"></i>${i+1}. ${r.no}
+        return `<div class="mrow"><span><i style="background:${colorOf(r.no)}"></i>${i+1}. ${esc(r.no)}
           ${r.m==='BOTH'?'<span style="color:#ff9a92;font-size:9.5px">[#1·#2 동시]</span>':''}
           &nbsp;<span style="color:#6e7681">OD${v.od}×t${v.t}×${((v.L||0)/1000).toFixed(1)}m</span></span>
           <b>${(r.p/3600).toFixed(1)}h${r.setup>0?` <span style="color:#e3b341">+전환 ${(r.setup/60).toFixed(0)}분</span>`:''}</b></div>`;}).join('')}
@@ -3162,10 +3231,10 @@ function renderGantt(){
   const marksHdr = on ? `<div class="gover" style="left:${dlPct}%;right:0"></div><div class="gdl" style="left:${dlPct}%"></div>` : '';
   const rows = spans.map(([no,v])=>{
     const late = (dl && v.e>dl) || (v.tardyH!=null && v.tardyH>0);
-    const tt = `${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`
+    const tt = esc(`${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`)
       + (v.due?`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`:'');
     return `<div class="gr">
-      <div class="gl"><b>${no}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
+      <div class="gl"><b>${esc(no)}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
         <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
       <div class="gt">${marks}
         <div class="gb${late?' late':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
@@ -3330,6 +3399,9 @@ function applyOrders(list, meta, srcLabel){
   $('optSum').innerHTML=''; $('optSeq').innerHTML='';
   $('cmpBody').innerHTML='<tr><td colspan="9" style="color:#6e7681">데이터가 바뀌었습니다. 「전체 규칙 비교 실행」을 다시 눌러 주세요.</td></tr>';
   $('cmpNote').innerHTML='';
+  /* 반복 실행(몬테카를로) 결과도 이전 계획서의 것이다 — 같이 지운다 */
+  MC_LAST = null;
+  ['mcSum','mcHist','mcTable','mcRules'].forEach(id=>{ if($(id)) $(id).innerHTML=''; });
   if ($('optRule').value==='OPT') $('optRule').value='EAT';
   runSim(); calc();
 }
@@ -3573,7 +3645,8 @@ function boot(){
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
   $('btnDice').onclick=newSeed;
-  ['cfgExpSetup','cfgExpN'].forEach(id=>{ if($(id)) $(id).onchange=()=>{ runSim(); calc(); }; });
+  /* 재계산은 invalidatePlan() 안에서 runSim() 이 이미 수행한다. 여기서는 계산기 탭만 갱신. */
+  ['cfgExpSetup','cfgExpN','cfgApi5l'].forEach(id=>{ if($(id)) $(id).addEventListener('change', calc); });
   runSim(); calc(); requestAnimationFrame(loop);
 }
 </script>

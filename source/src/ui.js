@@ -37,6 +37,7 @@ function readCfg() {
   return {
     expSetupMode: ($('cfgExpSetup') || {}).value || 'tool',
     expNMode: ($('cfgExpN') || {}).value || 'ortools',
+    api5lProxy: (($('cfgApi5l') || {}).value || 'proxy') !== 'none',
     dispatchRule: ($('optRule')||{}).value || 'EAT',
     sameODConcurrency: $('optSameOD') ? $('optSameOD').checked : true,
     useM3: $('optM3') ? $('optM3').checked : false,
@@ -441,9 +442,14 @@ function updateStatPanel(){
   for (let i=Math.max(0,st-2000);i<ev.length && ev[i].s<=animT;i++){
     const e=ev[i]; const a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
     if (b>a) busy[e.n]=(busy[e.n]||0)+(b-a);
+    /* 전환시간도 설비 점유다 — 병목 탭 util 과 같은 기준 */
+    if (e.co>0){ const ca=Math.max(e.s-e.co,animT-win), cb=Math.min(e.s,animT); if (cb>ca) busy[e.n]=(busy[e.n]||0)+(cb-ca); }
   }
   for (const s of SIM.stats){
-    const u = Math.min(100, (busy[s.id]||0)/(win*s.cap*(SIM.cal.dayCap/86400))*100);
+    /* 병목 탭과 정의를 맞춘다 — ① 전환시간 포함 ② 설비별 캘린더(RB 는 1근) ③ 호기 1대 기준(대수로 나누지 않음).
+       종전에는 세 가지가 모두 달라 RB 가 실제의 절반으로, EXP 가 23%(병목 탭 51%)로 보였다. */
+    const dayCap = ((s.id==='RB' ? SIM.calRB : SIM.cal) || SIM.cal).dayCap;
+    const u = Math.min(100, (busy[s.id]||0)/(win*(dayCap/86400))*100);
     const el=$('sf_'+s.id); if(!el) continue;
     el.style.width=u.toFixed(0)+'%';
     el.style.background = u>=85?C.bneck:u>=60?C.setup:C.done;
@@ -452,6 +458,14 @@ function updateStatPanel(){
 }
 
 /* ================= 표준시간 계산기 ================= */
+/* 계산기 입력도 시뮬 설정과 같은 검증을 적용한다 — 길이를 비우면 0 이 되어
+   "1본 1.55h · 확관 N 0회" 같은 그럴듯한 오답이 그대로 나왔다. */
+function calcIn(id, def, lo, hi){
+  const el = $(id); if (!el) return def;
+  const v = parseFloat(el.value);
+  if (!isFinite(v) || v < lo || v > hi) { el.value = def; return def; }
+  return v;
+}
 const CALC_ORDER = [
   ['EdgeMiller','면취 (Edge Miller)'], ['PreBender','Pre Bender'], ['PressBender','Press Bender'],
   ['GapPress','Gap Press'], ['TackWelder','태그 웰딩'], ['InsideWelder','내면 SAW'],
@@ -461,10 +475,11 @@ const CALC_ORDER = [
 ];
 function calc(){
   const s = {
-    od: +$('cOD').value, t: +$('cT').value, L: +$('cL').value*1000, qty:+$('cQ').value,
+    od: calcIn('cOD', 914, 100, 3000), t: calcIn('cT', 9.3, 1, 100),
+    L: calcIn('cL', 12.802, 0.5, 30) * 1000, qty: calcIn('cQ', 1, 1, 100000),
     grade: $('cGrade').value, api5l: $('cAPI').checked,
-    markSpec:+$('cMS').value, markEnd:+$('cME').value, defects:+$('cDF').value,
-    holdSec:+$('cHold').value, rtType:$('cRT').value,
+    markSpec:+$('cMS').value, markEnd:+$('cME').value, defects: calcIn('cDF', 0, 0, 50),
+    holdSec: calcIn('cHold', 60, 0, 36000), rtType:$('cRT').value,
   };
   const line = s.L/1000 > 13 ? '18M':'12M';
   const mach = $('cExp').value;
@@ -537,7 +552,7 @@ function buildIOFilters(){
   const od=$('ioOrder'); const cur2=od.value;
   od.innerHTML='<option value="">전체 오더</option>'+Object.keys(SIM.orderSpan)
     .map(no=>{const v=SIM.orderSpan[no];
-      return `<option value="${esc(no)}">${no} · OD${v.od}×t${v.t}×${(v.L/1000).toFixed(1)}m · ${v.qty}본</option>`;}).join('');
+      return `<option value="${esc(no)}">${esc(no)} · OD${v.od}×t${v.t}×${(v.L/1000).toFixed(1)}m · ${v.qty}본</option>`;}).join('');
   if(cur2) od.value=cur2;
 }
 let IO_ROWS=[];
@@ -561,7 +576,7 @@ function renderIO(){
       <th>Input (도착)</th><th>착수</th><th>Output (완료)</th>
       <th style="text-align:right">대기(분)</th><th style="text-align:right">전환(분)</th><th style="text-align:right">가공(분)</th></tr>`;
     $('ioBody').innerHTML=rows.slice(0,limit).map(r=>`<tr>
-      <td>${r.o}</td><td class="num">${r.k}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td>
+      <td>${esc(r.o)}</td><td class="num">${r.k}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td>
       <td>${fmtT(r.inT)}</td><td>${fmtT(r.start)}</td><td>${fmtT(r.out)}</td>
       <td class="num">${r.wait.toFixed(1)}</td><td class="num ${r.co>0?'hi2':''}">${r.co.toFixed(0)}</td><td class="num">${r.proc.toFixed(1)}</td></tr>`).join('');
   } else {
@@ -577,7 +592,7 @@ function renderIO(){
       <th>Input (최초 도착)</th><th>착수</th><th>Output (최종 완료)</th>
       <th style="text-align:right">체류(h)</th><th style="text-align:right">가공(h)</th><th style="text-align:right">전환(분)</th><th style="text-align:right">평균 대기(분)</th></tr>`;
     $('ioBody').innerHTML=rows.slice(0,limit).map(r=>`<tr>
-      <td>${r.o}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td><td class="num">${r.n}</td>
+      <td>${esc(r.o)}</td><td>${STATION_LABEL(r.st)}</td><td>${unitLabel(r.st,r.u,r.both)}</td><td class="num">${r.n}</td>
       <td>${fmtT(r.inT)}</td><td>${fmtT(r.start)}</td><td>${fmtT(r.out)}</td>
       <td class="num">${((r.out-r.inT)/3600).toFixed(1)}</td><td class="num">${(r.proc/3600).toFixed(1)}</td>
       <td class="num ${r.co>0?'hi2':''}">${(r.co/60).toFixed(0)}</td><td class="num">${(r.wait/60/r.n).toFixed(1)}</td></tr>`).join('');
@@ -616,7 +631,8 @@ function ioCsv(){
    pickExpander 에 'OPT' 분기가 없어 조용히 EAT 로 떨어지므로 규칙도 되돌린다. */
 function invalidatePlan(){
   PLAN=null;
-  if($('optRule') && $('optRule').value==='OPT'){
+  /* OPT 뿐 아니라 IMPORT(외부 CP-SAT 스케줄)도 되돌린다 — 제약이 바뀌면 가져온 배정도 근거를 잃는다 */
+  if($('optRule') && ($('optRule').value==='OPT' || $('optRule').value==='IMPORT')){
     $('optRule').value='EAT';
     if($('ruleDesc')) $('ruleDesc').textContent=DISPATCH_RULES.EAT.desc;
   }
@@ -630,7 +646,10 @@ function initOptTab(){
   $('optSameOD').onchange=invalidatePlan;
   $('optM3').onchange=invalidatePlan;
   if($('cfgRB')) $('cfgRB').onchange=invalidatePlan;
-  ['optRuleSet','optRbMode','optRbShift'].forEach(id=>{ if($(id)) $(id).onchange=invalidatePlan; });
+  /* 확관 N·셋업 산출식은 확관 가공시간·전환시간을 직접 바꾸므로 최적화 해도 함께 무효화해야 한다.
+     종전에는 runSim() 만 돌아서, ③ 패널·위저드 3단계가 옛 해의 Cmax·전환시간을 계속 표시했다. */
+  ['optRuleSet','optRbMode','optRbShift','cfgExpN','cfgExpSetup','cfgApi5l']
+    .forEach(id=>{ if($(id)) $(id).onchange=invalidatePlan; });
   $('optRule').onchange=()=>{ upd(); renderImport(); }; upd();
   initImportTab();
   $('btnApplyRule').onclick=()=>{
@@ -853,9 +872,9 @@ function renderOptResult(ms){
     return `<div class="mcard"><h5>확관 #${m[1]}호기 <span>${rows.length}오더 · ${(tot/3600).toFixed(1)}h · 전환 ${(rows.reduce((a,r)=>a+r.setup,0)/3600).toFixed(1)}h</span></h5>
       <div class="mseqbar">${rows.map(r=>
         `<div style="width:${r.setup/tot*100}%;background:#d29922" title="전환 ${(r.setup/60).toFixed(0)}분"></div>
-         <div style="width:${r.p/tot*100}%;background:${colorOf(r.no)}" title="${r.no} ${(r.p/3600).toFixed(1)}h"></div>`).join('')}</div>
+         <div style="width:${r.p/tot*100}%;background:${colorOf(r.no)}" title="${esc(r.no)} ${(r.p/3600).toFixed(1)}h"></div>`).join('')}</div>
       ${rows.map((r,i)=>{const v=SIM.orderSpan[r.no]||{};
-        return `<div class="mrow"><span><i style="background:${colorOf(r.no)}"></i>${i+1}. ${r.no}
+        return `<div class="mrow"><span><i style="background:${colorOf(r.no)}"></i>${i+1}. ${esc(r.no)}
           ${r.m==='BOTH'?'<span style="color:#ff9a92;font-size:9.5px">[#1·#2 동시]</span>':''}
           &nbsp;<span style="color:#6e7681">OD${v.od}×t${v.t}×${((v.L||0)/1000).toFixed(1)}m</span></span>
           <b>${(r.p/3600).toFixed(1)}h${r.setup>0?` <span style="color:#e3b341">+전환 ${(r.setup/60).toFixed(0)}분</span>`:''}</b></div>`;}).join('')}
@@ -916,10 +935,10 @@ function renderGantt(){
   const marksHdr = on ? `<div class="gover" style="left:${dlPct}%;right:0"></div><div class="gdl" style="left:${dlPct}%"></div>` : '';
   const rows = spans.map(([no,v])=>{
     const late = (dl && v.e>dl) || (v.tardyH!=null && v.tardyH>0);
-    const tt = `${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`
+    const tt = esc(`${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`)
       + (v.due?`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`:'');
     return `<div class="gr">
-      <div class="gl"><b>${no}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
+      <div class="gl"><b>${esc(no)}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
         <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
       <div class="gt">${marks}
         <div class="gb${late?' late':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
@@ -1084,6 +1103,9 @@ function applyOrders(list, meta, srcLabel){
   $('optSum').innerHTML=''; $('optSeq').innerHTML='';
   $('cmpBody').innerHTML='<tr><td colspan="9" style="color:#6e7681">데이터가 바뀌었습니다. 「전체 규칙 비교 실행」을 다시 눌러 주세요.</td></tr>';
   $('cmpNote').innerHTML='';
+  /* 반복 실행(몬테카를로) 결과도 이전 계획서의 것이다 — 같이 지운다 */
+  MC_LAST = null;
+  ['mcSum','mcHist','mcTable','mcRules'].forEach(id=>{ if($(id)) $(id).innerHTML=''; });
   if ($('optRule').value==='OPT') $('optRule').value='EAT';
   runSim(); calc();
 }
@@ -1327,6 +1349,7 @@ function boot(){
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
   $('btnDice').onclick=newSeed;
-  ['cfgExpSetup','cfgExpN'].forEach(id=>{ if($(id)) $(id).onchange=()=>{ runSim(); calc(); }; });
+  /* 재계산은 invalidatePlan() 안에서 runSim() 이 이미 수행한다. 여기서는 계산기 탭만 갱신. */
+  ['cfgExpSetup','cfgExpN','cfgApi5l'].forEach(id=>{ if($(id)) $(id).addEventListener('change', calc); });
   runSim(); calc(); requestAnimationFrame(loop);
 }

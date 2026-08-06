@@ -547,8 +547,11 @@ function importOptPlan(rows) {
 
   const cnt = { M1:0, M2:0, M3:0, RB:0, BOTH:0 };
   Object.values(assign).forEach(m => cnt[m]++);
-  const unit = detail[0] && detail[0].en != null && detail[detail.length-1].en > 20000 ? 'sec' : 'min';
-  const spanRaw = Math.max(...detail.map(d => d.en == null ? 0 : d.en));
+  /* 초/분 단위 판정 — 종전에는 "정렬 후 마지막 행의 en" 하나만 봐서
+     ① 마지막 행 en 이 null 이면 무조건 'min', ② st 정렬이라 마지막 시작 ≠ 마지막 종료,
+     ③ makespan 이 20,000초(5.6h) 이하인 초 단위 파일을 분으로 오판했다. 전 행의 최댓값으로 판정한다. */
+  const spanRaw = detail.reduce((a, d) => Math.max(a, d.en == null ? 0 : d.en), 0);
+  const unit = spanRaw > 20000 ? 'sec' : 'min';
   return {
     src: 'IMPORT', assign, seq: uniq, detail, warn,
     nRows: detail.length, nOrders: uniq.length, count: cnt,
@@ -561,13 +564,22 @@ function importOptPlan(rows) {
 /* 오더 → spec */
 function specOf(o, cfg) {
   return {
-    no:o.no, od:o.od, t:o.t, L:o.L, qty:o.qty,
+    no:o.no,
+    /* 운영 모델은 계획서를 읽을 때 외경을 정수로 **절사**하고 두께를 소수 2자리로 반올림한다
+       (`data_loader.py:51-52` — `df["외경"].astype(int)` / `df["두께"].astype(float).round(2)`).
+       이 정규화를 거쳐야 OD 711.0 과 711.2 가 같은 다이(711)로 판정돼 헛된 다이 교체 90분이 사라지고,
+       RB 적격의 외경 정확일치(`d not in valid_rb_diameters`)도 정본과 같은 답을 낸다. */
+    od:Math.trunc(o.od), t:Math.round(o.t * 100) / 100, L:o.L, qty:o.qty,
     bottleneck: o.bottleneck || null,     // 병목 공정 작업장 (HT102 = 열처리 → RB 강제)
     rawL: o.rawL || 0,                    // 원재료 길이 [mm] — 더블 파이프 판정용
     /* 계획서에 재질 열이 없어 두께를 재질 대리변수로 쓴다 (세아제강 확인 항목).
        경계를 Gap Press 투입 조건(t > 25)과 일치시킨다 — 종전 t >= 25 는 t=25.0 제품에서 어긋났다. */
     grade: o.grade || (o.t > 25 ? 'high' : 'normal'),
-    api5l: o.api5l != null ? o.api5l : (o.qty >= 50),
+    /* 계획서에 API 5L 열이 없다. 종전에는 `qty >= 50` 을 무조건 대리변수로 썼는데,
+       그러면 다이어그램에서 조건이 서로 다른 D2(API 5L **또는** 50PCS↑ → 1차 U.T)와
+       D5(API 5L → Final U.T + 관단 X-ray)가 같은 조건이 되어 버린다.
+       기본값은 종전 동작을 유지하되(cfg.api5lProxy !== false), 끌 수 있게 노출한다. */
+    api5l: o.api5l != null ? o.api5l : ((cfg.api5lProxy !== false) && o.qty >= 50),
     markSpec:2, markEnd:2, defects:0, holdSec:cfg.holdSec, rtType:'450kV'
   };
 }
@@ -729,6 +741,7 @@ function simulate(orders, cfg) {
 
   const events = [];
   const pipeCount = {};
+  const setupWall = {};      // 노드별 벽시계 전환시간 (BOTH 이중 계상 방지)
   const orderSpan = {};
   const ctx = { rr: 0 };
   const bothOrders = new Set(), fixedOrders = new Set();
@@ -823,7 +836,11 @@ function simulate(orders, cfg) {
         if (nid === 'EXP' && !coUnits) cs = sameODBlockUntil(units, u, spec, cs, cfg);  // 동시 가동 시 동일 외경
         const CAL = (nid === 'RB') ? calRB : cal;
         let st = cs;
-        if (co > 0) { st = CAL.run(cs, co); seize.forEach(x => x.setup += co); }
+        if (co > 0) {
+          st = CAL.run(cs, co);
+          seize.forEach(x => x.setup += co);            // 호기별 점유(BOTH 는 2대가 각각 점유)
+          setupWall[nid] = (setupWall[nid] || 0) + co;  // 노드 벽시계 전환시간 (BOTH 도 1회)
+        }
         const en = CAL.run(st, dur);
         for (const x of seize) {
           x.free = en; x.busy += dur; x.jobs++; x.last = { od: spec.od, t: spec.t, L: spec.L };
@@ -873,7 +890,10 @@ function simulate(orders, cfg) {
     const avail = (n.id === 'RB') ? availRB : availPerUnit;
     const units = pools[n.id];
     const busy = units.reduce((a, u) => a + u.busy, 0);
-    const setup = units.reduce((a, u) => a + u.setup, 0);
+    const setupUnits = units.reduce((a, u) => a + u.setup, 0);
+    /* 노드 전환시간은 **벽시계 기준**으로 센다. BOTH 작업은 한 번의 셋업이 두 호기를 동시에 묶으므로
+       호기별 합계(setupUnits)로 세면 이중 계상된다. 호기별 가동률에는 점유 기준(u.setup)을 그대로 쓴다. */
+    const setup = (setupWall[n.id] != null) ? setupWall[n.id] : setupUnits;
     const jobs = units.reduce((a, u) => a + u.jobs, 0);
     if (!jobs) continue;
     const unitUtil = units.map(u => avail ? (u.busy + u.setup) / avail * 100 : 0);
@@ -882,13 +902,14 @@ function simulate(orders, cfg) {
       id: n.id, label: n.label, st: n.st, cap: units.length,
       jobs: pipeCount[n.id] || jobs,          // 처리 본수 = 실제 파이프 수
       unitJobs: jobs,                          // 호기별 합계 (BOTH 는 2대가 각각 계상)
-      busyH: busy / 3600, setupH: setup / 3600,
+      busyH: busy / 3600, setupH: setup / 3600, setupUnitsH: setupUnits / 3600,
       /* util = 설비 1대 기준 가동률의 최댓값. 대수로 나눈 평균은 호기 편중을 가려서 쓰지 않는다 */
       util: utilMax,
       utilAvg: avail ? (busy + setup) / (avail * units.length) * 100 : 0,
       shifts: (n.id === 'RB') ? (cfg.rbShifts || 1) : cfg.shifts,
       unitUtil, imbalance: utilMax - utilMin,
-      setupShare: (busy + setup) ? setup / (busy + setup) * 100 : 0,
+      /* 전환 비중은 **설비 점유 기준**(호기별 합계)으로 센다 — busy 도 호기별 합계이므로 단위를 맞춘다 */
+      setupShare: (busy + setupUnits) ? setupUnits / (busy + setupUnits) * 100 : 0,
       loadMaxH: Math.max(...units.map(u => (u.busy + u.setup) / 3600)),
       units: units.map((u, i) => ({ id: u.id, busyH: u.busy / 3600, setupH: u.setup / 3600,
                                     jobs: u.jobs, util: unitUtil[i] }))
@@ -905,8 +926,13 @@ function simulate(orders, cfg) {
     expUtil: expStat ? expStat.util : 0,
     expUtilAvg: expStat ? expStat.utilAvg : 0,
     expUnitUtil: expStat ? expStat.unitUtil.slice() : [],
-    /* 호기 부하 편차 = 전 호기(3호기 포함) 최대−최소 */
+    /* 호기 부하 편차 = 전 호기(3호기 포함) 최대−최소.
+       **가공 + 전환** 으로 센다. 종전에는 가공시간만 세서, 최적화 엔진이 실제로 최소화하는
+       목적항(evalSchedule 의 bal = setup+processing)과 정의가 달랐다. 그 결과 화면 두 곳이
+       같은 이름으로 다른 값을 말했고, "최적화로 편차가 줄었다" 는 결론도 뒤집힌다. */
     expBalanceH: expStat && expStat.units.length
+      ? Math.max(...expStat.units.map(u => u.busyH + u.setupH)) - Math.min(...expStat.units.map(u => u.busyH + u.setupH)) : 0,
+    expBalanceBusyH: expStat && expStat.units.length
       ? Math.max(...expStat.units.map(u => u.busyH)) - Math.min(...expStat.units.map(u => u.busyH)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
     rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
@@ -915,6 +941,6 @@ function simulate(orders, cfg) {
     throughputPerDay: Object.values(orderSpan).reduce((a, v) => a + v.qty, 0) / (horizon / 86400),
     seed: cfg.seed || 1, stochOn: !!ST.on,
   };
-  return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, kpi,
+  return { events, orderSpan, stats, t0, tEnd, horizonH: horizon / 3600, cal, calRB, kpi,
            rule: cfg.dispatchRule, eligRule: cfg.eligRule };
 }

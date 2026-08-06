@@ -15,8 +15,8 @@ const ROOT = path.join(__dirname, '..');
 const T = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/tables.json'), 'utf8'));
 const engine = fs.readFileSync(path.join(ROOT, 'src/engine.js'), 'utf8');
 
-const api = new Function('T', engine + '\nreturn { STD, pickRange, expanderStep, expanderN, odInch, toolInfo, expanderSetup, setExpanderNMode };')(T);
-const { STD, pickRange, expanderStep, expanderN, toolInfo, expanderSetup, setExpanderNMode } = api;
+const api = new Function('T', engine + '\nreturn { STD, pickRange, expanderStep, expanderN, odInch, toolInfo, expanderSetup, setExpanderNMode, changeoverSec };')(T);
+const { STD, pickRange, expanderStep, expanderN, toolInfo, expanderSetup, setExpanderNMode, changeoverSec } = api;
 
 let failed = 0;
 function expect(name, got, want, tol = 0.5) {
@@ -93,6 +93,33 @@ const oM1 = expanderN(A, 'M1'), oM2 = expanderN(A, 'M2');
 setExpanderNMode('excel');
 console.log(`  #1호기  엑셀 N=${eM1}  vs  운영모델 N=${oM1}   (${((oM1/eM1-1)*100).toFixed(0)}%)`);
 console.log(`  #2호기  엑셀 N=${eM2}  vs  운영모델 N=${oM2}   (${((oM2/eM2-1)*100).toFixed(0)}%)`);
+
+/* ---- E: 운영 모델 specs.py 원본 대조 (2026-08-06) ----------------------
+   ortools_final_v2_ep12 의 specs.py / job_creator.py 를 직접 실행해 뽑은 값입니다.
+   원본은 사내 자료라 저장소에 포함하지 않으므로, 대조 결과를 여기에 고정해 둡니다.
+   전량 대조 결과 — 다이 스펙 212행 전부 일치 · #1/#2호기 셋업 4,050쌍 전부 일치. */
+console.log('');
+console.log('specs.py 원본 대조 (고정 기대값)');
+setExpanderNMode('ortools');
+/* 두께 ±0.1mm isclose 규칙: t18.8 은 18.9t(580mm) 와 "일치" 로 판정되어야 한다.
+   이 규칙이 없으면 18.6~38.1t(340mm) 가 잡혀 N 이 25 → 39 회로 튄다. */
+expect('specs: OD914 t18.8 #2 step', expanderStep({ od:914, t:18.8, L:12802 }, 'M2').step, 580, 0);
+expect('specs: OD914 t18.8 #2 N',    expanderN   ({ od:914, t:18.8, L:12802 }, 'M2'),      24,  0);
+/* #1호기 N 은 분모 하한 없이 step−150 (step≤150 이면 step−100) 을 그대로 쓴다. */
+expect('specs: OD508 t9.5 #1 step',  expanderStep({ od:508, t:9.5, L:11500 }, 'M1').step,  170, 0);
+expect('specs: OD508 t9.5 #1 N',     expanderN   ({ od:508, t:9.5, L:11500 }, 'M1'),       575, 0);
+expect('specs: OD508 t9.5 #1 소요',  STD.Expander({ od:508, t:9.5, L:11500 }, 'M1').sec, 7127);
+/* die 식별자는 입력 외경 기준 — 같은 다이라도 OD 가 다르면 다이 교체 90분 */
+expect('specs: OD711.0→711.2 셋업',  expanderSetup({od:711.0,t:9.3},{od:711.2,t:8.85},'M1').sec, 5400);
+expect('specs: RB 234+(ceil(L/step)−2)×15',
+       STD.Expander({ od:914, t:9.3, L:12802 }, 'RB').sec, 234 + (Math.ceil(12802/700) - 2) * 15);
+
+/* ---- F: 전수 감사 회귀 방지 (2026-08-06) ------------------------------- */
+/* 면취기 룩업 "구멍" — 두께 8mm 미만에서 표의 마지막 행(64"·최악값)을 잡던 회귀 */
+expect('면취기 t7.0 (구간 밖)',  STD.EndFacing({ od:508, t:7.0,  L:12000 }).sec,
+                                 STD.EndFacing({ od:508, t:8.0,  L:12000 }).sec);
+/* Edge Miller 25T 경계는 t > 25 (Gap Press·재질 대리변수와 통일) */
+expect('EdgeMiller t25.0↔t24 전환 0', changeoverSec('EdgeMiller', {od:914,t:25.0,L:12802}, {od:914,t:24.0,L:12802}), 0);
 
 /* ---- 룩업 테이블 조회 ------------------------------------------------- */
 console.log('');
