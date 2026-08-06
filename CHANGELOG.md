@@ -70,22 +70,44 @@
   (기본 데이터 기준: EAT 32.4일 → OPT 29.5일 −9% · 전환 75.5h → 47.5h −37% · 편차 20.6h → 8.1h −61%)
 - 계획서를 올려도 탭이 튀지 않고 그 자리에서 2·3단계로 이어집니다
 
+### 3. 저장소 구조 정리
+
+산출물 HTML 을 **저장소 맨 위**로 올리고, 나머지를 **`source/` 하나**로 모았습니다.
+"실제로 필요한 건 HTML 하나인데 폴더가 너무 많다"는 요청 반영.
+
+```
+JCOE_Simulator.html   ← 받아서 열면 끝
+JCOE_3D.html
+README.md · CHANGELOG.md · 세아제강_확인요청.md
+source/  build.py · build3d.py · src/ · src3d/ · data/ · vendor/ · tools/ · testdata/
+```
+
+- `source/build.py` → `../JCOE_Simulator.html`, `source/build3d.py` → `../JCOE_3D.html` (출력 경로 변경)
+- `verify_ui.js` 가 `process.cwd()` 대신 `__dirname` 기준으로 HTML 을 찾도록 수정
+- `.gitignore` 의 `!testdata/*.xlsx` → `!source/testdata/*.xlsx`
+- **삭제** — `legacy/`(옛 산출물 HTML 5개 65MB + 실행 불가한 `gen_views.py`),
+  `docs/slide4·5.png`(PPT 캡처 — PPT 가 구버전으로 확정되어 오해 소지),
+  `.github/workflows/summary.yml`(이 프로젝트와 무관한 GitHub 기본 템플릿)
+
 ### 변경 파일
 
 ```
-src/flow.js              EXP_RULESET 순서·라벨 · EXP_RULESET_DEFAULT='ortools'
-src/engine.js            EXP_NMODE 기본값 'ortools'
-src/shell.html           pWiz 탭·패널 신설(랜딩 탭) · 위저드 CSS · 셀렉트 기본값/라벨 · pCfg ① 연결
-src/ui.js                initWizard/renderWiz/snapKpi/goTab · optKpiHtml 분리 · renderRuleDiff 재작성
+source/src/flow.js       EXP_RULESET 순서·라벨 · EXP_RULESET_DEFAULT='ortools'
+source/src/engine.js     EXP_NMODE 기본값 'ortools'
+source/src/shell.html    pWiz 탭·패널 신설(랜딩 탭) · 위저드 CSS · 셀렉트 기본값/라벨 · pCfg ① 연결
+source/src/ui.js         initWizard/renderWiz/snapKpi/goTab · optKpiHtml 분리 · renderRuleDiff 재작성
                          readCfg 기본값 · runSim 에서 renderWiz 호출
-tools/verify_formulas.js N 검증을 두 모드로 분리 (엑셀 21/25 · 운영모델 23/24)
-tools/verify_ui.js       위저드 원클릭 시나리오 추가
-docs/세아제강_확인요청.md   ①~④ 회신 완료 처리, 남은 항목 재정리
+source/build*.py         출력 경로를 저장소 루트로
+source/tools/verify_formulas.js  N 검증을 두 모드로 분리 (엑셀 21/25 · 운영모델 23/24)
+source/tools/verify_ui.js        위저드 원클릭 시나리오 추가 · 경로 기준 변경
+README.md                구조 재작성 + 「이 파일 하나만 받으세요」 안내
+세아제강_확인요청.md         ①~④ 회신 완료 처리, 남은 항목 재정리 (docs/ 에서 루트로 이동)
 ```
 
 ### 검증
 
-`node tools/verify_formulas.js` 전 항목 PASS · `node tools/verify_ui.js` 2D/3D 콘솔 오류 0.
+`node source/tools/verify_formulas.js` 전 항목 PASS · `node source/tools/verify_ui.js` 2D/3D 콘솔 오류 0.
+구조 변경 후 재빌드·재검증까지 완료했습니다.
 
 ---
 

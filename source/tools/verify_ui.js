@@ -1,11 +1,13 @@
 const { chromium } = require('playwright');
+const path = require('path');
+const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML 이 여기에 있습니다
 (async () => {
   const b = await chromium.launch({args:['--use-gl=swiftshader','--enable-unsafe-swiftshader']});
   let fail=0;
   // ---- 2D ----
   const p = await b.newPage({viewport:{width:1680,height:980}});
   const e2=[]; p.on('pageerror',e=>e2.push(''+e)); p.on('console',m=>{if(m.type()==='error')e2.push(m.text());});
-  await p.goto('file://'+process.cwd()+'/dist/JCOE_Simulator.html',{waitUntil:'load'});
+  await p.goto('file://'+path.join(ROOT,'JCOE_Simulator.html'),{waitUntil:'load'});
   await p.waitForTimeout(2200);
   for (const t of ['pWiz','pFlow','pCalc','pIO','pOpt','pGantt','pBn','pCfg']) {
     await p.click(`.tab[data-p="${t}"]`); await p.waitForTimeout(350);
@@ -57,7 +59,7 @@ const { chromium } = require('playwright');
   // ---- 3D ----
   const q = await b.newPage({viewport:{width:1680,height:960}});
   const e3=[]; q.on('pageerror',e=>e3.push(''+e)); q.on('console',m=>{if(m.type()==='error')e3.push(m.text());});
-  await q.goto('file://'+process.cwd()+'/dist/JCOE_3D.html',{waitUntil:'load'});
+  await q.goto('file://'+path.join(ROOT,'JCOE_3D.html'),{waitUntil:'load'});
   await q.waitForTimeout(3000);
   console.log('3D info:', await q.textContent('#simInfo'));
   await q.selectOption('#cfgRule','OPT'); await q.waitForTimeout(2000);

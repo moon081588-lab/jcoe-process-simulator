@@ -8,25 +8,25 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 확관 제약의 **정본은 확관 최적화 운영 모델 `specs.py`** 입니다 (2026-08-06 세아제강 확정).
 
 > ## ▶ 그냥 쓰실 분은 이 파일 하나만 받으세요
-> ### **[`dist/JCOE_Simulator.html`](dist/JCOE_Simulator.html)**
+> ### **[`JCOE_Simulator.html`](JCOE_Simulator.html)**  ← 저장소 맨 위, 첫 번째 파일
 > 다운로드해서 브라우저로 열면 끝입니다. 설치·서버·인터넷 연결 전부 필요 없습니다.
-> 나머지 폴더는 이 파일을 **만들어 내기 위한** 소스입니다 — 쓰는 데는 필요 없습니다.
+> `source/` 폴더는 이 파일을 **만들어 내기 위한** 소스입니다 — 쓰는 데는 필요 없습니다.
 
 | 파일 | 크기 | 내용 |
 |---|---|---|
-| [`dist/JCOE_Simulator.html`](dist/JCOE_Simulator.html) | ~823 KB | **2D (기본)** — 계획 실행 / 공정 흐름 / 표준시간 계산기 / In·Out 시간표 / 확관 배분·최적화 / 반복 실행 / 오더 간트 / 병목 분석 |
-| [`dist/JCOE_3D.html`](dist/JCOE_3D.html) | ~1.4 MB | 3D — 공정 흐름도 입체화 + 자재 적치·이동 애니메이션 (three.js 내장, 오프라인 동작) |
+| [`JCOE_Simulator.html`](JCOE_Simulator.html) | ~823 KB | **2D (기본)** — 계획 실행 / 공정 흐름 / 표준시간 계산기 / In·Out 시간표 / 확관 배분·최적화 / 반복 실행 / 오더 간트 / 병목 분석 |
+| [`JCOE_3D.html`](JCOE_3D.html) | ~1.4 MB | 3D — 공정 흐름도 입체화 + 자재 적치·이동 애니메이션 (three.js 내장, 오프라인 동작) |
 
 둘 다 **의존성 없는 단일 HTML 파일**입니다.
 
 - 변경 이력과 각 변경의 근거·수치 영향 → [`CHANGELOG.md`](CHANGELOG.md)
-- 아직 확인이 필요한 항목 → [`docs/세아제강_확인요청.md`](docs/세아제강_확인요청.md)
+- 아직 확인이 필요한 항목 → [`세아제강_확인요청.md`](세아제강_확인요청.md)
 
 ---
 
 ## 1. 화면 구성
 
-### 2D 시뮬레이터 (`dist/JCOE_Simulator.html`)
+### 2D 시뮬레이터 (`JCOE_Simulator.html`)
 
 | 탭 | 내용 |
 |---|---|
@@ -40,7 +40,7 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | **병목 분석** | 공정별 대당 가동률(호기별 포함)·전환 비중, **병목 유형 분류(가공/전환/제약)**, 병렬 설비 유닛별 부하 |
 | **계획서 · 설정** | 계획 기간(시작일·마감일·투입방식), 교대 수, Shift당 실가동 시간, 주말 비가동, RB 라인·Calibration Press 사용 여부 |
 
-### 3D 시뮬레이터 (`dist/JCOE_3D.html`)
+### 3D 시뮬레이터 (`JCOE_3D.html`)
 
 **3D 전용 레이아웃**입니다. 2D 도면을 그대로 투영하면 설비 간격이 좁아 어느 공정 앞에 물량이 걸렸는지
 읽기 어려워서, 흐름을 좌 → 우 로 통일하고 행(aisle)을 넉넉히 벌린 배치로 다시 설계했습니다.
@@ -318,11 +318,11 @@ PPT 기준(배분 규칙 대상 111본)에서는 배분 규칙이 손댈 물량�
 ### 검증
 
 ```bash
-node tools/verify_formulas.js     # 20개 산출식을 엑셀 손계산과 교차검증
-node tools/verify_ui.js           # 2D·3D 브라우저 렌더링 · 탭 전환 · 필터 · CSV (playwright 필요)
+node source/tools/verify_formulas.js   # 20개 산출식을 엑셀 손계산과 교차검증
+node source/tools/verify_ui.js         # 2D·3D 브라우저 렌더링 · 탭 전환 · 위저드 원클릭 · 필터 · CSV (playwright 필요)
 ```
 
-`tools/verify_formulas.js` 는 전 항목 PASS 를 확인한 상태입니다.
+`source/tools/verify_formulas.js` 는 전 항목 PASS 를 확인한 상태입니다.
 
 ---
 
@@ -341,80 +341,82 @@ node tools/verify_ui.js           # 2D·3D 브라우저 렌더링 · 탭 전환 
 
 ## 6. 빌드
 
-산출물(`dist/`)은 커밋되어 있으므로 **그냥 열어서 쓰면 됩니다.** 소스를 고쳤을 때만 빌드하세요.
+`source/` 를 고친 뒤 빌드하면 **저장소 루트의 HTML 이 갱신**됩니다.
 
 ```bash
 # 2D
-python3 build.py
+python3 source/build.py       # → ./JCOE_Simulator.html
 
-# 3D (three.js 를 vendor/ 에 먼저 받아야 함 — 이미 커밋되어 있으면 생략)
-python3 tools/fetch_three.py
-python3 build3d.py
+# 3D (three.js 를 source/vendor/ 에 먼저 받아야 함 — 이미 커밋되어 있으면 생략)
+python3 source/tools/fetch_three.py
+python3 source/build3d.py     # → ./JCOE_3D.html
+```
+
+검증:
+
+```bash
+node source/tools/verify_formulas.js    # 산출식 교차검증 (node 만 있으면 됨)
+npm i playwright && node source/tools/verify_ui.js   # 2D·3D 브라우저 통합 검증
 ```
 
 데이터를 원자료에서 다시 만들려면:
 
 ```bash
 pip install openpyxl
-python3 tools/extract_tables.py "★JCOE 공정 생산 표준 시간 분석 - 20251218 (POSTECH 송부).xlsx"
+python3 source/tools/extract_tables.py "★JCOE 공정 생산 표준 시간 분석 - 20251218 (POSTECH 송부).xlsx"
 ```
 
-`data/orders.json` 은 이미 추출이 끝나 커밋되어 있습니다. 다시 뽑아야 한다면
-`tools/extract_orders.py` 에 옛 산출물 HTML(`JCOE_view2.html`) 경로를 넘기면 되는데,
-해당 파일은 저장소 정리 때 제거했으므로 필요하면 커밋 이력에서 꺼내 쓰십시오.
-평소에는 **「계획 실행」 탭에서 조관계획서 엑셀을 올리는 쪽**이 정상 경로입니다.
+`source/data/orders.json` 은 이미 추출이 끝나 커밋되어 있습니다. 평소에는
+**「계획 실행」 탭에서 조관계획서 엑셀을 올리는 쪽**이 정상 경로입니다.
 
 ---
 
 ## 7. 디렉터리 구조
 
-**쓰기만 할 거라면 `dist/` 하나면 됩니다.** 나머지는 `dist/` 를 빌드하기 위한 소스입니다.
+**쓰기만 할 거라면 루트의 HTML 하나면 됩니다.** `source/` 는 그 HTML 을 빌드하기 위한 것 전부입니다.
 
 ```
-├── dist/                      ★ 최종 산출물 — 이것만 열면 됨
-│   ├── JCOE_Simulator.html      2D 시뮬레이터 (단일 파일, 823KB)
-│   └── JCOE_3D.html             3D 시뮬레이터 (three.js 내장, 단일 파일)
-│
-├── build.py                   2D 빌드  (src/* + data/* + vendor/* → dist/JCOE_Simulator.html)
-├── build3d.py                 3D 빌드  (src3d/* + … → dist/JCOE_3D.html)
-│
-├── src/                       2D 소스 — 여기를 고치고 build.py 를 돌립니다
-│   ├── engine.js                표준시간 계산 엔진 (엑셀 산출식 19종 + 확관 공구/셋업/N)
-│   ├── flow.js                  공정 노드 그래프 · 라우팅 · 확관 제약(EXP_RULESET) · 교대 캘린더 · 시뮬레이터 · 최적화 엔진
-│   ├── ui.js                    2D UI (계획 실행 위저드 · Canvas 렌더러 · 계산기 · In/Out · 최적화 · 간트 · 병목)
-│   ├── planload.js              조관계획서 엑셀 로더 (시트·헤더·열 자동 인식, 단위 추정, 검증 UI)
-│   └── shell.html               2D HTML/CSS 셸 (빌드 시 플레이스홀더 치환)
-├── src3d/                     3D 소스
-│   ├── scene3d.js               three.js 씬 · 설비 형상 · 자재 인스턴싱 · 카메라 컨트롤
-│   └── shell3d.html             3D HTML/CSS 셸
-│
+JCOE_Simulator.html         ★ 2D 시뮬레이터 — 받아서 브라우저로 열면 끝 (823KB)
+JCOE_3D.html                ★ 3D 시뮬레이터 (1.4MB)
+README.md                   이 문서
+CHANGELOG.md                변경 이력 — 각 변경의 근거·수치 영향
+세아제강_확인요청.md            회신 완료 항목 + 남은 확인 요청 (세아제강 송부용)
+
+source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기만 할 거면 볼 일 없음
+├── build.py                    2D 빌드 → ../JCOE_Simulator.html
+├── build3d.py                  3D 빌드 → ../JCOE_3D.html
+├── src/                    2D 소스 — 여기를 고치고 build.py 를 돌립니다
+│   ├── engine.js               표준시간 계산 엔진 (엑셀 산출식 19종 + 확관 공구/셋업/N)
+│   ├── flow.js                 공정 노드 그래프 · 라우팅 · 확관 제약(EXP_RULESET) · 교대 캘린더 · 시뮬레이터 · 최적화 엔진
+│   ├── ui.js                   2D UI (계획 실행 위저드 · Canvas 렌더러 · 계산기 · In/Out · 최적화 · 간트 · 병목)
+│   ├── planload.js             조관계획서 엑셀 로더 (시트·헤더·열 자동 인식, 단위 추정, 검증 UI)
+│   └── shell.html              2D HTML/CSS 셸 (빌드 시 플레이스홀더 치환)
+├── src3d/                  3D 소스
+│   ├── scene3d.js              three.js 씬 · 설비 형상 · 자재 인스턴싱 · 카메라 컨트롤
+│   └── shell3d.html            3D HTML/CSS 셸
 ├── data/
-│   ├── tables.json              엑셀 룩업 테이블 + 호기별 확관 다이 스펙(dieSpec M1/M2/RB)
-│   └── orders.json              오더 사양 58건 (외경·두께·길이·수량·계획 투입일)
-├── vendor/                    빌드 시 인라인되는 외부 라이브러리
-│   ├── three.min.js             three.js r160.1 (MIT)
-│   ├── xlsx.full.min.js         SheetJS 0.18.5 (Apache-2.0) — 계획서 엑셀 파싱
+│   ├── tables.json             엑셀 룩업 테이블 + 호기별 확관 다이 스펙(dieSpec M1/M2/RB)
+│   └── orders.json             오더 사양 58건 (외경·두께·길이·수량·계획 투입일)
+├── vendor/                 빌드 시 HTML 안으로 인라인되는 외부 라이브러리
+│   ├── three.min.js            three.js r160.1 (MIT)
+│   ├── xlsx.full.min.js        SheetJS 0.18.5 (Apache-2.0) — 계획서 엑셀 파싱
 │   ├── three-LICENSE
 │   └── xlsx-LICENSE
-│
 ├── tools/
-│   ├── verify_formulas.js       산출식 교차검증 (node)
-│   ├── verify_ui.js             브라우저 통합 검증 (playwright)
-│   ├── runsim.js                Node 에서 시뮬레이터를 불러오는 헬퍼
-│   ├── extract_tables.py        엑셀 → data/tables.json
-│   ├── extract_orders.py        기존 HTML payload → data/orders.json
-│   ├── fetch_three.py           npm 레지스트리에서 three.js 빌드 파일 받기
-│   └── make_test_plans.py       계획서 로더 테스트용 샘플 생성
-├── testdata/                  계획서 로더 테스트용 샘플 (형식 변형 5종)
-│
-├── CHANGELOG.md               변경 이력 — 각 변경의 근거·수치 영향
-└── docs/
-    └── 세아제강_확인요청.md      회신 완료 항목 + 남은 확인 요청
+│   ├── verify_formulas.js      산출식 교차검증 (node)
+│   ├── verify_ui.js            브라우저 통합 검증 (playwright)
+│   ├── runsim.js               Node 에서 시뮬레이터를 불러오는 헬퍼
+│   ├── extract_tables.py       엑셀 → data/tables.json
+│   ├── extract_orders.py       기존 HTML payload → data/orders.json
+│   ├── fetch_three.py          npm 레지스트리에서 three.js 빌드 파일 받기
+│   └── make_test_plans.py      계획서 로더 테스트용 샘플 생성
+└── testdata/               계획서 로더 테스트용 샘플 (형식 변형 5종)
 ```
 
-> **정리 이력 (2026-08-06)** — `legacy/`(옛 산출물 HTML 5개 · 65MB, 실행 불가한 `gen_views.py`),
+> **구조 변경 (2026-08-06)** — 산출물 HTML 을 저장소 맨 위로 올리고, 나머지를 `source/` 하나로 모았습니다.
+> 함께 삭제한 것 — `legacy/`(옛 산출물 HTML 5개 · 65MB, 실행 불가한 `gen_views.py`),
 > `docs/slide4·5.png`(PPT 캡처 — PPT 가 구버전으로 확정되어 오히려 오해를 부름),
-> `.github/workflows/summary.yml`(이 프로젝트와 무관한 GitHub 기본 템플릿)을 삭제했습니다.
+> `.github/workflows/summary.yml`(이 프로젝트와 무관한 GitHub 기본 템플릿).
 
 ---
 
