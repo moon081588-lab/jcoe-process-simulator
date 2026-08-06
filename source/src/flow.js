@@ -572,8 +572,8 @@ function specOf(o, cfg) {
     od:Math.trunc(o.od), t:Math.round(o.t * 100) / 100, L:o.L, qty:o.qty,
     bottleneck: o.bottleneck || null,     // 병목 공정 작업장 (HT102 = 열처리 → RB 강제)
     rawL: o.rawL || 0,                    // 원재료 길이 [mm] — 더블 파이프 판정용
-    /* 계획서에 재질 열이 없어 두께를 재질 대리변수로 쓴다 (세아제강 확인 항목).
-       경계를 Gap Press 투입 조건(t > 25)과 일치시킨다 — 종전 t >= 25 는 t=25.0 제품에서 어긋났다. */
+    /* 재질은 계획서 `재질` 열에서 읽는다(API-X70L2 → 고강도). 열이 없을 때만 두께를 대리변수로 쓰고,
+       경계는 Gap Press 투입 조건(t > 25)과 맞춘다. */
     grade: o.grade || (o.t > 25 ? 'high' : 'normal'),
     /* 계획서에 API 5L 열이 없다. 종전에는 `qty >= 50` 을 무조건 대리변수로 썼는데,
        그러면 다이어그램에서 조건이 서로 다른 D2(API 5L **또는** 50PCS↑ → 1차 U.T)와
