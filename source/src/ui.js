@@ -40,9 +40,9 @@ function readCfg() {
     api5lProxy: (($('cfgApi5l') || {}).value || 'proxy') !== 'none',
     dispatchRule: ($('optRule')||{}).value || 'EAT',
     sameODConcurrency: $('optSameOD') ? $('optSameOD').checked : true,
-    useM3: $('optM3') ? $('optM3').checked : false,
+    useM3: false,   /* 확관 3호기 = R/B 라인. 별도 설비가 아니다 — 2026-08-06 세아제강 확정 */
     expRuleSet: ($('optRuleSet')||{}).value || 'ortools',
-    rbMode: ($('optRbMode')||{}).value || 'capable',
+    rbMode: ($('optRbMode')||{}).value || 'force',
     rbShifts: +(($('optRbShift')||{}).value || 1),
     applyOptSeq: $('optApplySeq') ? $('optApplySeq').checked : true,
     plan: (($('optRule')||{}).value === 'IMPORT') ? IMP_PLAN : PLAN,
@@ -644,7 +644,6 @@ function initOptTab(){
   $('optRule').innerHTML=Object.entries(DISPATCH_RULES).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
   const upd=()=>{ $('ruleDesc').textContent=DISPATCH_RULES[$('optRule').value].desc; };
   $('optSameOD').onchange=invalidatePlan;
-  $('optM3').onchange=invalidatePlan;
   if($('cfgRB')) $('cfgRB').onchange=invalidatePlan;
   /* 확관 N·셋업 산출식은 확관 가공시간·전환시간을 직접 바꾸므로 최적화 해도 함께 무효화해야 한다.
      종전에는 runSim() 만 돌아서, ③ 패널·위저드 3단계가 옛 해의 Cmax·전환시간을 계속 표시했다. */
@@ -676,7 +675,7 @@ function renderEligWarn(){
      계획서에 두 열이 없으면 조용히 RB 물량 0 이 되므로 알려 준다. */
   const rbWarn = (() => {
     const cfg = CFG || readCfg();
-    if ((cfg.rbMode || 'capable') !== 'force') return '';
+    if ((cfg.rbMode || 'force') !== 'force') return '';
     const hasBn = ORDERS.some(o => o.bottleneck), hasRaw = ORDERS.some(o => o.rawL > 0);
     if (hasBn || hasRaw) return '';
     return `<div class="warn"><b>RB 라인 투입이 「Force_RB 만」 인데 판정 근거가 없습니다.</b><br>

@@ -315,7 +315,7 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
     <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:130px">설비</th><th>공정 제약 (PPT 제약표 원문 — 구버전)</th><th style="width:250px">현재 적용 기준</th></tr></thead><tbody>
       <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td><td id="rmR1">L ≤ 14.021m 단독 가능</td></tr>
       <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td><td id="rmR2">L ≤ 12.8384m 단독 가능</td></tr>
-      <tr><td>확관 3호기</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입</td><td id="rmR3">= RB 라인 (열처리 HT102 · 배척 제품)</td></tr>
+      <tr><td>확관 3호기<br><span style="font-size:10px;color:#8b949e">= R/B 라인 (EP102)</span></td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입<br><span style="font-size:10.5px;color:#8b949e">“처음에 설명을 쉽게 드리려고 3호기라고 말씀드렸다” — 2026-08-06 세아제강. 별도 설비가 아니라 R/B 라인입니다.</span></td><td id="rmR3">= R/B 라인 (열처리 HT102 · 배척 제품)</td></tr>
     </tbody></table></div>
     <div class="ok" style="margin-bottom:12px" id="eligOk"></div>
     <div class="toolbar">
@@ -323,15 +323,14 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
         <option value="ortools" selected>확관 최적화 운영 모델 specs.py (정본 · L2≤12.8384m)</option>
         <option value="ppt">공정 다이어그램 · 제약표 (구버전 · L2≤12.8m)</option>
       </select></div>
-      <div class="f" style="min-width:230px"><label>RB 라인 투입</label><select id="optRbMode" style="width:100%">
-        <option value="capable" selected>적격 제품 전량 RB</option>
-        <option value="force">Force_RB 만 (열처리·배척)</option>
-        <option value="off">RB 미사용</option>
+      <div class="f" style="min-width:250px"><label>R/B 라인 투입</label><select id="optRbMode" style="width:100%">
+        <option value="force" selected>열처리·배척 제품만 (현장 기본)</option>
+        <option value="capable">적격 제품 전량 (증산 시나리오)</option>
+        <option value="off">R/B 미사용</option>
       </select></div>
       <div class="f"><label>RB 근무조</label><select id="optRbShift">
         <option value="1" selected>1교대(고정)</option><option value="2">2교대</option><option value="3">3교대</option></select></div>
       <div class="f ck"><input type="checkbox" id="optSameOD" checked><label for="optSameOD">동시 작업 시 동일 외경 제품만 (1호기 제약)</label></div>
-      <div class="f ck"><input type="checkbox" id="optM3"><label for="optM3">확관 3호기를 별도 설비로 (기본: RB 라인 = 3호기)</label></div>
       <div class="hint">바꾸면 즉시 재시뮬레이션합니다.</div>
     </div>
     <div id="ruleDiff"></div>
@@ -469,6 +468,9 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
     <div id="cfgBar">
       <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1교대</option><option value="2" selected>2교대</option><option value="3">3교대</option></select></div>
       <div class="f"><label>실가동 h/Shift</label><input type="number" id="cfgNetH" value="7.5" step="0.5"></div>
+      <div class="hint" style="max-width:420px">교대 시간대는 세아제강 실제 시간표를 씁니다 —
+        1근 07:00–11:30 · 12:00–15:00 / 2근 15:00–18:00 · 18:30–23:00 / 3근 23:00–02:45 · 03:15–07:00.
+        각 7.5h. <b>근무 형태가 월마다 달라 2근 고정으로 봅니다.</b></div>
       <div class="f"><label>수압 유지(초)</label><input type="number" id="cfgHold" value="60"></div>
       <div class="f ck"><input type="checkbox" id="cfgWeekend"><label for="cfgWeekend">주말 비가동</label></div>
       <div class="f ck"><input type="checkbox" id="cfgCO" checked><label for="cfgCO">설비 전환시간 반영</label></div>

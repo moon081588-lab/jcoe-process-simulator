@@ -14,9 +14,12 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   }
   await p.click('.tab[data-p="pOpt"]'); await p.waitForTimeout(400);
   console.log('제약 요약:', (await p.textContent('#eligWarn')).trim().replace(/\s+/g,' ').slice(0,150));
-  await p.check('#optM3'); await p.waitForTimeout(900);
-  console.log('  3호기 포함:', await p.evaluate(()=>SIM.stats.find(x=>x.id==='EXP').units.map(u=>u.jobs).join('/')));
-  await p.uncheck('#optM3'); await p.waitForTimeout(900);
+  // 확관 3호기 = R/B 라인으로 확정되어 별도 설비 토글은 제거됨 (2026-08-06)
+  await p.selectOption('#optRbMode','capable'); await p.waitForTimeout(1200);
+  console.log('  R/B 적격 전량 투입:', await p.evaluate(()=>{
+    const g=id=>{const x=SIM.stats.find(y=>y.id===id);return x?x.jobs:0;};
+    return `RB ${g('RB')}본 · R/B면취 ${g('RBEF')} · R/B RT ${g('RBRT')} · 배척포장 ${g('PACKRB')} · JCOE포장 ${g('PACK')}`; }));
+  await p.selectOption('#optRbMode','force'); await p.waitForTimeout(1200);
   await p.uncheck('#optSameOD'); await p.waitForTimeout(900);
   console.log('  동일외경 제약 해제 확관전환:', await p.evaluate(()=>SIM.kpi.expSetupH.toFixed(1)+'h'));
   await p.check('#optSameOD'); await p.waitForTimeout(900);
