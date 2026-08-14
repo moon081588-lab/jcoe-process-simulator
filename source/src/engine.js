@@ -41,22 +41,27 @@ const ceil = Math.ceil, floor = Math.floor;
 const STD = {};
 
 /* 1~2. Edge Miller (면취) */
-STD.EdgeMiller = (s, line) => {
+/* 엑셀 비고 「※ 첫 본 생산 시: +1분 50초」 — 오더의 첫 본에만 110초를 더한다.
+   seqInOrder 는 flow.js 가 넘기는 오더 안 본 번호(1부터). 종전에는 이 항이 빠져 있었다. */
+const EM_FIRST_PIECE_SEC = 110;
+STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
   const L = s.L, Lm = L / 1000;
   const feed = pickRange(T.emFeed, Lm);
   const base = line === '18M' ? 348 : 283;
+  const first = (seqInOrder === 1) ? EM_FIRST_PIECE_SEC : 0;
   if (s.grade === 'hiMn') {
     const b = line === '18M' ? 2163 : 1810;
-    const sec = b + L * 0.06 + feed / 215.6;
-    return { sec, expr: `${b} + L×0.06 + feed/215.6  (고망간)`,
-      terms: [['기본(고망간)', b], ['길이항 L×0.06', L * 0.06], ['피딩기 feed/215.6', feed / 215.6]] };
+    const sec = b + L * 0.06 + feed / 215.6 + first;
+    return { sec, expr: `${b} + L×0.06 + feed/215.6  (고망간)${first ? ' + 110(첫 본)' : ''}`,
+      terms: [['기본(고망간)', b], ['길이항 L×0.06', L * 0.06], ['피딩기 feed/215.6', feed / 215.6]]
+        .concat(first ? [['첫 본 생산 +1분50초', first]] : []) };
   }
   const row = T.emSpeed.find(r => s.t >= r.tmin && s.t <= r.tmax) || T.emSpeed[1];
   const v = s.grade === 'high' ? row.high : row.normal;   // 고속 Setting [m/min]
-  const sec = base - 123 / v + feed / 215.6 + L * (0.06 / v - 0.0016);
-  return { sec, expr: `${base} − 123/v + feed/215.6 + L×(0.06/v − 0.0016), v=${v}m/min, feed=${feed}mm`,
+  const sec = base - 123 / v + feed / 215.6 + L * (0.06 / v - 0.0016) + first;
+  return { sec, expr: `${base} − 123/v + feed/215.6 + L×(0.06/v − 0.0016), v=${v}m/min, feed=${feed}mm${first ? ' + 110(첫 본)' : ''}`,
     terms: [['기본', base], ['−123/v', -123 / v], ['피딩기 feed/215.6', feed / 215.6],
-            ['길이항', L * (0.06 / v - 0.0016)]] };
+            ['길이항', L * (0.06 / v - 0.0016)]].concat(first ? [['첫 본 생산 +1분50초', first]] : []) };
 };
 
 /* 3~4. Pre Bender */
@@ -85,10 +90,18 @@ STD.PressBender = (s, line) => {
 STD.GapPress = (s) => {
   const Lm = s.L / 1000;
   const seg = ceil(Lm / 6);
-  const hi = s.grade === 'high';          // X70 이상인 경우 [ ]×2 추가 적용
-  const bracket = seg * (45 + 20) * 2 * 2 * (hi ? 2 : 1);
+  /* 엑셀 원문 (row 14)
+       464s − (제품 Spec 길이/0.3) + [{('제품 Spec 길이/6M' 올림)x(45+20)} x2] x2
+     비고 : ※ X70 이상인 경우: [ ] x2 적용
+     → 대괄호 [ ] 안이 {ceil(L/6)×65}×2 이고, **대괄호 밖의 ×2 가 X70 이상 조건**이다.
+       종전 코드는 밖의 ×2 를 무조건 곱한 뒤 X70 에 또 ×2 를 곱해 **일반강 2배 · X70 4배**로
+       계상하고 있었다. 게다가 flow.js 의 Gap Press 투입 조건(t>25)과 grade 대리변수 기준(t>25)이
+       같아서 Gap Press 를 지나는 제품은 **전부 high** 가 되어, 실질적으로 늘 4배였다.
+       (2026-08-14 전수 감사) */
+  const hi = s.grade === 'high';          // X70 이상 → 대괄호 밖 ×2
+  const bracket = seg * (45 + 20) * 2 * (hi ? 2 : 1);
   const sec = 464 - Lm / 0.3 + bracket;
-  return { sec, expr: `464 − L[m]/0.3 + [ceil(L/6)×65×2]×2${hi ? '×2(X70↑)' : ''}, ceil(L/6)=${seg}`,
+  return { sec, expr: `464 − L[m]/0.3 + [ceil(L/6)×65×2]${hi ? '×2(X70↑)' : ''}, ceil(L/6)=${seg}`,
     terms: [['기본', 464], ['길이 보정 −L/0.3', -Lm / 0.3], [`프레스 ${seg}구간`, bracket]] };
 };
 
@@ -326,17 +339,21 @@ STD.Expander = (s, machine, cfg) => {
        비고의 두 문장 —
          「※ 옥외 열처리 제품인 경우, 15초 제외
            → 옥외 열처리 제품이 아닌 경우, 상수 234초 고정」
-       은 (N−2)×15 항을 없애는 뜻으로 읽으면 두 문장이 같은 말이 되어 모순입니다.
-       **기본 상수에서 15초를 뺀다**로 읽어야 두 문장이 모두 성립합니다 →
-         옥외 열처리 제품    기본 219s (= 234 − 15)
-         그 외              기본 234s 고정
-       cfg.rbHeatRule = 'none' 으로 두면 전 제품 234s 로 되돌립니다. */
+       를 **문자 그대로** 읽으면:
+         옥외 열처리 제품  →  「15초 제외」 = (N−2)×15 항을 빼고  **234s 고정**
+         그 외            →  상수는 234 고정 + (N−2)×15 항 적용
+       (열처리 제품은 확관 후 열처리로 치수가 다시 변하므로 확관을 최소화한다는 해석)
+       2026-08-14 초안에서 「기본 상수 234−15=219」로 읽었으나, 엑셀에 219 라는 수는
+       어디에도 없어 지어낸 값이 됩니다. 문자 그대로의 해석으로 되돌렸습니다.
+       cfg.rbHeatRule = 'none' 으로 두면 전 제품에 (N−2)×15 를 적용합니다. */
     const heat = !!s.heat && (!cfg || cfg.rbHeatRule !== 'none');
-    const base = heat ? 219 : 234;
-    const add = Math.max(n - 2, 0) * 15;
-    const sec = base + add;
-    return { sec, expr: `R/B: ${base} + (ROUNDUP(L/StepSize)−2)×15,  N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−90)${heat ? ' · 옥외 열처리(−15s)' : ''}`,
-      terms: [[heat ? '기본 (열처리 234−15)' : '기본', base], [`확관 ${n}회 (−2)×15s`, add]] };
+    const add = heat ? 0 : Math.max(n - 2, 0) * 15;
+    const sec = 234 + add;
+    return { sec,
+      expr: heat
+        ? `R/B: 234 고정 (옥외 열처리 → 「15초 제외」),  참고 N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−90)`
+        : `R/B: 234 + (ROUNDUP(L/StepSize)−2)×15,  N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−90)`,
+      terms: [['기본', 234]].concat(heat ? [] : [[`확관 ${n}회 (−2)×15s`, add]]) };
   }
   if (machine === 'M1') {
     const sec = 177 + n * 12 + (s.L + 3500) / 300;
@@ -378,7 +395,10 @@ STD.HydroTest = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
   let fill = pickInch(T.hydroFill, inch);
   if (s.L / 1000 >= 17) fill += 20;                       // 18미터일 시 20초씩 추가
-  const big = inch >= 36;
+  /* 「36" 이상」 판정은 **공칭 인치**로 한다.
+     종전에는 짝수 스냅(round(inch/2)×2)한 값을 썼기 때문에 OD889(정확히 35")가 36 으로 올라가
+     2차 압빼기·에어 벤트 상수가 300/180 으로 잘못 바뀌었다(+180s). (2026-08-14 전수 감사) */
+  const big = Math.round(odInch(s.od)) >= 36;
   const de = big ? T.hydroConst.deflate2nd_36up : T.hydroConst.deflate2nd;
   const av = big ? T.hydroConst.airVent_36up : T.hydroConst.airVent;
   const hold = s.holdSec != null ? s.holdSec : 60;        // MES 제작시방서 조회값

@@ -51,6 +51,7 @@ function readCfg() {
     dateMode: ($('cfgDateMode')||{}).value || 'sheet',
     dueAnalysis: $('cfgDueAnalysis') ? $('cfgDueAnalysis').checked : false,
     stdCalib: CALIB,
+    planWarn: PLAN_WARN,
     rbPost: ($('cfgRbPost')||{}).value || 'shared',
     seqGapH: numIn('cfgSeqGap', 6, 0.5, 240),
     shifts: (($('cfgShifts')||{}).value === '2E') ? '2E' : (+(($('cfgShifts')||{}).value) || 2),
@@ -78,7 +79,9 @@ function readStoch(){
     repairSec:+$('stRep').value*60, reweldSec:+$('stRw').value*60, expIssueSec:+$('stEp').value*60,
   };
 }
+let PLAN_WARN = [];
 function runSim() {
+  PLAN_WARN = [];
   CFG = readCfg();
   const t = performance.now();
   SIM = simulate(ORDERS, CFG);
@@ -89,7 +92,11 @@ function runSim() {
     + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`
     + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
     + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '')
-    + (SIM.kpi.deadline ? ` · 마감 ${CFG.deadline} 달성률 ${pct(SIM.kpi.doneInPeriod, SIM.kpi.doneInPeriod+SIM.kpi.overflow)}` : '');
+    + (SIM.kpi.deadline ? ` · 마감 ${CFG.deadline} 달성률 ${pct(SIM.kpi.doneInPeriod, SIM.kpi.doneInPeriod+SIM.kpi.overflow)}` : '')
+    + (CALIB ? ` · 실적 보정 ON` : '')
+    /* 라우트 상한에 걸려 완주하지 못한 본수 — 종전에는 조용히 사라졌다 */
+    + (SIM.kpi.routeAborted ? ` · ⚠ 미완주 ${SIM.kpi.routeAborted}본` : '')
+    + (PLAN_WARN.length ? ` · ⚠ 스케줄 경고 ${PLAN_WARN.length}건` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();

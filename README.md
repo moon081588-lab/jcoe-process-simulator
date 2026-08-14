@@ -380,6 +380,7 @@ s.t. ② Σ(m∈ℳ) z(j,m) = 1                      ∀j ∈ 𝒥        모든
 
 ```bash
 node source/tools/verify_formulas.js   # 산출식·공구·셋업·N·폴백을 손계산과 교차검증
+node source/tools/verify_audit.js      # 2026-08-14 전수 감사 회귀 방지 34항목
 node source/tools/verify_prodlog.js <machine_prod_log.csv>   # 실적 로그 파서 · 표준시간 대조
 node source/tools/verify_ui.js         # 2D·3D 브라우저 렌더링 · 탭 전환 · 위저드 원클릭 · 필터 · CSV (playwright 필요)
 python3 source/tools/extract_images.py <xlsx> -o source/data/evidence   # 엑셀에 이미지로만 든 내용 추출

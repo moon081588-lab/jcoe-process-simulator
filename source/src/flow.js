@@ -59,6 +59,8 @@ const NODES = [
 const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
 /* R/B 라인 소속 노드 — 별도 근무조 캘린더를 쓴다 */
 const RB_LINE = new Set(['RB','RBEF','RBRT','PACKRB']);
+/* 한 본이 지날 수 있는 최대 노드 수 (재작업 루프 포함). 초과분은 routeAborted 로 집계한다. */
+const ROUTE_GUARD = 300;
 
 /* 연결선: [from, to, label, routing]  routing: 'h'|'v'|'hv'|'vh' */
 const EDGES = [
@@ -105,7 +107,12 @@ function routeOf(s, cfg) {
        기본값 'shared' — 2026-08-14 세아제강 회신대로 본류의 수압(HY106)·2차 U.T(UT110)를 거친다.
        'dedicated' — 2026-08-06 설비 화면 기준(수압·2차 U.T 없음) 구 동작. */
     r.push('RBEF');
-    if ((cfg.rbPost || 'shared') !== 'dedicated') r.push('HYD', 'FUT');
+    if ((cfg.rbPost || 'shared') !== 'dedicated') {
+      /* 「원래의 방식 그대로」 = 본류와 같은 규칙. 본류에서 수압은 무조건, 2차 U.T 는 D5(API 5L) 조건이다.
+         종전에는 2차 U.T 를 무조건 태워 비 API 5L 제품이 본류보다 검사를 더 받았다. (2026-08-14 전수 감사) */
+      r.push('HYD');
+      if (s.api5l || cfg.processingFinalUT) r.push('FUT');
+    }
     r.push('RBRT', 'PACKRB');
   } else {
     if (cfg.useCP) r.push('CP');                     // D4
@@ -342,7 +349,14 @@ function rbDiameters() {
 const RB_EXCLUDED_INCH = new Set([46]);
 function rbCapable(s, cfg) {
   const R = expRules(cfg);
-  if ((s.L / 1000) > 12.8) return false;
+  /* 길이 상한 — 「12.8M 이하」를 **12.8384m** 로 읽는다.
+     #2호기도 원문이 「12.8m 이상 불가」였는데 2026-08-06 회신으로 12.8384m 로 확정됐고
+     (12.802m 제품을 넣기 위한 것), R/B 는 같은 확관기(3호기)이므로 같은 기준을 쓴다.
+     종전처럼 12.8 로 잘라 두면 공장 주력 길이인 **12.802m 제품(1,446본 중 960본 = 66%)이
+     전부 R/B 부적격**이 되어, 열처리·배척 제품을 R/B 로 강제할 수 없었다. (2026-08-14 전수 감사)
+     구 동작은 cfg.rbLenLimit = 12.8 로 되돌릴 수 있다. */
+  const rbMaxM = (cfg && cfg.rbLenLimit) || R.L2 || 12.8384;
+  if ((s.L / 1000) > rbMaxM + 1e-9) return false;
   if (RB_EXCLUDED_INCH.has(Math.round(odInch(s.od)))) return false;
   if (R.rb === 'ortools') {
     if (s.t < 9 || s.t > 25.4) return false;
@@ -353,6 +367,9 @@ function rbCapable(s, cfg) {
 }
 function forceRB(s, cfg) {
   if (!rbCapable(s, cfg)) return false;
+  /* 열처리 판정 — 병목공정 HT102 **또는** 자재기호 C2 (specOf 가 s.heat 으로 넘긴다).
+     종전에는 HT102 만 봤기 때문에 계획서·실적 로그의 C2 제품이 R/B 로 가지 않았다. */
+  if (s.heat) return true;
   if (String(s.bottleneck || '').trim().toUpperCase() === 'HT102') return true;   // 열처리
   if (s.rawL > 0 && s.L > 0 && (s.rawL / s.L) >= 1.8) return true;                // 배척
   return false;
@@ -361,13 +378,28 @@ function forceRB(s, cfg) {
 function usesPlan(cfg) {
   return !!(cfg && cfg.plan && (cfg.dispatchRule === 'OPT' || cfg.dispatchRule === 'IMPORT'));
 }
+/* 계획서 로더가 같은 판매오더의 두 번째 행을 `<오더>-2` 로 바꿔 저장한다(planload.js).
+   최적화/외부 스케줄은 원래 판매오더 번호로 오므로, 정확 일치 → 접미사 제거 순으로 찾는다.
+   이 폴백이 없으면 「같은 오더 R·U 동일 호기 강제」가 깨진다. (2026-08-14 전수 감사) */
+function planLookup(map, no) {
+  if (!map || no == null) return undefined;
+  if (map[no] !== undefined) return map[no];
+  const base = String(no).replace(/-\d+$/, '');
+  return map[base];
+}
 function useRBLine(s, cfg) {
   /* 기본은 「열처리·배척 제품만」 — R/B 는 #1·#2호기 잔여 CAPA 가 없을 때
      증산용으로 돌리는 여분 라인이다 (2026-08-06 세아제강). 종전 기본값 'capable'(적격 전량)은 현장과 다르다. */
   const mode = cfg.rbMode || (cfg.useRB === false ? 'off' : 'force');
   if (usesPlan(cfg) && cfg.plan.assign && s.no != null) {     // 최적화/외부 스케줄 지정이 우선
-    const a = cfg.plan.assign[s.no];
-    if (a === 'RB') return true;
+    const a = planLookup(cfg.plan.assign, s.no);
+    /* 외부 스케줄이 RB 를 지정해도 **적격성은 지킨다.** 종전에는 무조건 true 라
+       18m·t30·46" 같은 부적격 제품이 R/B(단독 12.8m 상한)에서 처리된 것처럼 나왔다. */
+    if (a === 'RB') {
+      if (rbCapable(s, cfg)) return true;
+      if (cfg.planWarn) cfg.planWarn.push(`${s.no}: 외부 스케줄이 R/B 를 지정했지만 적격 조건에 맞지 않아 본류로 보냈습니다`);
+      return false;
+    }
     if (a === 'M1' || a === 'M2' || a === 'M3' || a === 'BOTH') return false;
   }
   if (mode === 'off') return false;
@@ -435,8 +467,11 @@ function buildExpJobs(orders, cfg) {
     if (!route.includes('EXP')) continue;
     const em = expanderMode(spec, cfg);
     const p = {};
-    for (const m of (cfg.useM3?['M1','M2','M3']:['M1','M2'])) p[m] = STD.Expander(spec, m==='M3'?'M2':m).sec * o.qty;
-    p.BOTH = STD.Expander(spec, 'BOTH').sec * o.qty;
+    /* 시뮬레이터와 **같은 보정**을 써야 최적화 Cmax 와 시뮬 결과가 같은 축 위에 놓인다.
+       종전에는 실적 보정(cfg.stdCalib)이 시뮬에만 걸려 두 수치가 어긋났다. (2026-08-14 전수 감사) */
+    const kc = (cfg.stdCalib && cfg.stdCalib.Expander > 0) ? cfg.stdCalib.Expander : 1;
+    for (const m of (cfg.useM3?['M1','M2','M3']:['M1','M2'])) p[m] = STD.Expander(spec, m==='M3'?'M2':m, cfg).sec * o.qty * kc;
+    p.BOTH = STD.Expander(spec, 'BOTH', cfg).sec * o.qty * kc;
     jobs.push({ no:o.no, spec, qty:o.qty, mode:em.mode, elig:em.list, p });
   }
   return jobs;
@@ -593,9 +628,14 @@ function _impFind(headers, cands) {
   }
   return -1;
 }
+/* 현장 설비 코드 → 호기.  EP102 = R/B · EP103 = #1호기 · EP104 = #2호기 (실적 로그로 확인)
+   이 표를 먼저 보지 않으면 아래 숫자 부분일치가 EP102→M2, EP103→M3, EP104→M1 으로
+   **전부 어긋나게** 매핑한다. (2026-08-14 전수 감사) */
+const WC_MACHINE = { EP102:'RB', EP103:'M1', EP104:'M2' };
 function normMachine(v) {
   const x = String(v == null ? '' : v).trim().toUpperCase().replace(/[\s_#]/g, '');
   if (!x) return null;
+  for (const wc in WC_MACHINE) if (x.includes(wc)) return WC_MACHINE[wc];
   if (x.includes('BOTH') || x.includes('동시')) return 'BOTH';
   if (x.includes('RB')) return 'RB';
   if (x.includes('3')) return 'M3';
@@ -739,7 +779,9 @@ function applyPeriod(orders, cfg) {
 
   /* 'sheet' — 조관계획서 시트에 적힌 **행 순서 그대로**, 전량 시작일에 투입한다.
      날짜·납기를 일절 쓰지 않고 라인 처리능력만으로 흐름을 본다 (2026-08-14 세아제강 요청). */
-  if (mode === 'sheet') return orders.map(o => ({ ...o, start: fmt(t0), due: null }));
+  if (mode === 'sheet') return orders.map(o => ({ ...o, start: fmt(t0),
+    /* 납기 분석을 켠 경우에만 납기를 살린다 — 끄면 아예 계산하지 않는다 */
+    due: cfg.dueAnalysis ? (o.due || null) : null }));
 
   const src = orders.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
   const ts = o => o.start ? new Date(o.start.replace(' ', 'T')).getTime() / 1000 : t0;
@@ -853,6 +895,10 @@ function simulate(orders, cfg) {
   const ctx = { rr: 0 };
   const bothOrders = new Set(), fixedOrders = new Set();
   let seqGlobal = 0;
+  /* 라우트 진행 상한. 불량 재작업(Repair→재확관) 루프가 1회에 8노드를 다시 밀어 넣으므로
+     maxRework 가 크면 상한에 걸려 그 본이 포장에 도달하지 못한다. 종전에는 조용히 사라졌다.
+     이제 몇 본이 탈락했는지 세어 KPI(routeAborted)로 내보낸다. (2026-08-14 전수 감사) */
+  let routeAborted = 0;
 
   /* 계획 기간 적용 후, 투입 순서: 최적화 스케줄이 있으면 그 순서, 없으면 계획일 순 */
   const plan = cfg.plan || null;
@@ -879,7 +925,7 @@ function simulate(orders, cfg) {
       seqGlobal++;
       let ready = rel, prevId = null, rework = 0, guard = 0;
       const queue = route.slice();
-      while (queue.length && guard++ < 300) {
+      while (queue.length && guard++ < ROUTE_GUARD) {
         const nid = queue.shift();
         const n = NODE[nid];
         if (!n || n.kind === 'buf') continue;
@@ -889,7 +935,7 @@ function simulate(orders, cfg) {
         if (nid === 'EXP') {
           let em = expanderMode(spec, cfg);                         // ③ 적격집합 ℰ
           /* 외부/내부 최적화 스케줄이 BOTH 로 지정했으면 그대로 따른다 */
-          if (planRule && plan && plan.assign[o.no] === 'BOTH') em = { mode:'BOTH', list:['M1','M2'] };
+          if (planRule && plan && planLookup(plan.assign, o.no) === 'BOTH') em = { mode:'BOTH', list:['M1','M2'] };
           if (em.mode === 'BOTH') {
             /* 14M 초과 → #1·#2호기 동시 가동 (소요 = max) */
             coUnits = units.filter(x => x.idx <= 1);
@@ -899,8 +945,9 @@ function simulate(orders, cfg) {
           } else {
             let cand = units.filter(x => em.list.includes(EXP_MACHINES[x.idx].key));
             if (!cand.length) cand = units;
-            if (planRule && plan && plan.assign[o.no] && plan.assign[o.no] !== 'BOTH' && plan.assign[o.no] !== 'RB') {
-              const want = plan.assign[o.no];
+            const pa = (planRule && plan) ? planLookup(plan.assign, o.no) : null;
+            if (pa && pa !== 'BOTH' && pa !== 'RB') {
+              const want = pa;
               const fixed = cand.filter(x => EXP_MACHINES[x.idx].key === want);
               u = fixed.length ? fixed[0] : pickExpander(cand, spec, cfg, ctx);
             } else {
@@ -921,7 +968,9 @@ function simulate(orders, cfg) {
         const nspec = n.rtType ? Object.assign({}, spec, { rtType: n.rtType }) : spec;
         const res = (n.st === 'Expander')
           ? STD.Expander(nspec, machine === 'M3' ? 'M2' : machine, cfg)
-          : (fn ? fn(nspec, line, k) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] });
+          /* 3번째 = **전역 순번**(포장의 「1/10본마다 추가 검사」), 4번째 = 오더 내 순번(Edge Miller 첫 본).
+             종전에는 오더 내 순번만 넘겨, 포장 추가검사가 오더가 쪼개진 방식에 따라 달라졌다. */
+          : (fn ? fn(nspec, line, seqGlobal, k) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] });
         let dur = res.sec;
         /* 실적 보정 — 실적이 표준보다 확실히 빠른 공정만 계수를 곱한다 (prodlogCalibration 참조).
            보정을 켜지 않으면 cfg.stdCalib 이 없어 아무 영향이 없다. */
@@ -982,7 +1031,9 @@ function simulate(orders, cfg) {
           queue.length = 0; queue.push(...back);
         }
       }
+      if (queue.length) routeAborted++;    // 라우트 상한 초과 → 이 본은 완주하지 못했다
     }
+
     /* 납기 지연 분석 — 2026-08-14 세아제강 회신으로 **기본 OFF**.
        "영업계획납기일로 납기 지연분석을 하지 않고, 조관계획서상 제품 내역을
         순서대로 흘려보냈을 때 어떻게 되는지만 나오면 됩니다."
@@ -994,12 +1045,22 @@ function simulate(orders, cfg) {
       tardyH = (oE - dueTs) / 3600;
       if (tardyH > 0) { dueStat.late++; dueStat.tardyH += tardyH; dueStat.maxTardyH = Math.max(dueStat.maxTardyH, tardyH); }
     }
-    orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route,
-                        due: (cfg.dueAnalysis ? (o.due || null) : null), tardyH };
+    /* 같은 판매오더가 여러 행(R/U 분할)으로 들어오면 **덮어쓰지 말고 합친다.**
+       종전에는 뒤 행이 앞 행을 지워서 tEnd·처리량·가용시간이 전부 줄고
+       가동률이 100% 를 넘기도 했다. (2026-08-14 전수 감사) */
+    const prevSpan = orderSpan[o.no];
+    orderSpan[o.no] = prevSpan
+      ? { ...prevSpan, s: Math.min(prevSpan.s, oS), e: Math.max(prevSpan.e, oE),
+          qty: prevSpan.qty + o.qty, rows: (prevSpan.rows || 1) + 1,
+          tardyH: (tardyH != null && prevSpan.tardyH != null) ? Math.max(prevSpan.tardyH, tardyH)
+                : (tardyH != null ? tardyH : prevSpan.tardyH) }
+      : { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route, rows: 1,
+          due: (cfg.dueAnalysis ? (o.due || null) : null), tardyH };
   }
 
   /* 가동률 */
-  const tEnd = Math.max(...Object.values(orderSpan).map(v => v.e));
+  const ends = Object.values(orderSpan).map(v => v.e).filter(v => isFinite(v));
+  const tEnd = ends.length ? Math.max(...ends) : t0 + 3600;   // 빈 오더셋 방어 (종전 -Infinity)
   const horizon = tEnd - t0;
   const days = horizon / 86400;
   const availPerUnit = cal.capBetween(t0, tEnd);
@@ -1058,6 +1119,7 @@ function simulate(orders, cfg) {
       ? Math.max(...expStat.units.map(u => u.busyH)) - Math.min(...expStat.units.map(u => u.busyH)) : 0,
     bothOrders: Array.from(bothOrders), fixedOrders: Array.from(fixedOrders),
     rework: nRework, breakdowns: nBreak, downtimeH: downtime / 3600,
+    routeAborted,                       // 라우트 상한(ROUTE_GUARD)에 걸려 완주하지 못한 본수
     deadline: deadlineTs, doneInPeriod, overflow, due: dueStat,
     periodDays: deadlineTs ? (deadlineTs - t0) / 86400 : null,
     throughputPerDay: Object.values(orderSpan).reduce((a, v) => a + v.qty, 0) / (horizon / 86400),

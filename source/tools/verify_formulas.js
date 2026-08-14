@@ -69,7 +69,13 @@ expect('Packing',               STD.Packing(A, '12M', 1).sec,   634 + (45000 - 1
 const B = { od: 1219, t: 31.2, L: 18288, qty: 20, grade: 'high', api5l: false,
             markSpec: 1, markEnd: 1, defects: 2, holdSec: 120, rtType: '320kV' };
 
-expect('GapPress 18.288m X70',  STD.GapPress(B).sec,            464 - 18.288 / 0.3 + Math.ceil(18.288 / 6) * (45 + 20) * 2 * 2 * 2);
+/* 엑셀 row 14 :  464 − (L/0.3) + [{ceil(L/6M)×(45+20)}×2] × 2
+   비고        :  ※ X70 이상인 경우 [ ] x2 적용  →  **대괄호 밖의 ×2 가 조건부**
+   종전 기대값은 밖의 ×2 를 무조건 곱한 뒤 X70 에 또 ×2 를 곱한 값(2483.04)이었다.
+   2026-08-14 전수 감사에서 일반강 2배·X70 4배로 과대 계상하고 있었음을 확인해 정정. */
+const GP = (Lm, hi) => 464 - Lm / 0.3 + Math.ceil(Lm / 6) * (45 + 20) * 2 * (hi ? 2 : 1);
+expect('GapPress 18.288m X70',  STD.GapPress(B).sec,                    GP(18.288, true));
+expect('GapPress 18.288m 일반', STD.GapPress({...B, grade:'normal'}).sec, GP(18.288, false));
 expect('EdgeMiller 18M 고강도', STD.EdgeMiller(B, '18M').sec,   348 - 123 / 2 + 19250 / 215.6 + 18288 * (0.06 / 2 - 0.0016));
 expect('PreBender 18M t31.2',   STD.PreBender(B, '18M').sec,    46.5 + (800 / 290 + 17.2) * Math.ceil((18288 - 2200) / 800));
 expect('InsideWelder t31.2 2pass', STD.InsideWelder(B, '18M').sec, 670 + 18288 / 8.953488372, 0.1);
