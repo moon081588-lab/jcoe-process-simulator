@@ -126,7 +126,19 @@ function loadProdLog(text) {
     qtyWCWO[`${b.wc}|${b.wo}`] = (qtyWCWO[`${b.wc}|${b.wo}`] || 0) + b.cum;
   }
 
-  /* ② 설비별 요약 + 완료 간격(중위수) — 실적 본당 소요시간 */
+  /* ② 설비별 요약 — 실적 본당 소요시간
+     스냅샷 poller 라 한 간격이 반드시 1본은 아니다(누적이 2~4 씩 뛰는 구간이 있다).
+     그래서 간격마다 Δt/Δ누적 으로 본당을 환산한 뒤,
+       · perPipeSec = ΣΔt / ΣΔ누적   ← **처리량 기준 본당 소요.** 표준시간과 비교할 값
+       · paceSec    = Δt/Δ누적 의 중위수 ← 「돌고 있을 때의 페이스」 참고값
+     을 각각 낸다.
+
+     ── 2026-08-14 정정 ─────────────────────────────────────────────
+     처음에는 paceSec(중위수)만으로 표준시간과 비교해 「포장·수압·면취가 표준보다 빠르다」고
+     보고했는데, **잘못된 비교**였다. 완료 간격 분포는 (돌 때 짧고 멈추면 긴) 오른쪽 꼬리가
+     아주 긴 형태라 중위수는 가동 중 페이스만 집어내고 대기를 통째로 버린다.
+     처리량 기준(ΣΔt/ΣΔ누적)으로 다시 재면 **전 설비가 표준 이상(비율 ≥ 1.02)** 으로,
+     물리적으로 당연한 모습이 된다. 포장은 1.02 로 가장 여유가 없는 설비다. */
   const byWC = new Map();
   for (const r of rows) {
     if (!byWC.has(r.wc)) byWC.set(r.wc, []);
@@ -137,13 +149,15 @@ function loadProdLog(text) {
     const map = PLOG_WC[wc] || { node: null, label: list[0].wcDesc || wc };
     /* 완료 간격 — 같은 (WO·일·근) 안에서 누적이 늘어난 순간들 사이의 간격만 본다 */
     const gaps = [];
+    let sumDt = 0, sumDq = 0;
     const seen = new Map();
     for (const r of list) {
       const k = `${r.wo}|${r.date}|${r.shift}`;
       const p = seen.get(k);
       if (p && r.cum > p.cum && r.last > p.last) {
-        const d = (r.last - p.last) / (r.cum - p.cum);
-        if (d > 20 && d < 4 * 3600) gaps.push(d);      // 20초~4시간만 유효 표본
+        const dt = r.last - p.last, dq = r.cum - p.cum;
+        const d = dt / dq;
+        if (d > 20 && d < 4 * 3600) { gaps.push(d); sumDt += dt; sumDq += dq; }
       }
       if (!p || r.cum >= p.cum) seen.set(k, r);
     }
@@ -153,7 +167,11 @@ function loadProdLog(text) {
       desc: list[0].wcDesc, op: list[0].op,
       qty: qtyWC[wc] || 0, rows: list.length,
       first: list[0].last, last: list[list.length - 1].last,
-      medGapSec: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+      /* 표준시간과 비교할 값 — 처리량 기준 본당 소요 */
+      perPipeSec: sumDq > 0 ? sumDt / sumDq : null,
+      /* 참고 — 돌고 있을 때의 페이스(중위수). 대기를 버리므로 표준 비교에는 쓰지 않는다 */
+      paceSec: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+      medGapSec: sumDq > 0 ? sumDt / sumDq : null,   // 하위호환
       nGap: gaps.length,
     });
   }
@@ -206,7 +224,7 @@ function verifyProdLog(log, cfg) {
   if (!log || log.error) return [];
   const out = [];
   for (const w of log.wcStat) {
-    if (!w.node || w.medGapSec == null) continue;
+    if (!w.node || w.perPipeSec == null) continue;
     const node = (typeof NODE !== 'undefined') ? NODE[w.node] : null;
     if (!node || !node.st) continue;
     /* 그 설비를 지난 오더들의 표준시간을 실적 본수로 가중평균한다 */
@@ -233,8 +251,11 @@ function verifyProdLog(log, cfg) {
     const std = num / den;
     out.push({
       wc: w.wc, label: w.label, node: w.node, st: node.st, qty: w.qty,
-      actualSec: w.medGapSec, stdSec: std, nGap: w.nGap,
-      ratio: std > 0 ? w.medGapSec / std : null,
+      actualSec: w.perPipeSec, paceSec: w.paceSec, stdSec: std, nGap: w.nGap,
+      ratio: std > 0 ? w.perPipeSec / std : null,
+      /* 여유율 — 실적 본당에서 표준 작업시간을 뺀 몫이 대기·전환·정지다.
+         0 에 가까울수록 쉬지 않고 돌고 있다는 뜻 = 진짜 병목 */
+      idleShare: std > 0 ? Math.max(0, (w.perPipeSec - std) / w.perPipeSec) : null,
       approx: w.approx,
     });
   }
@@ -250,8 +271,10 @@ function verifyProdLog(log, cfg) {
      · 실적 < 표준  →  대기를 포함하고도 더 빠르다 = **산출식이 확실히 느리다** → 내린다
    그래서 계수는 `min(1, 실적/표준)` 이고, 이건 표준시간의 **상한 보정**입니다.
 
-   2026-08-14 세아제강 실적 기준으로 실제 적용되는 공정은 셋뿐입니다.
-     Packing 0.61 · HydroTest 0.79 · EndFacing 0.94
+   2026-08-14 **정정** — 처리량 기준(ΣΔt/ΣΔ누적)으로 다시 재니 전 설비가 비율 ≥ 1.02 라
+   보정 대상이 하나도 없습니다. 이 함수는 빈 객체를 돌려주고, 화면에는 그 사실을 표시합니다.
+   (종전에는 중위수 기준으로 Packing 0.61 · HydroTest 0.79 · EndFacing 0.94 가 잡혔는데,
+    중위수가 대기를 버려서 생긴 착시였습니다.)
    -------------------------------------------------------------------- */
 function prodlogCalibration(log, cfg) {
   const out = {};

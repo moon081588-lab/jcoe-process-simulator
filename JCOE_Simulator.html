@@ -470,19 +470,25 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
 
     <h3>③ 설비별 실적</h3>
     <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
-      <th style="text-align:right">스냅샷 행</th><th>실적 구간</th><th style="text-align:right">실적 본당(중위수)</th>
+      <th style="text-align:right">스냅샷 행</th><th>실적 구간</th><th style="text-align:right">실적 본당</th>
       <th>시뮬레이터 노드</th></tr></thead><tbody id="lgWC"></tbody></table></div>
 
     <h3>④ 표준시간 검증 <span class="sub">실적 완료 간격(중위수) ÷ 엑셀 산출식</span></h3>
     <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
-      <th style="text-align:right">표본</th><th style="text-align:right">실적 본당(s)</th><th style="text-align:right">표준시간(s)</th>
-      <th style="text-align:right">실적 / 표준</th><th>판정</th></tr></thead><tbody id="lgVerify"></tbody></table></div>
+      <th style="text-align:right">표본</th><th style="text-align:right">실적 본당(s)</th>
+      <th style="text-align:right">페이스(s)</th><th style="text-align:right">표준시간(s)</th>
+      <th style="text-align:right">실적 / 표준</th><th style="text-align:right">여유율</th>
+      <th>판정</th></tr></thead><tbody id="lgVerify"></tbody></table></div>
     <div class="note">실적 간격에는 대기·전환·정지가 모두 섞여 있어 <b>표준시간보다 큰 것이 정상</b>입니다.
-      비율이 1 보다 <b>작으면</b> 대기를 포함하고도 실적이 더 빠르다는 뜻이므로,
-      <b>그 공정의 산출식이 확실히 느리게 잡혀 있다</b>는 근거가 됩니다.</div>
+      <b>실적 본당</b>은 처리량 기준(ΣΔt ÷ ΣΔ누적)입니다. 스냅샷 한 간격이 여러 본을 담을 수 있어
+      누적 증가분으로 나눠서 환산합니다. <b>페이스</b>는 그 값의 중위수로, 돌고 있을 때의 속도만 봅니다.
+      <b>표준시간과의 비교에는 페이스가 아니라 실적 본당을 쓰십시오</b> — 페이스는 대기를 통째로 버리기 때문에
+      표준보다 빨라 보이는 착시가 생깁니다(2026-08-14 이 착시로 「포장 산출식이 65% 느리다」고 잘못 보고했습니다).
+      <b>여유율</b>이 0 에 가까울수록 쉬지 않고 돌고 있다는 뜻이라 진짜 병목입니다.</div>
     <div class="toolbar">
-      <div class="f ck"><input type="checkbox" id="lgCalib"><label for="lgCalib"><b>실적 보정 적용</b> — 비율 &lt; 1 인 공정만 표준시간을 실적까지 내려서 재시뮬레이션</label></div>
-      <div class="hint" id="lgCalibHint">한 방향(하향)으로만 보정합니다. 실적 &gt; 표준인 공정은 대기 때문인지 산출식 때문인지 구분할 수 없어 손대지 않습니다.</div>
+      <div class="f ck"><input type="checkbox" id="lgCalib"><label for="lgCalib"><b>실적 보정 적용</b> — 실적이 표준보다 <b>빠른</b> 공정만 표준시간을 실적까지 내려서 재시뮬레이션</label></div>
+      <div class="hint" id="lgCalibHint">한 방향(하향)으로만 보정합니다. 실적 &gt; 표준인 공정은 대기 때문인지 산출식 때문인지 구분할 수 없어 손대지 않습니다.
+        2026-08-14 실적 기준으로는 <b>보정 대상이 하나도 없습니다</b> — 전 공정에서 실적 ≥ 표준입니다.</div>
     </div>
     <div class="kpis" id="lgCalibSum"></div>
 
@@ -2852,7 +2858,19 @@ function loadProdLog(text) {
     qtyWCWO[`${b.wc}|${b.wo}`] = (qtyWCWO[`${b.wc}|${b.wo}`] || 0) + b.cum;
   }
 
-  /* ② 설비별 요약 + 완료 간격(중위수) — 실적 본당 소요시간 */
+  /* ② 설비별 요약 — 실적 본당 소요시간
+     스냅샷 poller 라 한 간격이 반드시 1본은 아니다(누적이 2~4 씩 뛰는 구간이 있다).
+     그래서 간격마다 Δt/Δ누적 으로 본당을 환산한 뒤,
+       · perPipeSec = ΣΔt / ΣΔ누적   ← **처리량 기준 본당 소요.** 표준시간과 비교할 값
+       · paceSec    = Δt/Δ누적 의 중위수 ← 「돌고 있을 때의 페이스」 참고값
+     을 각각 낸다.
+
+     ── 2026-08-14 정정 ─────────────────────────────────────────────
+     처음에는 paceSec(중위수)만으로 표준시간과 비교해 「포장·수압·면취가 표준보다 빠르다」고
+     보고했는데, **잘못된 비교**였다. 완료 간격 분포는 (돌 때 짧고 멈추면 긴) 오른쪽 꼬리가
+     아주 긴 형태라 중위수는 가동 중 페이스만 집어내고 대기를 통째로 버린다.
+     처리량 기준(ΣΔt/ΣΔ누적)으로 다시 재면 **전 설비가 표준 이상(비율 ≥ 1.02)** 으로,
+     물리적으로 당연한 모습이 된다. 포장은 1.02 로 가장 여유가 없는 설비다. */
   const byWC = new Map();
   for (const r of rows) {
     if (!byWC.has(r.wc)) byWC.set(r.wc, []);
@@ -2863,13 +2881,15 @@ function loadProdLog(text) {
     const map = PLOG_WC[wc] || { node: null, label: list[0].wcDesc || wc };
     /* 완료 간격 — 같은 (WO·일·근) 안에서 누적이 늘어난 순간들 사이의 간격만 본다 */
     const gaps = [];
+    let sumDt = 0, sumDq = 0;
     const seen = new Map();
     for (const r of list) {
       const k = `${r.wo}|${r.date}|${r.shift}`;
       const p = seen.get(k);
       if (p && r.cum > p.cum && r.last > p.last) {
-        const d = (r.last - p.last) / (r.cum - p.cum);
-        if (d > 20 && d < 4 * 3600) gaps.push(d);      // 20초~4시간만 유효 표본
+        const dt = r.last - p.last, dq = r.cum - p.cum;
+        const d = dt / dq;
+        if (d > 20 && d < 4 * 3600) { gaps.push(d); sumDt += dt; sumDq += dq; }
       }
       if (!p || r.cum >= p.cum) seen.set(k, r);
     }
@@ -2879,7 +2899,11 @@ function loadProdLog(text) {
       desc: list[0].wcDesc, op: list[0].op,
       qty: qtyWC[wc] || 0, rows: list.length,
       first: list[0].last, last: list[list.length - 1].last,
-      medGapSec: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+      /* 표준시간과 비교할 값 — 처리량 기준 본당 소요 */
+      perPipeSec: sumDq > 0 ? sumDt / sumDq : null,
+      /* 참고 — 돌고 있을 때의 페이스(중위수). 대기를 버리므로 표준 비교에는 쓰지 않는다 */
+      paceSec: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+      medGapSec: sumDq > 0 ? sumDt / sumDq : null,   // 하위호환
       nGap: gaps.length,
     });
   }
@@ -2932,7 +2956,7 @@ function verifyProdLog(log, cfg) {
   if (!log || log.error) return [];
   const out = [];
   for (const w of log.wcStat) {
-    if (!w.node || w.medGapSec == null) continue;
+    if (!w.node || w.perPipeSec == null) continue;
     const node = (typeof NODE !== 'undefined') ? NODE[w.node] : null;
     if (!node || !node.st) continue;
     /* 그 설비를 지난 오더들의 표준시간을 실적 본수로 가중평균한다 */
@@ -2959,8 +2983,11 @@ function verifyProdLog(log, cfg) {
     const std = num / den;
     out.push({
       wc: w.wc, label: w.label, node: w.node, st: node.st, qty: w.qty,
-      actualSec: w.medGapSec, stdSec: std, nGap: w.nGap,
-      ratio: std > 0 ? w.medGapSec / std : null,
+      actualSec: w.perPipeSec, paceSec: w.paceSec, stdSec: std, nGap: w.nGap,
+      ratio: std > 0 ? w.perPipeSec / std : null,
+      /* 여유율 — 실적 본당에서 표준 작업시간을 뺀 몫이 대기·전환·정지다.
+         0 에 가까울수록 쉬지 않고 돌고 있다는 뜻 = 진짜 병목 */
+      idleShare: std > 0 ? Math.max(0, (w.perPipeSec - std) / w.perPipeSec) : null,
       approx: w.approx,
     });
   }
@@ -2976,8 +3003,10 @@ function verifyProdLog(log, cfg) {
      · 실적 < 표준  →  대기를 포함하고도 더 빠르다 = **산출식이 확실히 느리다** → 내린다
    그래서 계수는 `min(1, 실적/표준)` 이고, 이건 표준시간의 **상한 보정**입니다.
 
-   2026-08-14 세아제강 실적 기준으로 실제 적용되는 공정은 셋뿐입니다.
-     Packing 0.61 · HydroTest 0.79 · EndFacing 0.94
+   2026-08-14 **정정** — 처리량 기준(ΣΔt/ΣΔ누적)으로 다시 재니 전 설비가 비율 ≥ 1.02 라
+   보정 대상이 하나도 없습니다. 이 함수는 빈 객체를 돌려주고, 화면에는 그 사실을 표시합니다.
+   (종전에는 중위수 기준으로 Packing 0.61 · HydroTest 0.79 · EndFacing 0.94 가 잡혔는데,
+    중위수가 대기를 버려서 생긴 착시였습니다.)
    -------------------------------------------------------------------- */
 function prodlogCalibration(log, cfg) {
   const out = {};
@@ -4378,7 +4407,11 @@ function applyCalib(){
 }
 function renderCalibSum(){
   const el=$('lgCalibSum'); if(!el) return;
-  if(!CALIB){ el.innerHTML=''; return; }
+  if(!CALIB){
+    el.innerHTML = (PLOG && !PLOG.error && $('lgCalib') && $('lgCalib').checked)
+      ? `<div class="kpi"><b>보정 대상 없음</b><span>모든 공정에서 실적 ≥ 표준 — 내릴 근거가 있는 공정이 없습니다</span></div>` : '';
+    return;
+  }
   el.innerHTML = Object.entries(CALIB).sort((a,b)=>a[1]-b[1]).map(([st,f])=>
       `<div class="kpi bn"><b>×${f.toFixed(2)}</b><span>${esc(st)} 표준시간 보정</span></div>`).join('')
     + (SIM ? `<div class="kpi"><b>${SIM.kpi.makespanH.toFixed(1)} h</b><span>보정 후 Makespan</span></div>`
@@ -4425,16 +4458,21 @@ function renderLog(){
   const V=verifyProdLog(L, readCfg());
   $('lgVerify').innerHTML = V.length ? V.map(v=>{
     const r=v.ratio;
+    const idle = v.idleShare;
     const judge = r==null ? '—'
-      : r < 0.9  ? '<span style="color:#ff7b72">표준시간이 실적보다 느림 — 확인 필요</span>'
-      : r < 1.5  ? '<span style="color:#3fb950">표준시간과 근접</span>'
-      : r < 4    ? '대기·전환 포함 (정상)'
-      :            '<span style="color:#d29922">대기 비중 큼 (병목 하류)</span>';
+      : r < 1    ? '<span style="color:#ff7b72">표준시간이 실적보다 느림 — 확인 필요</span>'
+      : r < 1.35 ? '<span style="color:#ff7b72">여유 거의 없음 — 병목</span>'
+      : r < 2    ? '<span style="color:#d29922">여유 적음</span>'
+      : r < 3    ? '대기·전환 포함 (정상)'
+      :            '<span style="color:#6e7681">대기 비중 큼 (병목 하류)</span>';
     return `<tr><td><b>${esc(v.wc)}</b> ${esc(v.label)}</td><td>${esc(v.st)}</td>
       <td class="num">${v.qty.toLocaleString()}</td><td class="num">${v.nGap}</td>
-      <td class="num">${v.actualSec.toFixed(0)}</td><td class="num">${v.stdSec.toFixed(0)}</td>
-      <td class="num">${r==null?'—':r.toFixed(2)}</td><td>${judge}</td></tr>`;
-  }).join('') : '<tr><td colspan="8" style="color:#6e7681">비교 가능한 설비가 없습니다.</td></tr>';
+      <td class="num">${v.actualSec.toFixed(0)}</td>
+      <td class="num" style="color:#6e7681">${v.paceSec==null?'—':v.paceSec.toFixed(0)}</td>
+      <td class="num">${v.stdSec.toFixed(0)}</td>
+      <td class="num">${r==null?'—':r.toFixed(2)}</td>
+      <td class="num">${idle==null?'—':(idle*100).toFixed(0)+'%'}</td><td>${judge}</td></tr>`;
+  }).join('') : '<tr><td colspan="10" style="color:#6e7681">비교 가능한 설비가 없습니다.</td></tr>';
 
   $('lgOrders').innerHTML=L.orders.map(o=>`<tr>
     <td>${esc(o.no)}</td><td style="font-size:11px">${esc(o.mat)}</td>

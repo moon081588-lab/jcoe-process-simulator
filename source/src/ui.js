@@ -1388,7 +1388,11 @@ function applyCalib(){
 }
 function renderCalibSum(){
   const el=$('lgCalibSum'); if(!el) return;
-  if(!CALIB){ el.innerHTML=''; return; }
+  if(!CALIB){
+    el.innerHTML = (PLOG && !PLOG.error && $('lgCalib') && $('lgCalib').checked)
+      ? `<div class="kpi"><b>보정 대상 없음</b><span>모든 공정에서 실적 ≥ 표준 — 내릴 근거가 있는 공정이 없습니다</span></div>` : '';
+    return;
+  }
   el.innerHTML = Object.entries(CALIB).sort((a,b)=>a[1]-b[1]).map(([st,f])=>
       `<div class="kpi bn"><b>×${f.toFixed(2)}</b><span>${esc(st)} 표준시간 보정</span></div>`).join('')
     + (SIM ? `<div class="kpi"><b>${SIM.kpi.makespanH.toFixed(1)} h</b><span>보정 후 Makespan</span></div>`
@@ -1435,16 +1439,21 @@ function renderLog(){
   const V=verifyProdLog(L, readCfg());
   $('lgVerify').innerHTML = V.length ? V.map(v=>{
     const r=v.ratio;
+    const idle = v.idleShare;
     const judge = r==null ? '—'
-      : r < 0.9  ? '<span style="color:#ff7b72">표준시간이 실적보다 느림 — 확인 필요</span>'
-      : r < 1.5  ? '<span style="color:#3fb950">표준시간과 근접</span>'
-      : r < 4    ? '대기·전환 포함 (정상)'
-      :            '<span style="color:#d29922">대기 비중 큼 (병목 하류)</span>';
+      : r < 1    ? '<span style="color:#ff7b72">표준시간이 실적보다 느림 — 확인 필요</span>'
+      : r < 1.35 ? '<span style="color:#ff7b72">여유 거의 없음 — 병목</span>'
+      : r < 2    ? '<span style="color:#d29922">여유 적음</span>'
+      : r < 3    ? '대기·전환 포함 (정상)'
+      :            '<span style="color:#6e7681">대기 비중 큼 (병목 하류)</span>';
     return `<tr><td><b>${esc(v.wc)}</b> ${esc(v.label)}</td><td>${esc(v.st)}</td>
       <td class="num">${v.qty.toLocaleString()}</td><td class="num">${v.nGap}</td>
-      <td class="num">${v.actualSec.toFixed(0)}</td><td class="num">${v.stdSec.toFixed(0)}</td>
-      <td class="num">${r==null?'—':r.toFixed(2)}</td><td>${judge}</td></tr>`;
-  }).join('') : '<tr><td colspan="8" style="color:#6e7681">비교 가능한 설비가 없습니다.</td></tr>';
+      <td class="num">${v.actualSec.toFixed(0)}</td>
+      <td class="num" style="color:#6e7681">${v.paceSec==null?'—':v.paceSec.toFixed(0)}</td>
+      <td class="num">${v.stdSec.toFixed(0)}</td>
+      <td class="num">${r==null?'—':r.toFixed(2)}</td>
+      <td class="num">${idle==null?'—':(idle*100).toFixed(0)+'%'}</td><td>${judge}</td></tr>`;
+  }).join('') : '<tr><td colspan="10" style="color:#6e7681">비교 가능한 설비가 없습니다.</td></tr>';
 
   $('lgOrders').innerHTML=L.orders.map(o=>`<tr>
     <td>${esc(o.no)}</td><td style="font-size:11px">${esc(o.mat)}</td>

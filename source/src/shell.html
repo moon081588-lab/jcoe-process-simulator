@@ -470,19 +470,25 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
 
     <h3>③ 설비별 실적</h3>
     <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
-      <th style="text-align:right">스냅샷 행</th><th>실적 구간</th><th style="text-align:right">실적 본당(중위수)</th>
+      <th style="text-align:right">스냅샷 행</th><th>실적 구간</th><th style="text-align:right">실적 본당</th>
       <th>시뮬레이터 노드</th></tr></thead><tbody id="lgWC"></tbody></table></div>
 
     <h3>④ 표준시간 검증 <span class="sub">실적 완료 간격(중위수) ÷ 엑셀 산출식</span></h3>
     <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
-      <th style="text-align:right">표본</th><th style="text-align:right">실적 본당(s)</th><th style="text-align:right">표준시간(s)</th>
-      <th style="text-align:right">실적 / 표준</th><th>판정</th></tr></thead><tbody id="lgVerify"></tbody></table></div>
+      <th style="text-align:right">표본</th><th style="text-align:right">실적 본당(s)</th>
+      <th style="text-align:right">페이스(s)</th><th style="text-align:right">표준시간(s)</th>
+      <th style="text-align:right">실적 / 표준</th><th style="text-align:right">여유율</th>
+      <th>판정</th></tr></thead><tbody id="lgVerify"></tbody></table></div>
     <div class="note">실적 간격에는 대기·전환·정지가 모두 섞여 있어 <b>표준시간보다 큰 것이 정상</b>입니다.
-      비율이 1 보다 <b>작으면</b> 대기를 포함하고도 실적이 더 빠르다는 뜻이므로,
-      <b>그 공정의 산출식이 확실히 느리게 잡혀 있다</b>는 근거가 됩니다.</div>
+      <b>실적 본당</b>은 처리량 기준(ΣΔt ÷ ΣΔ누적)입니다. 스냅샷 한 간격이 여러 본을 담을 수 있어
+      누적 증가분으로 나눠서 환산합니다. <b>페이스</b>는 그 값의 중위수로, 돌고 있을 때의 속도만 봅니다.
+      <b>표준시간과의 비교에는 페이스가 아니라 실적 본당을 쓰십시오</b> — 페이스는 대기를 통째로 버리기 때문에
+      표준보다 빨라 보이는 착시가 생깁니다(2026-08-14 이 착시로 「포장 산출식이 65% 느리다」고 잘못 보고했습니다).
+      <b>여유율</b>이 0 에 가까울수록 쉬지 않고 돌고 있다는 뜻이라 진짜 병목입니다.</div>
     <div class="toolbar">
-      <div class="f ck"><input type="checkbox" id="lgCalib"><label for="lgCalib"><b>실적 보정 적용</b> — 비율 &lt; 1 인 공정만 표준시간을 실적까지 내려서 재시뮬레이션</label></div>
-      <div class="hint" id="lgCalibHint">한 방향(하향)으로만 보정합니다. 실적 &gt; 표준인 공정은 대기 때문인지 산출식 때문인지 구분할 수 없어 손대지 않습니다.</div>
+      <div class="f ck"><input type="checkbox" id="lgCalib"><label for="lgCalib"><b>실적 보정 적용</b> — 실적이 표준보다 <b>빠른</b> 공정만 표준시간을 실적까지 내려서 재시뮬레이션</label></div>
+      <div class="hint" id="lgCalibHint">한 방향(하향)으로만 보정합니다. 실적 &gt; 표준인 공정은 대기 때문인지 산출식 때문인지 구분할 수 없어 손대지 않습니다.
+        2026-08-14 실적 기준으로는 <b>보정 대상이 하나도 없습니다</b> — 전 공정에서 실적 ≥ 표준입니다.</div>
     </div>
     <div class="kpis" id="lgCalibSum"></div>
 
