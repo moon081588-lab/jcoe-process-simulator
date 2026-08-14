@@ -150,10 +150,38 @@ function toolInfo(od, t, machine) {
   const tDiffOf = (tmin, tmax) => (tmin !== tmax)
     ? ((t >= tmin && t <= tmax) ? 0 : Math.min(Math.abs(t - tmin), Math.abs(t - tmax)))
     : ((Math.abs(t - tmin) <= 0.1) ? 0 : Math.abs(t - tmin));
+  /* 동점(같은 외경·같은 두께에 다이가 둘 이상) 은 **엑셀 순서상 먼저**를 채택하고
+     나머지는 alts 로 남긴다.
+
+     ── OD1219 44t(250mm)/44t(700mm) 중복의 결론 (2026-08-14) ───────────────
+     괄호 안 숫자는 다이의 **F/L(Full Length)** 이다. 같은 엑셀 RB 시트의 세아제강 셀 메모가
+     그렇게 쓰고 있다 —「32"x34 die (F/L 700mm) 대체 작업 진행중」,「다이 40" 44t 사용할 것 FL 300mm」.
+
+     그리고 그 메모에 나오는 규격이 M1 다이표의 **700mm 이상치와 정확히 겹친다.**
+     두께 34t 이상에서 step > 400mm 인 행은 표 전체에 딱 5개뿐이다.
+
+         32" t34 → 700     ← 메모「32"x34 die (F/L 700mm) 대체 작업 진행중」
+         40" t34 → 700     ← 메모「40"x34die (F/L 700mm) 대체 작업중」
+         44" t44 → 700
+         48" t44 → 700     ← 문의 대상
+         60" t44 → 700
+
+     44t 계열 15행 중 나머지 13행은 전부 110~300mm 이다. 즉 **정규 다이는 250mm 계열이고,
+     700mm 는 정규 다이가 없거나 수리 중일 때 쓰는 「대체 작업」 다이**로 읽는 것이 맞다.
+     → 현재 동작(엑셀 순서상 먼저인 **250mm 채택**)을 그대로 유지하고,
+        700mm 는 alts 에 `substitute: true` 로 남겨 화면에 「대체 다이」로 표시한다. */
   const pickIn = (cand) => {
-    let b = null, bd = Infinity;
-    for (const r of cand) { const d = tDiffOf(r[2], r[3]); if (d < bd) { bd = d; b = { head:r[0], od:r[1], step:r[4], label:r[5] }; } }
-    return b ? { best: b, tDiff: bd } : null;
+    let b = null, bd = Infinity; const alts = [];
+    for (const r of cand) {
+      const d = tDiffOf(r[2], r[3]);
+      if (d < bd) { bd = d; b = { head:r[0], od:r[1], step:r[4], label:r[5] }; alts.length = 0; }
+      else if (b && d === bd && r[4] !== b.step) {
+        /* 두꺼운 관(t≥34)에서 채택값보다 크게 벌어진 F/L 은 「대체 작업」 다이로 본다 */
+        const sub = (r[2] >= 34 && r[4] > 400 && r[4] > b.step * 2);
+        alts.push({ head:r[0], od:r[1], step:r[4], label:r[5], substitute: sub });
+      }
+    }
+    return b ? { best: b, tDiff: bd, alts } : null;
   };
 
   /* 1차 — 외경 ±5mm 이내 (specs.get_tool_info 와 동일) */
@@ -183,14 +211,47 @@ function toolInfo(od, t, machine) {
      매칭된 다이표 외경을 키로 써야 없는 다이 교체 90분이 붙지 않는다. */
   return { head: best.head, drawbar, die: `${odGap > 0 ? best.od : od}|${best.label}`, step: best.step,
            label: best.label, tDiff: hit.tDiff, odGap,
+           inch: Math.round(od / 25.4),
+           alts: hit.alts || [],
            warn: hit.tDiff > TDIFF_WARN || odGap > 5,
            approx: odGap > 5 ? `외경 ${Math.round(od)} → 다이표 ${best.od} (${odGap.toFixed(0)}mm 차)` : null };
 }
 
-/** 확관 Step Size / 다이 정보 (호기별) */
+/** 같은 외경·두께에 다이가 둘 이상인 칸을 전부 찾아 준다 (확인 요청용 진단) */
+function dieDuplicates(machine) {
+  const rows = (T.dieSpec || {})[DIE_KEY[machine] || 'M2'] || [];
+  const seen = new Map(), out = [];
+  for (const r of rows) {
+    const k = `${r[1]}|${r[2]}|${r[3]}`;
+    if (seen.has(k)) { const f = seen.get(k); out.push({ head:r[0], od:r[1], inch:Math.round(r[1]/25.4), t:r[2], steps:[f[4], r[4]], labels:[f[5], r[5]] }); }
+    else seen.set(k, r);
+  }
+  return out;
+}
+
+/* --------------------------------------------------------------------
+   확관 Step Size 여유값 — 표준시간 엑셀의 **이미지로만 적혀 있던** 규칙
+     · Expander(1·2호기)  「통상 다이 Size[mm] − 150[mm] 를 적용
+                            ex. 700mm 다이 사용 시 550mm 를 레시피(HMI Setting)에 입력.
+                            단, 끝단 남을 길이가 150mm 이하일 경우 −100[mm] 를 적용」
+     · R/B Expander       「통상 다이 Size[mm] − 90[mm] 를 적용
+                            ex. 700mm 다이 사용 시 610mm 를 레시피에 입력」
+   출처 — ★JCOE 공정 생산 표준 시간 분석 20251231 (POSTECH 송부).xlsx
+          Total Summary!S22 (1호기) · S23 (2호기) · Expander(RB)!J4 이미지
+   2026-08-14 확인. 종전 R/B 식은 이 −90 을 빠뜨리고 다이 Size 를 그대로 나눠
+   확관 횟수를 과소 계상하고 있었다.
+   -------------------------------------------------------------------- */
+const STEP_MARGIN = { M1: 150, M2: 150, M3: 150, BOTH: 150, RB: 90 };
+function stepMargin(machine) { return STEP_MARGIN[machine] || 150; }
+
+/** 확관 Step Size / 다이 정보 (호기별)
+    step  = 다이표 값(= 다이 Size)
+    recipe = 실제 HMI 에 입력하는 확관 Step Size = 다이 Size − 여유값 */
 function expanderStep(s, machine) {
   const ti = toolInfo(s.od, s.t, machine || 'M2');
-  if (ti.step) return { step: ti.step, dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
+  const m = stepMargin(machine || 'M2');
+  if (ti.step) return { step: ti.step, recipe: Math.max(ti.step - m, 1), margin: m,
+                        dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
   /* 호기별 다이표에 없으면 엑셀 「Expander(1호기)」 표로 폴백 */
   const inch = Math.round(odInch(s.od));
   const keys = Object.keys(T.expanderDie).map(Number).sort((a, b) => a - b);
@@ -198,23 +259,38 @@ function expanderStep(s, machine) {
   for (const k of keys) if (Math.abs(k - inch) < Math.abs(bk - inch)) bk = k;
   const dies = T.expanderDie[bk];
   const die = dies.find(d => d[0] >= s.t) || dies[dies.length - 1];
-  return { step: die[1], dieT: `t${die[0]}`, inch: bk, tool: ti, fallback: true };
+  return { step: die[1], recipe: Math.max(die[1] - m, 1), margin: m,
+           dieT: `t${die[0]}`, inch: bk, tool: ti, fallback: true };
 }
 
 /* 확관 횟수 N — 산출 근거가 두 가지로 갈려 있어 토글로 병기한다.
    'ortools' : 세아제강 운영 최적화 모델(specs.py) 구현 — 기본값(정본)
                M1  N = round(L / (step − (step≤150 ? 100 : 150)))
                M2  N = ceil((L−500)/step) + 2, 홀수면 +1 → 항상 짝수
-   'excel'   : 「JCOE 공정 생산 표준 시간 분석」 시트 산출식 — 대조용
-               N = ceil((L−500)/step) + 2, 짝수면 +1 → 항상 홀수
-   두 식은 step 이 작을수록(=두꺼운 관) 크게 벌어진다.
-   2026-08-06 세아제강 피드백 — "specs.py 가 맞습니다" → 운영 모델 식을 기본값으로 채택. */
+   'excel'   : 「JCOE 공정 생산 표준 시간 분석」 산출식 — 대조용
+               M1  N = ROUNDUP(L / (다이 Size − 150))
+                   근거: Total Summary!S22 이미지 「12,802 / (550−150) = 33회」
+                   (24"×12.7t → M1 다이 550mm. round 면 32, **ROUNDUP 이라 33**)
+               M2  N = ROUNDUP((L − (S_start + S_end)) / (F − O)) + 2 + α
+                   근거: Total Summary!S23 이미지 + 셀 메모
+                        「α : α 를 제외한 N 이 짝수일 시 +1, 즉 N 은 항상 홀수」
+                   S_start+S_end · F−O 의 실제 수치는 이미지에 없어
+                   500mm · 다이 Size 로 근사한다 (수치 확인 요청 중)
+   ★ 정본(specs.py)은 M2 를 **짝수**로, 표준시간 엑셀 이미지는 **홀수**로 맞춘다 —
+     서로 반대이며 2026-08-06 "specs.py 가 맞습니다" 회신에 따라 정본을 기본값으로 둔다.
+   두 식은 step 이 작을수록(=두꺼운 관) 크게 벌어진다. */
 let EXP_NMODE = 'ortools';
 function setExpanderNMode(m) { EXP_NMODE = (m === 'excel') ? 'excel' : 'ortools'; }
 function expanderNMode() { return EXP_NMODE; }
 
 function expanderN(s, machine) {
-  const { step } = expanderStep(s, machine);
+  const { step, recipe } = expanderStep(s, machine);
+  /* R/B — 표준시간 엑셀 No.20 산출식이 쓰는 확관 횟수. 다이 Size − 90 이 분모다. */
+  if (machine === 'RB') return ceil(s.L / recipe);
+  if (EXP_NMODE === 'excel' && (machine === 'M1' || machine === 'BOTH')) {
+    /* 엑셀 이미지 식: ROUNDUP(L / (다이 Size − 150)) */
+    return ceil(s.L / recipe);
+  }
   if (EXP_NMODE === 'ortools' && (machine === 'M1' || machine === 'BOTH')) {
     /* specs.calculate_time_m1 그대로 — 하한을 두지 않는다.
        step 이 작을수록 분모(step−150 또는 step−100)가 급격히 줄어 N 이 크게 튄다.
@@ -231,7 +307,7 @@ function expanderN(s, machine) {
 }
 
 /* 12~13. Expander (확관) — 병목 발생지 */
-STD.Expander = (s, machine) => {
+STD.Expander = (s, machine, cfg) => {
   const tag = EXP_NMODE === 'ortools' ? '[운영모델 N식]' : '[엑셀 N식]';
   if (machine === 'BOTH') {                 // 14.021m 초과 → #1·#2호기 동시 가동
     const n1 = expanderN(s, 'M1'), n2 = expanderN(s, 'M2');
@@ -242,17 +318,33 @@ STD.Expander = (s, machine) => {
   }
   const d = expanderStep(s, machine), n = expanderN(s, machine);
   if (machine === 'RB') {
-    const sec = 234 + (ceil(s.L / d.step) - 2) * 15;
-    return { sec, expr: `RB라인: 234 + (ceil(L/step)−2)×15, step=${d.step}mm`,
-      terms: [['기본', 234], ['확관', (ceil(s.L / d.step) - 2) * 15]] };
+    /* 표준시간 엑셀 No.20 「R/B - Expander」
+         234s + (ROUNDUP(파이프 길이 / 확관 Step Size) − 2) × 15s
+       확관 Step Size = 다이 Size − 90 (Expander(RB)!J4 이미지, 2026-08-14 확인).
+       종전에는 −90 을 빠뜨리고 다이 Size 로 나누어 확관 횟수를 과소 계상했다.
+
+       비고의 두 문장 —
+         「※ 옥외 열처리 제품인 경우, 15초 제외
+           → 옥외 열처리 제품이 아닌 경우, 상수 234초 고정」
+       은 (N−2)×15 항을 없애는 뜻으로 읽으면 두 문장이 같은 말이 되어 모순입니다.
+       **기본 상수에서 15초를 뺀다**로 읽어야 두 문장이 모두 성립합니다 →
+         옥외 열처리 제품    기본 219s (= 234 − 15)
+         그 외              기본 234s 고정
+       cfg.rbHeatRule = 'none' 으로 두면 전 제품 234s 로 되돌립니다. */
+    const heat = !!s.heat && (!cfg || cfg.rbHeatRule !== 'none');
+    const base = heat ? 219 : 234;
+    const add = Math.max(n - 2, 0) * 15;
+    const sec = base + add;
+    return { sec, expr: `R/B: ${base} + (ROUNDUP(L/StepSize)−2)×15,  N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−90)${heat ? ' · 옥외 열처리(−15s)' : ''}`,
+      terms: [[heat ? '기본 (열처리 234−15)' : '기본', base], [`확관 ${n}회 (−2)×15s`, add]] };
   }
   if (machine === 'M1') {
     const sec = 177 + n * 12 + (s.L + 3500) / 300;
-    return { sec, expr: `#1호기: 177 + N×12 + (L+3500)/300,  N=${n}회, step=${d.step}mm ${tag}`,
+    return { sec, expr: `#1호기: 177 + N×12 + (L+3500)/300,  N=${n}회, 다이 ${d.step}mm → StepSize ${d.recipe}mm ${tag}`,
       terms: [['기본', 177], [`확관 ${n}회 ×12s`, n * 12], ['이송 (L+3500)/300', (s.L + 3500) / 300]] };
   }
   const sec = 165 + n * 7.5;
-  return { sec, expr: `#2호기: 165 + N×7.5,  N=${n}회, step=${d.step}mm (${d.dieT}) ${tag}`,
+  return { sec, expr: `#2호기: 165 + N×7.5,  N=${n}회, 다이 ${d.step}mm (${d.dieT}) ${tag}`,
     terms: [['기본', 165], [`확관 ${n}회 ×7.5s`, n * 7.5]] };
 };
 

@@ -45,10 +45,13 @@ const NODES = [
   { id:'EP',    label:'Expander 문제', sub:'★ 병목 발생지', kind:'proc', st:null, x:1000, y:722, cap:1, free:true, bottleneck:true },
   { id:'PACK',  label:'JCOE 포장', sub:'PK113', st:'Packing', kind:'proc', x:1130, y:530, cap:1 },
 
-  /* ---- R/B 라인 전용 후처리 (Zone 3) — 2026-08-06 현장 설비 화면으로 확인 ----
-     R/B Expander(EP102) → R/B 면취(FC112) → R/B RT(RT104) → 배척 포장(PK112)
-     JCOE 본류와 **후처리 설비가 완전히 분리**되어 있고, R/B 라인에는 수압 Test·2차 U.T 가 없다.
-     종전에는 RB → 포장 직행이라 JCOE 포장(PK113) 용량을 잘못 나눠 쓰고 있었다. */
+  /* ---- R/B 라인 후처리 (Zone 3) ----
+     R/B Expander(EP102) → R/B 면취(FC112) → [수압 HY106 → 2차 U.T UT110] → R/B RT(RT104) → 배척 포장(PK112)
+
+     2026-08-06 : 설비 화면상 R/B 라인에는 수압·2차 U.T 설비가 없어 건너뛰도록 두었다.
+     2026-08-14 : 세아제강 회신 — "R/B 라인도 원래의 방식 그대로 수압 Test 와 2차 U.T 를
+                  통과한다고 진행" → **본류 설비(HY106·UT110)를 공유**하도록 기본값을 바꾼다.
+                  (설비 실사 결과는 세희 님 복귀 후 재확인 예정 → cfg.rbPost='dedicated' 로 구 동작 복원) */
   { id:'RBEF',  label:'R/B 면취', sub:'FC112', st:'EndFacing', kind:'proc', x:912, y:600, cap:1 },
   { id:'RBRT',  label:'R/B RT',  sub:'RT104', st:'RT', rtType:'450kV', kind:'proc', x:912, y:700, cap:1 },
   { id:'PACKRB',label:'배척 포장', sub:'PK112', st:'Packing', kind:'proc', x:912, y:800, cap:1 },
@@ -68,7 +71,7 @@ const EDGES = [
   ['D2','UT1','Yes','vh'], ['UT1','BUF','','hv'], ['D2','BUF','No (By-pass)','vh'],
   ['BUF','D3','','h'],
   ['D3','RB','Yes','v'], ['D3','EXP','No','h'],
-  ['RB','RBEF','','v'], ['RBEF','RBRT','','v'], ['RBRT','PACKRB','','v'],
+  ['RB','RBEF','','v'], ['RBEF','RBRT','수압 · 2차 U.T 경유','v'], ['RBRT','PACKRB','','v'],
   ['EXP','D4','','h'],
   ['D4','CP','Yes','v'], ['CP','EF','','hv'], ['D4','EF','No','h'],
   ['EF','HYD','','h'], ['HYD','D5','','vh'],
@@ -98,8 +101,12 @@ function routeOf(s, cfg) {
   const toRB = useRBLine(s, cfg);
   r.push(toRB ? 'RB' : 'EXP');                       // D3: R/B 라인 투입 여부
   if (toRB) {
-    /* R/B 라인은 후처리 설비가 따로 있다 (Zone 3) — 수압 Test·2차 U.T 는 없다 */
-    r.push('RBEF', 'RBRT', 'PACKRB');
+    /* R/B 라인 후처리 (Zone 3).
+       기본값 'shared' — 2026-08-14 세아제강 회신대로 본류의 수압(HY106)·2차 U.T(UT110)를 거친다.
+       'dedicated' — 2026-08-06 설비 화면 기준(수압·2차 U.T 없음) 구 동작. */
+    r.push('RBEF');
+    if ((cfg.rbPost || 'shared') !== 'dedicated') r.push('HYD', 'FUT');
+    r.push('RBRT', 'PACKRB');
   } else {
     if (cfg.useCP) r.push('CP');                     // D4
     r.push('EF', 'HYD');
@@ -329,9 +336,14 @@ function rbDiameters() {
   _rbOD = new Set(((T.dieSpec || {}).RB || []).map(r => r[1]));
   return _rbOD;
 }
+/* 표준시간 엑셀 No.20 「R/B 가동 가능 조건」 (2026-08-14 확인)
+     · 외경 24~48" — **46" 제외**   · 두께 9~25.4T   · 길이 12.8M 이하
+   46" 는 R/B 다이표에 아예 행이 없어 결과적으로는 같지만, 조건을 명시해 둔다. */
+const RB_EXCLUDED_INCH = new Set([46]);
 function rbCapable(s, cfg) {
   const R = expRules(cfg);
   if ((s.L / 1000) > 12.8) return false;
+  if (RB_EXCLUDED_INCH.has(Math.round(odInch(s.od)))) return false;
   if (R.rb === 'ortools') {
     if (s.t < 9 || s.t > 25.4) return false;
     for (const od of rbDiameters()) if (Math.abs(od - s.od) <= 5) return true;
@@ -658,6 +670,9 @@ function specOf(o, cfg) {
        RB 적격의 외경 정확일치(`d not in valid_rb_diameters`)도 정본과 같은 답을 낸다. */
     od:Math.trunc(o.od), t:Math.round(o.t * 100) / 100, L:o.L, qty:o.qty,
     bottleneck: o.bottleneck || null,     // 병목 공정 작업장 (HT102 = 열처리 → RB 강제)
+    /* 옥외 열처리 제품 — 병목공정 HT102 또는 자재기호 'C2' (표준시간 엑셀 No.20 비고).
+       R/B 확관 소요의 기본 상수가 달라진다 (234 → 219). */
+    heat: !!(o.heat || String(o.bottleneck || '').trim().toUpperCase() === 'HT102'),
     rawL: o.rawL || 0,                    // 원재료 길이 [mm] — 더블 파이프 판정용
     /* 재질은 계획서 `재질` 열에서 읽는다(API-X70L2 → 고강도). 열이 없을 때만 두께를 대리변수로 쓰고,
        경계는 Gap Press 투입 조건(t > 25)과 맞춘다. */
@@ -718,11 +733,16 @@ const expo = (rng, mean) => -mean * Math.log(1 - rng());
    -------------------------------------------------------------------- */
 function applyPeriod(orders, cfg) {
   const t0 = new Date(cfg.startDate + 'T08:00:00').getTime() / 1000;
-  const mode = cfg.dateMode || 'plan';
-  const src = orders.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
-  const ts = o => o.start ? new Date(o.start.replace(' ', 'T')).getTime() / 1000 : t0;
+  const mode = cfg.dateMode || 'sheet';
   const fmt = t => { const d = new Date(t * 1000), p = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+  /* 'sheet' — 조관계획서 시트에 적힌 **행 순서 그대로**, 전량 시작일에 투입한다.
+     날짜·납기를 일절 쓰지 않고 라인 처리능력만으로 흐름을 본다 (2026-08-14 세아제강 요청). */
+  if (mode === 'sheet') return orders.map(o => ({ ...o, start: fmt(t0), due: null }));
+
+  const src = orders.slice().sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  const ts = o => o.start ? new Date(o.start.replace(' ', 'T')).getTime() / 1000 : t0;
 
   if (mode === 'seq') {
     const gap = (cfg.seqGapH || 6) * 3600;
@@ -900,9 +920,12 @@ function simulate(orders, cfg) {
         /* RT 는 노드마다 촬영 방식이 다르다 — 관단 X-ray(XE)=End-RT, F-X ray=전장 450kV */
         const nspec = n.rtType ? Object.assign({}, spec, { rtType: n.rtType }) : spec;
         const res = (n.st === 'Expander')
-          ? STD.Expander(nspec, machine === 'M3' ? 'M2' : machine)
+          ? STD.Expander(nspec, machine === 'M3' ? 'M2' : machine, cfg)
           : (fn ? fn(nspec, line, k) : { sec: freeSec, expr: '고정 시간(측정 대상 외)', terms: [] });
         let dur = res.sec;
+        /* 실적 보정 — 실적이 표준보다 확실히 빠른 공정만 계수를 곱한다 (prodlogCalibration 참조).
+           보정을 켜지 않으면 cfg.stdCalib 이 없어 아무 영향이 없다. */
+        if (cfg.stdCalib && n.st && cfg.stdCalib[n.st] > 0) dur *= cfg.stdCalib[n.st];
         const seize = coUnits || [u];
         /* 전환시간도 작업시간과 같은 호기 기준으로 계산해야 한다.
            RB 노드는 풀 인덱스가 0 이라 종전에는 M1 다이표로 전환시간이 계산됐다. */
@@ -960,15 +983,19 @@ function simulate(orders, cfg) {
         }
       }
     }
+    /* 납기 지연 분석 — 2026-08-14 세아제강 회신으로 **기본 OFF**.
+       "영업계획납기일로 납기 지연분석을 하지 않고, 조관계획서상 제품 내역을
+        순서대로 흘려보냈을 때 어떻게 되는지만 나오면 됩니다."
+       cfg.dueAnalysis = true 로 켜면 종전대로 계산한다. */
     let tardyH = null;
-    if (o.due) {
+    if (o.due && cfg.dueAnalysis) {
       const dueTs = new Date(o.due.replace(' ', 'T')).getTime() / 1000;
       dueStat.withDue++;
       tardyH = (oE - dueTs) / 3600;
       if (tardyH > 0) { dueStat.late++; dueStat.tardyH += tardyH; dueStat.maxTardyH = Math.max(dueStat.maxTardyH, tardyH); }
     }
     orderSpan[o.no] = { s: oS, e: oE, qty: o.qty, od: o.od, t: o.t, L: o.L, line, route,
-                        due: o.due || null, tardyH };
+                        due: (cfg.dueAnalysis ? (o.due || null) : null), tardyH };
   }
 
   /* 가동률 */

@@ -14,6 +14,7 @@ out = (tpl
   .replace('__PLANLOAD__', (R/'src/planload.js').read_text(encoding='utf-8'))
   .replace('__ENGINE__', (R/'src/engine.js').read_text(encoding='utf-8'))
   .replace('__FLOW__',   (R/'src/flow.js').read_text(encoding='utf-8'))
+  .replace('__PRODLOG__',(R/'src/prodlog.js').read_text(encoding='utf-8'))
   .replace('__UI__',     (R/'src/ui.js').read_text(encoding='utf-8')))
 p = OUT/'JCOE_Simulator.html'
 p.write_text(out, encoding='utf-8')

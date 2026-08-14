@@ -178,6 +178,7 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
     <div class="tab" data-p="pMC">반복 실행</div>
     <div class="tab" data-p="pGantt">오더 간트</div>
     <div class="tab" data-p="pBn">병목 분석</div>
+    <div class="tab" data-p="pLog">실적 검증</div>
     <div class="tab" data-p="pCfg">계획서 · 설정</div>
   </div>
   <div id="simInfo"></div>
@@ -330,6 +331,10 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       </select></div>
       <div class="f"><label>RB 근무조</label><select id="optRbShift">
         <option value="1" selected>1교대(고정)</option><option value="2">2교대</option><option value="3">3교대</option></select></div>
+      <div class="f" style="min-width:290px"><label>R/B 후처리</label><select id="cfgRbPost" style="width:100%">
+        <option value="shared" selected>수압 · 2차 U.T 경유 (2026-08-14 회신)</option>
+        <option value="dedicated">R/B 전용 후처리만 (설비 화면 기준)</option>
+      </select></div>
       <div class="f ck"><input type="checkbox" id="optSameOD" checked><label for="optSameOD">동시 작업 시 동일 외경 제품만 (1호기 제약)</label></div>
       <div class="hint">바꾸면 즉시 재시뮬레이션합니다.</div>
     </div>
@@ -442,6 +447,56 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       동일 규격 오더를 묶어 투입하면 전환 손실을 줄일 수 있습니다 — 위 <b>전환비율</b> 컬럼이 개선 여지를 나타냅니다.</div>
   </div></section>
 
+  <!-- ========== 실적 검증 ========== -->
+  <section class="pane" id="pLog"><div class="inner">
+    <h3>① 실적 로그 업로드 <span class="sub">machine_prod_log — 스냅샷 방식 생산실적 (조관계획서 없음)</span></h3>
+    <div class="toolbar">
+      <input type="file" id="lgFile" accept=".csv,text/csv">
+      <button class="ghost" id="lgClear">해제</button>
+      <div class="hint" id="lgHint">DB 스냅샷 실적 CSV 를 올리면 설비별 실적 본수·실적 사이클타임을 뽑고,
+        같은 규격으로 표준시간 산출식을 다시 계산해 대조합니다.</div>
+    </div>
+    <div class="kpis" id="lgKpi"></div>
+    <div id="lgErr"></div>
+
+    <h3>② 데이터 해석 규칙</h3>
+    <div class="note" id="lgRules">
+      <b>PROD_QTY_cum 은 (설비 · WO · 작업일 · 근무조) 단위로 리셋</b>됩니다 — 전체 파일 누적으로 읽으면 안 됩니다.<br>
+      <b>qty_delta 는 신뢰할 수 없습니다</b> — 직전 스냅샷을 놓친 구간에서 <code>delta = cum</code> 으로 찍힙니다
+      (예: cum 31 → delta 31). 그래서 본수는 <b>교대별 최대 누적의 합</b>으로 셉니다.<br>
+      <b>오더별 착수 시각은 없습니다</b> — <code>LAST_TIME</code>(마지막 완료 시각)만 있으므로,
+      검증은 <b>완료 간격(본당 소요시간)</b> 대 표준시간 산출식으로 합니다.
+    </div>
+
+    <h3>③ 설비별 실적</h3>
+    <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
+      <th style="text-align:right">스냅샷 행</th><th>실적 구간</th><th style="text-align:right">실적 본당(중위수)</th>
+      <th>시뮬레이터 노드</th></tr></thead><tbody id="lgWC"></tbody></table></div>
+
+    <h3>④ 표준시간 검증 <span class="sub">실적 완료 간격(중위수) ÷ 엑셀 산출식</span></h3>
+    <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
+      <th style="text-align:right">표본</th><th style="text-align:right">실적 본당(s)</th><th style="text-align:right">표준시간(s)</th>
+      <th style="text-align:right">실적 / 표준</th><th>판정</th></tr></thead><tbody id="lgVerify"></tbody></table></div>
+    <div class="note">실적 간격에는 대기·전환·정지가 모두 섞여 있어 <b>표준시간보다 큰 것이 정상</b>입니다.
+      비율이 1 보다 <b>작으면</b> 대기를 포함하고도 실적이 더 빠르다는 뜻이므로,
+      <b>그 공정의 산출식이 확실히 느리게 잡혀 있다</b>는 근거가 됩니다.</div>
+    <div class="toolbar">
+      <div class="f ck"><input type="checkbox" id="lgCalib"><label for="lgCalib"><b>실적 보정 적용</b> — 비율 &lt; 1 인 공정만 표준시간을 실적까지 내려서 재시뮬레이션</label></div>
+      <div class="hint" id="lgCalibHint">한 방향(하향)으로만 보정합니다. 실적 &gt; 표준인 공정은 대기 때문인지 산출식 때문인지 구분할 수 없어 손대지 않습니다.</div>
+    </div>
+    <div class="kpis" id="lgCalibSum"></div>
+
+    <h3>⑤ 실적 오더셋</h3>
+    <div class="toolbar">
+      <button id="lgUse">이 실적을 오더셋으로 시뮬레이션</button>
+      <div class="hint">작업지시(WO)별로 자재내역에서 외경·두께·길이를 뽑고, 포장 실적 본수를 수량으로 씁니다.
+        투입 순서는 <b>최초 완료 시각 순</b>입니다. 자재기호에 <code>C2</code> 가 있으면 옥외 열처리로 보아 R/B 강제 투입 규칙을 태웁니다.</div>
+    </div>
+    <div class="tblwrap"><table><thead><tr><th>WO</th><th>자재내역</th><th style="text-align:right">외경</th>
+      <th style="text-align:right">두께</th><th style="text-align:right">길이(m)</th><th style="text-align:right">포장 본수</th>
+      <th style="text-align:right">최대 본수</th><th>C2(열처리)</th><th>경유 설비</th></tr></thead><tbody id="lgOrders"></tbody></table></div>
+  </div></section>
+
   <!-- ========== 설정 ========== -->
   <section class="pane" id="pCfg"><div class="inner">
     <h3>① 조관계획서 불러오기</h3>
@@ -453,15 +508,20 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       <div class="f"><label>시작일</label><input type="date" id="cfgStart" value="2026-03-02"></div>
       <div class="f"><label>계획 마감일 (선택)</label><input type="date" id="cfgDeadline"></div>
       <div class="f"><label>오더 투입일</label><select id="cfgDateMode">
-        <option value="plan" selected>계획서 날짜 그대로</option>
+        <option value="sheet" selected>계획서 시트 순서대로 (기본)</option>
+        <option value="plan">계획서 날짜 그대로</option>
         <option value="shift">시작일 기준으로 전체 이동</option>
         <option value="seq">시작일부터 순차 투입</option></select></div>
       <div class="f" id="fGap" style="display:none"><label>순차 투입 간격 (h)</label>
         <input type="number" id="cfgSeqGap" value="6" step="1" min="1"></div>
+      <div class="f ck"><input type="checkbox" id="cfgDueAnalysis"><label for="cfgDueAnalysis">납기 지연 분석</label></div>
       <button id="btnPeriod">기간 적용</button>
       <button id="btnPeriodClear" class="ghost">마감일 해제</button>
       <div class="hint" id="periodHint"></div>
     </div>
+    <div class="note">「계획서 시트 순서대로」는 조관계획서 <b>JCOE 시트에 적힌 행 순서 그대로</b> 시작일부터 흘려보냅니다 —
+      날짜·납기를 쓰지 않고 <b>라인 자체의 처리 능력만으로</b> 어떤 흐름이 나오는지 봅니다 (2026-08-14 세아제강 요청).
+      <b>납기 지연 분석은 기본 해제</b>입니다 — 영업계획납기일이 계획 시작일보다 과거인 행이 많아 지표가 의미를 잃습니다.</div>
     <div class="kpis" id="periodSum"></div>
 
     <h3>③ 시뮬레이션 파라미터</h3>
@@ -519,6 +579,7 @@ const ORDERS_DEFAULT = ORDERS.slice();
 <script>__PLANLOAD__</script>
 <script>__ENGINE__</script>
 <script>__FLOW__</script>
+<script>__PRODLOG__</script>
 <script>__UI__</script>
 <script>boot();</script>
 </body>

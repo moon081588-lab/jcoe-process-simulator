@@ -1,0 +1,263 @@
+/* ====================================================================
+   실적 로그 (machine_prod_log) 로더 · 표준시간 검증
+   2026-08-14 세아제강 제공 — 「일정 시간마다 스냅샷으로 DB 생산실적이 바뀔 때
+   그 시각과 누적 개수를 같이 가져온」 데이터. 조관계획서는 없다.
+
+   열 구성
+     poll_time      스냅샷을 뜬 시각 (수집기 기준)
+     REAL_WC_ID     설비 코드 (EP103 = 확관 1호기 …)
+     REAL_WC_DESC   설비명
+     OPERATION_NM   공정명
+     WO_NO          작업지시 번호 (= 오더)
+     MATERIAL_DESC  자재 내역 — 여기서 외경·두께·길이를 뽑는다
+     WORK_DATE      작업일 (교대 기준일)
+     SHIFT          근무조 1 / 2 / 3
+     LAST_TIME      그 시점까지의 **마지막 완료 시각** ← 실질적인 공정 완료 타임스탬프
+     PROD_QTY_cum   누적 생산 수량
+     qty_delta      증분
+
+   ★ 중요 — 데이터 해석 규칙 (2026-08-14 실측으로 확인)
+     1) PROD_QTY_cum 은 **(설비 · WO · WORK_DATE · SHIFT) 단위로 리셋**된다.
+        전체 파일에서 단순 누적으로 읽으면 안 된다.
+     2) qty_delta 는 **신뢰할 수 없다**. 직전 스냅샷을 놓친 구간에서
+        delta = cum 으로 찍혀 있다 (예: cum 8 → delta 8, cum 31 → delta 31).
+        PK113 을 예로 들면 Σqty_delta = 660 본이지만
+        Σmax(PROD_QTY_cum) per (WO·일·근) = 363 본이다.
+        → 본수는 **교대별 최대 누적의 합**으로 센다.
+     3) 오더별 실제 **착수** 시각은 없다. LAST_TIME(완료 시각)만 있으므로
+        착수는 "직전 완료" 로 근사하거나, 완료 간격(cycle)으로 표준시간을 검증한다.
+   ==================================================================== */
+
+/* 설비 코드 → 시뮬레이터 노드 매핑.  node:null 이면 시뮬레이터 미모델링 공정 */
+const PLOG_WC = {
+  EM101: { node:'EM12', label:'12M Edge Miller' },
+  EM102: { node:'EM18', label:'18M Edge Miller' },
+  PM115: { node:'PR12', label:'12M Press Bender' },
+  PM116: { node:'PR18', label:'18M Press Bender' },
+  WD103: { node:'TACK', label:'18M Tack Welder' },
+  WD110: { node:'ISAW', label:'내면 1호기' }, WD111: { node:'ISAW', label:'내면 2호기' },
+  WD112: { node:'ISAW', label:'내면 3호기' }, WD113: { node:'ISAW', label:'내면 4호기' },
+  WD114: { node:'OSAW', label:'외면 1호기' }, WD115: { node:'OSAW', label:'외면 2호기' },
+  WD116: { node:'OSAW', label:'외면 3호기' }, WD117: { node:'OSAW', label:'외면 4호기' },
+  CM108: { node:'CUT',  label:'시편 절단', approx:true },
+  UT109: { node:'UT1',  label:'1차 U.T' },
+  EP102: { node:'RB',   label:'R/B Expander', machine:'RB' },
+  EP103: { node:'EXP',  label:'확관 1호기', machine:'M1' },
+  EP104: { node:'EXP',  label:'확관 2호기', machine:'M2' },
+  FC110: { node:'EF',   label:'면취' },
+  FC112: { node:'RBEF', label:'R/B 면취' },
+  HY106: { node:'HYD',  label:'수압' },
+  UT110: { node:'FUT',  label:'2차 U.T' },
+  RT102: { node:'XE',   label:'RT (관단)' },
+  RT101: { node:'FX',   label:'RT (전장 320kV)' },
+  RT105: { node:'FX',   label:'RT (전장 450kV)' },
+  RT104: { node:'RBRT', label:'R/B RT' },
+  PK112: { node:'PACKRB', label:'배척 포장' },
+  PK113: { node:'PACK', label:'JCOE 포장' },
+  IP106: { node:null,   label:'모관검사 (시뮬레이터 미모델링)' },
+};
+
+/* 아주 작은 CSV 파서 — 따옴표·BOM·CRLF 만 처리하면 충분하다 */
+function plogParseCSV(text) {
+  const s = text.replace(/^﻿/, '');
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n') { row.push(cur); cur = ''; if (row.some(v => v !== '')) rows.push(row); row = []; }
+    else if (c !== '\r') cur += c;
+  }
+  row.push(cur); if (row.some(v => v !== '')) rows.push(row);
+  if (!rows.length) return [];
+  const head = rows[0].map(h => h.trim());
+  return rows.slice(1).map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] ?? '').trim()])));
+}
+
+const PLOG_SPEC_RX = /(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[tT]\s*[xX]\s*(\d+(?:\.\d+)?)\s*[mM]/;
+
+/** 자재 내역 → 규격.  ex) '원Z483C2X70M BBE 1067x19.6tx12.192M A45' */
+function plogSpec(desc) {
+  const m = PLOG_SPEC_RX.exec(desc || '');
+  if (!m) return null;
+  const head = String(desc).split(/\s+/)[0] || '';
+  return {
+    od: +m[1], t: +m[2], L: +m[3] * 1000,
+    /* 표준시간 엑셀 No.20 메모 — 「자재내역의 'C2' 강관기호가 있으면 옥외 열처리 진행」 */
+    heat: /C2/.test(head),
+    /* '편' 은 편척(짧게 잘라 쓴 것) — 배척 여부의 대리 지표. 확인 필요 */
+    partial: /^편/.test(head),
+    code: head,
+  };
+}
+
+const plogTs = (v) => { const t = Date.parse(String(v || '').replace(' ', 'T')); return isFinite(t) ? t / 1000 : null; };
+
+/* --------------------------------------------------------------------
+   집계
+   -------------------------------------------------------------------- */
+function loadProdLog(text) {
+  const raw = plogParseCSV(text);
+  const need = ['REAL_WC_ID', 'WO_NO', 'MATERIAL_DESC', 'WORK_DATE', 'SHIFT', 'LAST_TIME', 'PROD_QTY_cum'];
+  const miss = need.filter(k => !(k in (raw[0] || {})));
+  if (miss.length) return { error: `열이 없습니다: ${miss.join(', ')}` };
+
+  const rows = raw.map(r => ({
+    wc: r.REAL_WC_ID, wcDesc: r.REAL_WC_DESC, op: r.OPERATION_NM,
+    wo: r.WO_NO, mat: r.MATERIAL_DESC, date: r.WORK_DATE, shift: +r.SHIFT || 0,
+    last: plogTs(r.LAST_TIME), poll: plogTs(r.poll_time), cum: +r.PROD_QTY_cum || 0,
+  })).filter(r => r.wc && r.last != null);
+  rows.sort((a, b) => a.last - b.last);
+
+  /* ① 본수 — (설비·WO·일·근) 별 최대 누적의 합 (qty_delta 는 쓰지 않는다) */
+  const bucket = new Map();
+  for (const r of rows) {
+    const k = `${r.wc}|${r.wo}|${r.date}|${r.shift}`;
+    const b = bucket.get(k);
+    if (!b || r.cum > b.cum) bucket.set(k, { ...r, cum: r.cum });
+  }
+  const qtyWC = {}, qtyWO = {}, qtyWCWO = {};
+  for (const b of bucket.values()) {
+    qtyWC[b.wc] = (qtyWC[b.wc] || 0) + b.cum;
+    qtyWO[b.wo] = Math.max(qtyWO[b.wo] || 0, 0);
+    qtyWCWO[`${b.wc}|${b.wo}`] = (qtyWCWO[`${b.wc}|${b.wo}`] || 0) + b.cum;
+  }
+
+  /* ② 설비별 요약 + 완료 간격(중위수) — 실적 본당 소요시간 */
+  const byWC = new Map();
+  for (const r of rows) {
+    if (!byWC.has(r.wc)) byWC.set(r.wc, []);
+    byWC.get(r.wc).push(r);
+  }
+  const wcStat = [];
+  for (const [wc, list] of byWC) {
+    const map = PLOG_WC[wc] || { node: null, label: list[0].wcDesc || wc };
+    /* 완료 간격 — 같은 (WO·일·근) 안에서 누적이 늘어난 순간들 사이의 간격만 본다 */
+    const gaps = [];
+    const seen = new Map();
+    for (const r of list) {
+      const k = `${r.wo}|${r.date}|${r.shift}`;
+      const p = seen.get(k);
+      if (p && r.cum > p.cum && r.last > p.last) {
+        const d = (r.last - p.last) / (r.cum - p.cum);
+        if (d > 20 && d < 4 * 3600) gaps.push(d);      // 20초~4시간만 유효 표본
+      }
+      if (!p || r.cum >= p.cum) seen.set(k, r);
+    }
+    gaps.sort((a, b) => a - b);
+    wcStat.push({
+      wc, node: map.node, label: map.label, approx: !!map.approx, machine: map.machine || null,
+      desc: list[0].wcDesc, op: list[0].op,
+      qty: qtyWC[wc] || 0, rows: list.length,
+      first: list[0].last, last: list[list.length - 1].last,
+      medGapSec: gaps.length ? gaps[Math.floor(gaps.length / 2)] : null,
+      nGap: gaps.length,
+    });
+  }
+  wcStat.sort((a, b) => b.qty - a.qty);
+
+  /* ③ 오더(WO) — 규격 파싱 + 최종 공정 본수 */
+  const woMap = new Map();
+  for (const r of rows) {
+    if (!woMap.has(r.wo)) woMap.set(r.wo, { wo: r.wo, mat: r.mat, first: r.last, last: r.last, wcs: new Set() });
+    const o = woMap.get(r.wo);
+    o.first = Math.min(o.first, r.last); o.last = Math.max(o.last, r.last);
+    o.wcs.add(r.wc);
+    if ((r.mat || '').length > (o.mat || '').length) o.mat = r.mat;
+  }
+  const orders = [], badSpec = [];
+  for (const o of [...woMap.values()].sort((a, b) => a.first - b.first)) {
+    const sp = plogSpec(o.mat);
+    if (!sp) { badSpec.push(o.wo); continue; }
+    /* 수량 — 포장(PK113/PK112) 실적이 있으면 그것을, 없으면 설비 중 최대치를 쓴다 */
+    const pack = (qtyWCWO[`PK113|${o.wo}`] || 0) + (qtyWCWO[`PK112|${o.wo}`] || 0);
+    let mx = 0;
+    for (const wc of o.wcs) mx = Math.max(mx, qtyWCWO[`${wc}|${o.wo}`] || 0);
+    orders.push({
+      no: String(o.wo), od: sp.od, t: sp.t, L: sp.L,
+      qty: pack || mx || 1, packQty: pack, maxQty: mx,
+      start: null, due: null,
+      mat: o.mat, code: sp.code, heat: sp.heat, partial: sp.partial,
+      /* 열처리(C2) → 병목공정 HT102 로 표기해 R/B 강제 투입 규칙을 그대로 태운다 */
+      bottleneck: sp.heat ? 'HT102' : null,
+      rawL: 0,
+      firstDone: o.first, lastDone: o.last, wcs: [...o.wcs],
+    });
+  }
+
+  const t0 = rows[0].last, t1 = rows[rows.length - 1].last;
+  return {
+    rows, wcStat, orders, badSpec,
+    span: { from: t0, to: t1, hours: (t1 - t0) / 3600 },
+    unmapped: wcStat.filter(w => !w.node).map(w => `${w.wc} ${w.label}`),
+    totalPack: (qtyWC.PK113 || 0) + (qtyWC.PK112 || 0),
+  };
+}
+
+/* --------------------------------------------------------------------
+   표준시간 검증 — 실적 완료 간격(중위수) vs 엑셀 산출식
+   실적 간격은 설비 1대 기준이므로, 병렬 설비(내면·외면 SAW, F-X ray)는
+   설비 코드 하나가 곧 1대여서 그대로 비교할 수 있다.
+   -------------------------------------------------------------------- */
+function verifyProdLog(log, cfg) {
+  if (!log || log.error) return [];
+  const out = [];
+  for (const w of log.wcStat) {
+    if (!w.node || w.medGapSec == null) continue;
+    const node = (typeof NODE !== 'undefined') ? NODE[w.node] : null;
+    if (!node || !node.st) continue;
+    /* 그 설비를 지난 오더들의 표준시간을 실적 본수로 가중평균한다 */
+    let num = 0, den = 0;
+    for (const o of log.orders) {
+      if (!o.wcs.includes(w.wc)) continue;
+      const line = (o.L / 1000) > 13 ? '18M' : '12M';
+      const spec = { od:o.od, t:o.t, L:o.L, qty:o.qty, api5l:false, mat:'', use:'',
+                     holdSec:(cfg && cfg.holdSec) || 60,
+                     rtType: node.rtType || null };
+      let sec = null;
+      try {
+        const f = STD[node.st];
+        if (!f) continue;
+        const r = (node.st === 'Expander')
+          ? f(spec, w.machine || node.machine || 'M2')
+          : f(spec, line, 1);
+        sec = r && isFinite(r.sec) ? r.sec : null;
+      } catch (e) { sec = null; }
+      if (sec == null) continue;
+      num += sec * o.qty; den += o.qty;
+    }
+    if (!den) continue;
+    const std = num / den;
+    out.push({
+      wc: w.wc, label: w.label, node: w.node, st: node.st, qty: w.qty,
+      actualSec: w.medGapSec, stdSec: std, nGap: w.nGap,
+      ratio: std > 0 ? w.medGapSec / std : null,
+      approx: w.approx,
+    });
+  }
+  out.sort((a, b) => b.qty - a.qty);
+  return out;
+}
+
+/* --------------------------------------------------------------------
+   실적 보정 계수 — 표준시간 산출식을 실적으로 **한 방향만** 내린다.
+
+   실적 완료 간격에는 대기·전환·정지가 전부 섞여 있으므로
+     · 실적 > 표준  →  대기 때문인지 산출식 때문인지 구분할 수 없다 → 손대지 않는다
+     · 실적 < 표준  →  대기를 포함하고도 더 빠르다 = **산출식이 확실히 느리다** → 내린다
+   그래서 계수는 `min(1, 실적/표준)` 이고, 이건 표준시간의 **상한 보정**입니다.
+
+   2026-08-14 세아제강 실적 기준으로 실제 적용되는 공정은 셋뿐입니다.
+     Packing 0.61 · HydroTest 0.79 · EndFacing 0.94
+   -------------------------------------------------------------------- */
+function prodlogCalibration(log, cfg) {
+  const out = {};
+  for (const v of verifyProdLog(log, cfg)) {
+    if (!v.ratio || !isFinite(v.ratio) || v.ratio >= 1) continue;
+    out[v.st] = (out[v.st] == null) ? v.ratio : Math.min(out[v.st], v.ratio);
+  }
+  return out;
+}

@@ -48,7 +48,10 @@ function readCfg() {
     plan: (($('optRule')||{}).value === 'IMPORT') ? IMP_PLAN : PLAN,
     startDate: $('cfgStart').value || '2026-03-02',
     deadline: $('cfgDeadline') && $('cfgDeadline').value ? $('cfgDeadline').value : null,
-    dateMode: ($('cfgDateMode')||{}).value || 'plan',
+    dateMode: ($('cfgDateMode')||{}).value || 'sheet',
+    dueAnalysis: $('cfgDueAnalysis') ? $('cfgDueAnalysis').checked : false,
+    stdCalib: CALIB,
+    rbPost: ($('cfgRbPost')||{}).value || 'shared',
     seqGapH: numIn('cfgSeqGap', 6, 0.5, 240),
     shifts: (($('cfgShifts')||{}).value === '2E') ? '2E' : (+(($('cfgShifts')||{}).value) || 2),
     netHoursPerShift: numIn('cfgNetH', 7.5, 0.5, 24),
@@ -657,7 +660,7 @@ function initOptTab(){
   if($('cfgRB')) $('cfgRB').onchange=invalidatePlan;
   /* 확관 N·셋업 산출식은 확관 가공시간·전환시간을 직접 바꾸므로 최적화 해도 함께 무효화해야 한다.
      종전에는 runSim() 만 돌아서, ③ 패널·위저드 3단계가 옛 해의 Cmax·전환시간을 계속 표시했다. */
-  ['optRuleSet','optRbMode','optRbShift','cfgExpN','cfgExpSetup','cfgApi5l']
+  ['optRuleSet','optRbMode','optRbShift','cfgRbPost','cfgExpN','cfgExpSetup','cfgApi5l']
     .forEach(id=>{ if($(id)) $(id).onchange=invalidatePlan; });
   $('optRule').onchange=()=>{ upd(); renderImport(); }; upd();
   initImportTab();
@@ -1052,6 +1055,7 @@ function initPeriod(){
   $('btnPeriod').onclick=runSim;
   $('btnPeriodClear').onclick=()=>{ $('cfgDeadline').value=''; runSim(); };
   $('cfgStart').onchange=runSim; $('cfgDeadline').onchange=runSim; $('cfgSeqGap').onchange=runSim;
+  if($('cfgDueAnalysis')) $('cfgDueAnalysis').onchange=runSim;
   upd();
 }
 function renderPeriod(){
@@ -1330,6 +1334,122 @@ function renderMC(results, rules, n){
   } else $('mcRules').innerHTML='';
 }
 
+/* ================= 실적 검증 탭 =================
+   machine_prod_log 스냅샷 실적 CSV → 설비별 실적 · 표준시간 대조 · 실적 오더셋 */
+let PLOG = null;
+let CALIB = null;            // 실적 보정 계수 { 공정명: 0<계수<1 } — 켜져 있을 때만 설정
+const lgDT = ts => { if(ts==null) return '—'; const d=new Date(ts*1000), p=n=>String(n).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const lgMS = s => s==null ? '—' : (s>=3600 ? `${(s/3600).toFixed(2)}h` : `${(s/60).toFixed(1)}m`);
+
+function initLogTab(){
+  const f=$('lgFile'); if(!f) return;
+  f.onchange=e=>{
+    const file=e.target.files && e.target.files[0]; if(!file) return;
+    const rd=new FileReader();
+    rd.onload=()=>{
+      try { PLOG = loadProdLog(String(rd.result)); }
+      catch(err){ PLOG = { error: String(err && err.message || err) }; }
+      renderLog();
+    };
+    rd.readAsText(file, 'utf-8');
+  };
+  $('lgClear').onclick=()=>{ PLOG=null; CALIB=null; if($('lgCalib')) $('lgCalib').checked=false;
+                             $('lgFile').value=''; renderLog(); runSim(); calc(); };
+  if($('lgCalib')) $('lgCalib').onchange=()=>{ applyCalib(); };
+  $('lgUse').onclick=()=>{
+    if(!PLOG || PLOG.error || !PLOG.orders.length){ alert('먼저 실적 로그를 올려 주세요.'); return; }
+    const d0=new Date(PLOG.span.from*1000), p=n=>String(n).padStart(2,'0');
+    $('cfgStart').value=`${d0.getFullYear()}-${p(d0.getMonth()+1)}-${p(d0.getDate())}`;
+    if($('cfgDateMode')) $('cfgDateMode').value='sheet';
+    if($('cfgDueAnalysis')) $('cfgDueAnalysis').checked=false;
+    applyOrders(PLOG.orders.map(o=>({ ...o })), { src:'실적 로그' }, '실적 로그');
+    renderLog();
+    goTab('pBn');
+  };
+  renderLog();
+}
+
+/* 실적 보정 on/off → 계수를 다시 뽑고 전체 재시뮬레이션 */
+function applyCalib(){
+  const on = $('lgCalib') && $('lgCalib').checked;
+  if(on && PLOG && !PLOG.error){
+    CALIB = prodlogCalibration(PLOG, {...readCfg(), stdCalib:null});
+    if(!Object.keys(CALIB).length) CALIB = null;
+  } else CALIB = null;
+  runSim(); calc(); renderCalibSum();
+}
+function renderCalibSum(){
+  const el=$('lgCalibSum'); if(!el) return;
+  if(!CALIB){ el.innerHTML=''; return; }
+  el.innerHTML = Object.entries(CALIB).sort((a,b)=>a[1]-b[1]).map(([st,f])=>
+      `<div class="kpi bn"><b>×${f.toFixed(2)}</b><span>${esc(st)} 표준시간 보정</span></div>`).join('')
+    + (SIM ? `<div class="kpi"><b>${SIM.kpi.makespanH.toFixed(1)} h</b><span>보정 후 Makespan</span></div>`
+           + `<div class="kpi"><b>${esc((SIM.stats[0]||{}).label||'—')} ${((SIM.stats[0]||{}).util||0).toFixed(1)}%</b><span>보정 후 1위 병목</span></div>` : '');
+}
+
+function renderLog(){
+  if(!$('lgWC')) return;
+  if(!PLOG){
+    $('lgKpi').innerHTML=''; $('lgErr').innerHTML='';
+    $('lgWC').innerHTML='<tr><td colspan="7" style="color:#6e7681">실적 로그 CSV 를 올려 주세요.</td></tr>';
+    $('lgVerify').innerHTML='<tr><td colspan="8" style="color:#6e7681">—</td></tr>';
+    $('lgOrders').innerHTML='<tr><td colspan="9" style="color:#6e7681">—</td></tr>';
+    return;
+  }
+  if(PLOG.error){
+    $('lgErr').innerHTML=`<div class="note" style="color:#ff7b72">읽지 못했습니다 — ${esc(PLOG.error)}</div>`;
+    return;
+  }
+  $('lgErr').innerHTML='';
+  const L=PLOG;
+  $('lgKpi').innerHTML=
+     `<div class="kpi"><b>${L.rows.length.toLocaleString()}</b><span>스냅샷 행</span></div>`
+   + `<div class="kpi"><b>${L.orders.length}</b><span>작업지시(WO)</span></div>`
+   + `<div class="kpi"><b>${L.totalPack.toLocaleString()} 본</b><span>포장 완료 (실적)</span></div>`
+   + `<div class="kpi"><b>${L.span.hours.toFixed(0)} h</b><span>${lgDT(L.span.from)} ~ ${lgDT(L.span.to)}</span></div>`
+   + `<div class="kpi ${L.unmapped.length?'bn':''}"><b>${L.wcStat.length}</b><span>설비 코드${L.unmapped.length?` · 미매핑 ${L.unmapped.length}`:''}</span></div>`;
+
+  $('lgWC').innerHTML=L.wcStat.map(w=>`<tr>
+    <td><b>${esc(w.wc)}</b> ${esc(w.label)}</td>
+    <td>${esc(w.op||'')}</td>
+    <td class="num">${w.qty.toLocaleString()}</td>
+    <td class="num">${w.rows.toLocaleString()}</td>
+    <td>${lgDT(w.first)} ~ ${lgDT(w.last)}</td>
+    <td class="num">${w.medGapSec==null?'—':`${w.medGapSec.toFixed(0)}s (${lgMS(w.medGapSec)})`}</td>
+    <td>${w.node ? esc(w.node)+(w.approx?' <span class="hi2">근사 매핑</span>':'') : '<span style="color:#ff7b72">미모델링</span>'}</td></tr>`).join('');
+
+  /* 로그에 없는 시뮬레이터 설비 — 실적으로 검증되지 않는 공정 */
+  const inLog=new Set(L.wcStat.map(w=>w.node).filter(Boolean));
+  const missing=NODES.filter(n=>n.kind==='proc' && n.st && !n.free && !inLog.has(n.id));
+  if(missing.length) $('lgWC').innerHTML += `<tr><td colspan="7" style="color:#d29922">
+    로그에 실적이 없는 시뮬레이터 공정 — ${missing.map(n=>esc(n.label)).join(' · ')} (이번 주에 가동 기록이 없거나 집계 대상이 아님)</td></tr>`;
+
+  const V=verifyProdLog(L, readCfg());
+  $('lgVerify').innerHTML = V.length ? V.map(v=>{
+    const r=v.ratio;
+    const judge = r==null ? '—'
+      : r < 0.9  ? '<span style="color:#ff7b72">표준시간이 실적보다 느림 — 확인 필요</span>'
+      : r < 1.5  ? '<span style="color:#3fb950">표준시간과 근접</span>'
+      : r < 4    ? '대기·전환 포함 (정상)'
+      :            '<span style="color:#d29922">대기 비중 큼 (병목 하류)</span>';
+    return `<tr><td><b>${esc(v.wc)}</b> ${esc(v.label)}</td><td>${esc(v.st)}</td>
+      <td class="num">${v.qty.toLocaleString()}</td><td class="num">${v.nGap}</td>
+      <td class="num">${v.actualSec.toFixed(0)}</td><td class="num">${v.stdSec.toFixed(0)}</td>
+      <td class="num">${r==null?'—':r.toFixed(2)}</td><td>${judge}</td></tr>`;
+  }).join('') : '<tr><td colspan="8" style="color:#6e7681">비교 가능한 설비가 없습니다.</td></tr>';
+
+  $('lgOrders').innerHTML=L.orders.map(o=>`<tr>
+    <td>${esc(o.no)}</td><td style="font-size:11px">${esc(o.mat)}</td>
+    <td class="num">${o.od}</td><td class="num">${o.t}</td><td class="num">${(o.L/1000).toFixed(3)}</td>
+    <td class="num">${o.packQty||'—'}</td><td class="num">${o.maxQty}</td>
+    <td>${o.heat?'<span style="color:#d29922">C2 · 열처리</span>':'—'}</td>
+    <td style="font-size:11px">${o.wcs.length}개</td></tr>`).join('')
+    + (L.badSpec.length ? `<tr><td colspan="9" style="color:#ff7b72">규격 파싱 실패 WO — ${L.badSpec.join(', ')}</td></tr>` : '');
+
+  renderCalibSum();
+}
+
 /* 비교·반복 실행 대상 규칙 — 가져온 스케줄이 없으면 IMPORT 는 제외 */
 function ruleKeys(){ return Object.keys(DISPATCH_RULES).filter(r => r!=='IMPORT' || IMP_PLAN); }
 
@@ -1356,7 +1476,7 @@ function boot(){
   cvs.onmouseleave = ()=>{ hover=null; };
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod(); initWizard();
+  fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod(); initWizard(); initLogTab();
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
   $('btnDice').onclick=newSeed;

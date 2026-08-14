@@ -42,9 +42,15 @@ expect('Expander #1 die step',  expanderStep(A, 'M1').step,     700, 0);
 expect('Expander #2 die step',  expanderStep(A, 'M2').step,     580, 0);
 /* 기본값은 운영 모델(specs.py) N식 — 2026-08-06 세아제강 확정.
    엑셀 표준시간 분석 식은 대조용으로 남아 있으므로 두 모드를 각각 검증한다. */
+/* 엑셀 #1호기 식은 Total Summary!S22 **이미지**로만 적혀 있었다 (2026-08-14 추출):
+     N = ROUNDUP(L / (다이 Size − 150))   ex) 12,802 / (550−150) = 33회
+   OD914 t9.3 → #1 다이 700mm → StepSize 550 → ceil(12802/550) = 24
+   운영 모델은 같은 분모에 round 를 쓰므로 23 이다 (차이는 올림/사사오입뿐). */
 api.setExpanderNMode('excel');
-expect('Expander #1 N [엑셀·홀수]',   expanderN(A, 'M1'),        21, 0);
+expect('Expander #1 N [엑셀·ROUNDUP]', expanderN(A, 'M1'),       24, 0);
 expect('Expander #2 N [엑셀·홀수]',   expanderN(A, 'M2'),        25, 0);
+/* 엑셀 이미지의 계산 예시 그대로 — 24"×12.7t (#1 다이 550mm) · 12,802mm → 33회 */
+expect('엑셀 예시 24" t12.7 → 33회',  expanderN({ od:610, t:12.7, L:12802 }, 'M1'), 33, 0);
 api.setExpanderNMode('ortools');
 expect('Expander #1 N [운영모델]',    expanderN(A, 'M1'),        23, 0);
 expect('Expander #2 N [운영모델·짝수]', expanderN(A, 'M2'),      24, 0);
@@ -111,8 +117,14 @@ expect('specs: OD508 t9.5 #1 N',     expanderN   ({ od:508, t:9.5, L:11500 }, 'M
 expect('specs: OD508 t9.5 #1 소요',  STD.Expander({ od:508, t:9.5, L:11500 }, 'M1').sec, 7127);
 /* die 식별자는 입력 외경 기준 — 같은 다이라도 OD 가 다르면 다이 교체 90분 */
 expect('specs: OD711.0→711.2 셋업',  expanderSetup({od:711.0,t:9.3},{od:711.2,t:8.85},'M1').sec, 5400);
-expect('specs: RB 234+(ceil(L/step)−2)×15',
-       STD.Expander({ od:914, t:9.3, L:12802 }, 'RB').sec, 234 + (Math.ceil(12802/700) - 2) * 15);
+/* R/B — 표준시간 엑셀 No.20.  확관 Step Size = **다이 Size − 90** (Expander(RB)!J4 이미지)
+     OD914 t9.3 → RB 다이 700mm → StepSize 610 → N = ceil(12802/610) = 21
+     sec = 234 + (21−2)×15 = 519
+   2026-08-14 이전에는 −90 을 빠뜨리고 다이 Size 로 나누어 N=19, 489s 로 과소 계상했다. */
+expect('RB 확관 StepSize = 다이−90',  expanderStep({ od:914, t:9.3, L:12802 }, 'RB').recipe, 610, 0);
+expect('RB N = ceil(L/StepSize)',    expanderN   ({ od:914, t:9.3, L:12802 }, 'RB'),        21,  0);
+expect('RB 234+(N−2)×15',
+       STD.Expander({ od:914, t:9.3, L:12802 }, 'RB').sec, 234 + (21 - 2) * 15);
 
 /* ---- F: 전수 감사 회귀 방지 (2026-08-06) ------------------------------- */
 /* 면취기 룩업 "구멍" — 두께 8mm 미만에서 표의 마지막 행(64"·최악값)을 잡던 회귀 */
