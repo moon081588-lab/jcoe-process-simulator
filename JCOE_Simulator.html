@@ -326,8 +326,8 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       </select></div>
       <div class="f" style="min-width:250px"><label>R/B 라인 투입</label><select id="optRbMode" style="width:100%">
         <option value="force" selected>열처리·배척 제품만 (현장 기본)</option>
-        <option value="capable">적격 제품 전량 (증산 시나리오)</option>
         <option value="off">R/B 미사용</option>
+        <option value="capable">적격 제품 전량 (증산 What-if · 현장과 다름)</option>
       </select></div>
       <div class="f"><label>RB 근무조</label><select id="optRbShift">
         <option value="1" selected>1교대(고정)</option><option value="2">2교대</option><option value="3">3교대</option></select></div>
@@ -2786,7 +2786,10 @@ const PLOG_WC = {
   RT104: { node:'RBRT', label:'R/B RT' },
   PK112: { node:'PACKRB', label:'배척 포장' },
   PK113: { node:'PACK', label:'JCOE 포장' },
-  IP106: { node:null,   label:'모관검사 (시뮬레이터 미모델링)' },
+  /* 모관검사 — 표준시간 엑셀 「Total Summary」 20개 공정에 **산출식이 없습니다.**
+     2026-08-14 세아제강 확정: 「공정시간 식이 없으면 공정흐름에 추가 안 하셔도 됩니다」
+     → 실적(379본)은 보여 주되 공정 흐름·시뮬레이션에는 넣지 않습니다. */
+  IP106: { node:null,   label:'모관검사 (산출식 없음 — 공정흐름 미포함, 2026-08-14 확정)' },
 };
 
 /* 아주 작은 CSV 파서 — 따옴표·BOM·CRLF 만 처리하면 충분하다 */
@@ -3714,6 +3717,13 @@ function renderEligWarn(){
      계획서에 두 열이 없으면 조용히 RB 물량 0 이 되므로 알려 준다. */
   const rbWarn = (() => {
     const cfg = CFG || readCfg();
+    /* R/B 는 현장에서 거의 쓰지 않는다 (2026-08-14 세아제강).
+       「적격 제품 전량」은 증산 What-if 시나리오이므로 그 사실을 화면에 알린다. */
+    if ((cfg.rbMode || 'force') === 'capable')
+      return `<div class="note" style="border-left-color:#d29922">
+        <b>증산 What-if</b> — 세아제강 확인(2026-08-14) 기준 <b>R/B 라인은 현장에서 거의 가동하지 않습니다.</b>
+        실적 로그(2026-07-16~22) 에도 EP102 실적이 0 건입니다. 이 모드의 결과는 현장 재현이 아니라
+        「R/B 를 전면 가동하면 어떻게 되는가」에 대한 가정 시나리오로 읽으십시오.</div>`;
     if ((cfg.rbMode || 'force') !== 'force') return '';
     const hasBn = ORDERS.some(o => o.bottleneck), hasRaw = ORDERS.some(o => o.rawL > 0);
     if (hasBn || hasRaw) return '';

@@ -695,6 +695,13 @@ function renderEligWarn(){
      계획서에 두 열이 없으면 조용히 RB 물량 0 이 되므로 알려 준다. */
   const rbWarn = (() => {
     const cfg = CFG || readCfg();
+    /* R/B 는 현장에서 거의 쓰지 않는다 (2026-08-14 세아제강).
+       「적격 제품 전량」은 증산 What-if 시나리오이므로 그 사실을 화면에 알린다. */
+    if ((cfg.rbMode || 'force') === 'capable')
+      return `<div class="note" style="border-left-color:#d29922">
+        <b>증산 What-if</b> — 세아제강 확인(2026-08-14) 기준 <b>R/B 라인은 현장에서 거의 가동하지 않습니다.</b>
+        실적 로그(2026-07-16~22) 에도 EP102 실적이 0 건입니다. 이 모드의 결과는 현장 재현이 아니라
+        「R/B 를 전면 가동하면 어떻게 되는가」에 대한 가정 시나리오로 읽으십시오.</div>`;
     if ((cfg.rbMode || 'force') !== 'force') return '';
     const hasBn = ORDERS.some(o => o.bottleneck), hasRaw = ORDERS.some(o => o.rawL > 0);
     if (hasBn || hasRaw) return '';
