@@ -17,7 +17,8 @@ const T = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/tables.json'), 'utf8'
 const ORDERS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/orders.json'), 'utf8'));
 const api = new Function('T', 'ORDERS', src + `
   return { simulate, optimizeExpander, routeOf, STD, NODES, NODE, importOptPlan,
-           normMachine, rbCapable, forceRB, useRBLine, expanderStep, expanderN, toolInfo };
+           normMachine, rbCapable, forceRB, useRBLine, expanderStep, expanderN, toolInfo,
+           setRefStd, setRefCo, setRefCap, refDiff, refCoDiff, REF, REF_STD_DEFAULT, CHANGEOVER };
 `)(T, ORDERS);
 
 let failed = 0;
@@ -166,6 +167,59 @@ ok('가동률 100% 초과 없음', !SB.stats.some(x => x.util > 100),
 ok('라우트 탈락 0본', SB.kpi.routeAborted === 0);
 console.log(`  Makespan ${(SB.kpi.makespanH / 24).toFixed(1)}일 · 1위 병목 ` +
   `${SB.stats[0].label} ${SB.stats[0].util.toFixed(1)}%`);
+
+/* ==================================================================
+   기준정보(REF) 레이어 — 화면에서 고친 값이 계산에 반영되고, 되돌아가는가
+   ================================================================== */
+console.log('\n── 기준정보 (REF) ──');
+const SP = { od:914, t:9.3, L:12802, qty:70, grade:'normal', markSpec:2, markEnd:2, holdSec:60, rtType:'450kV' };
+
+/* C1. 표준시간 상수를 바꾸면 결과가 그만큼 움직인다 */
+const pk0 = api.STD.Packing(SP, '12M', 5).sec;
+api.setRefStd({ Packing: { base: 500 } });
+const pk1 = api.STD.Packing(SP, '12M', 5).sec;
+near('C1 포장 기본 634→500 → 정확히 −134s', pk0 - pk1, 134);
+ok  ('C1 refDiff 가 변경분만 돌려준다',
+     JSON.stringify(api.refDiff()) === '{"Packing":{"base":500}}', JSON.stringify(api.refDiff()));
+
+/* C2. 빈 객체 {} 로도 완전히 되돌아간다 (종전 버그: {} 가 truthy 라 이전 값이 남았다) */
+api.setRefStd({});
+near('C2 setRefStd({}) → 원래대로', api.STD.Packing(SP, '12M', 5).sec, pk0);
+ok  ('C2 refDiff 비어 있음', Object.keys(api.refDiff()).length === 0);
+
+/* C3. 확관 Step 여유값도 기준정보에서 바뀐다 */
+const rb0 = api.expanderStep(SP, 'RB').recipe;
+api.setRefStd({ Expander: { marginRB: 0 } });
+const rb1 = api.expanderStep(SP, 'RB').recipe;
+near('C3 R/B Step 여유 90→0 → recipe +90', rb1 - rb0, 90);
+api.setRefStd({});
+near('C3 되돌리면 원래 recipe', api.expanderStep(SP, 'RB').recipe, rb0);
+
+/* C4. 전환시간도 반영되고 되돌아간다 */
+const co0 = api.CHANGEOVER.EndFacing.od;
+api.setRefCo({ EndFacing: { od: 0 } });
+ok('C4 전환시간 반영', api.CHANGEOVER.EndFacing.od === 0);
+ok('C4 refCoDiff 가 변경분만', JSON.stringify(api.refCoDiff()) === '{"EndFacing":{"od":0}}', JSON.stringify(api.refCoDiff()));
+api.setRefCo({});
+ok('C4 전환시간 되돌리기', api.CHANGEOVER.EndFacing.od === co0);
+ok('C4 refCoDiff 비어 있음', Object.keys(api.refCoDiff()).length === 0);
+
+/* C5. 설비 대수 변경이 시뮬레이션에 반영된다 */
+const base = api.simulate(ORDERS, CFG);
+api.setRefCap({ PACK: 2 });
+const twice = api.simulate(ORDERS, CFG);
+api.setRefCap({});
+const back = api.simulate(ORDERS, CFG);
+ok('C5 포장 2대 → Makespan 감소',
+   twice.kpi.makespanH < base.kpi.makespanH * 0.95,
+   `${(base.kpi.makespanH/24).toFixed(1)}일 → ${(twice.kpi.makespanH/24).toFixed(1)}일`);
+near('C5 되돌리면 원래 Makespan', back.kpi.makespanH, base.kpi.makespanH, 0.01);
+ok('C5 대수 범위 밖(0·99)은 무시', (api.setRefCap({ PACK: 0, EF: 99 }), !api.REF.cap.PACK && !api.REF.cap.EF));
+api.setRefCap({});
+
+/* C6. 기준정보를 안 건드리면 엑셀 대조값과 완전히 같다 (verify_formulas 와 이중 확인) */
+near('C6 무변경 시 포장 = 873.3s', api.STD.Packing(SP, '12M', 5).sec, 873.3, 0.1);
+near('C6 무변경 시 확관 #1 = 507.3s (177 + N23×12 + (12802+3500)/300)', api.STD.Expander(SP, 'M1').sec, 507.34, 0.1);
 
 console.log(failed ? `\n${failed}건 FAIL` : '\n전 항목 PASS');
 process.exit(failed ? 1 : 0);

@@ -38,58 +38,193 @@ const ceil = Math.ceil, floor = Math.floor;
             api5l:bool, markSpec:1|2, markEnd:1|2, defects:int,
             holdSec:number, rtType:'450kV'|'320kV'|'End-RT' }
    -------------------------------------------------------------------- */
+/* ====================================================================
+   기준정보 (REF) — 현장에서 바꿀 수 있는 값을 한곳에 모은다
+   --------------------------------------------------------------------
+   종전에는 표준시간 상수가 아래 STD 함수들 **안에 숫자로 박혀** 있어서
+   현장에서 값을 하나 고치려면 코드를 열고 build.py 를 다시 돌려야 했다.
+   이제 전부 REF.std 를 통해 읽으므로 화면(「기준정보」 탭)에서 고칠 수 있고,
+   고친 내용은 JSON 한 장으로 내보내고 불러올 수 있다.
+
+   ★ 값의 출처는 전부 「JCOE 공정 생산 표준 시간 분석」 엑셀 Total Summary 다.
+     src 필드에 엑셀 행 번호를 적어 두었으니 화면에서 근거를 바로 확인할 수 있다.
+   ==================================================================== */
+const REF_STD_DEFAULT = {
+  EdgeMiller: { _label:'1~2. Edge Miller', _src:'row 6~9',
+    base18:{v:348,u:'s',l:'기본 (18M)'},        base12:{v:283,u:'s',l:'기본 (12M)'},
+    hiMn18:{v:2163,u:'s',l:'기본 (18M 고망간)'}, hiMn12:{v:1810,u:'s',l:'기본 (12M 고망간)'},
+    vNum:{v:123,u:'',l:'고속보정 분자 (−123/v)'},
+    feedDiv:{v:215.6,u:'',l:'피딩기 분모 (feed/215.6)'},
+    lenA:{v:0.06,u:'',l:'길이항 계수 A (0.06/v)'},
+    lenB:{v:0.0016,u:'',l:'길이항 계수 B (−0.0016)'},
+    firstPiece:{v:110,u:'s',l:'첫 본 생산 가산 (1분50초)'} },
+  PreBender: { _label:'3~4. Pre Bender', _src:'row 10~11',
+    base18:{v:46.5,u:'s',l:'기본 (18M)'}, base12:{v:30,u:'s',l:'기본 (12M)'},
+    pitchDiv:{v:290,u:'',l:'피치 분모 (pitch/290)'},
+    perStroke:{v:17.2,u:'s',l:'1스트로크 가산'},
+    lead:{v:2200,u:'mm',l:'선단 여유 (L−2200)'} },
+  PressBender: { _label:'5~6. Press Bender', _src:'row 12~13',
+    base18:{v:203,u:'s',l:'기본 (18M)'}, base12:{v:178,u:'s',l:'기본 (12M)'},
+    lenDiv:{v:0.708,u:'',l:'길이항 분모 (L[m]/0.708)'},
+    odDiv:{v:170,u:'',l:'외경 보정 분모 (−OD/170)'},
+    k18:{v:32,u:'s',l:'X1 1회당 (18M)'}, k12:{v:36,u:'s',l:'X1 1회당 (12M)'} },
+  GapPress: { _label:'7. Gap Press (t>25 투입)', _src:'row 14',
+    base:{v:464,u:'s',l:'기본'},
+    lenDiv:{v:0.3,u:'',l:'길이 보정 분모 (−L[m]/0.3)'},
+    segLen:{v:6,u:'m',l:'구간 길이 (ceil(L/6))'},
+    per:{v:65,u:'s',l:'구간당 (45+20)'},
+    mult:{v:2,u:'배',l:'대괄호 안 배수'},
+    x70:{v:2,u:'배',l:'X70 이상 추가 배수'} },
+  TackWelder: { _label:'8. Tack Welder', _src:'row 15',
+    base18:{v:185,u:'s',l:'이송·Gap조정 (18M)'}, base12:{v:200,u:'s',l:'이송·Gap조정 (12M)'} },
+  InsideWelder: { _label:'9. Inside Welder', _src:'row 16',
+    base18:{v:670,u:'s',l:'장입·Setting·배출 (18M)'}, base12:{v:710,u:'s',l:'장입·Setting·배출 (12M)'} },
+  OutsideWelder: { _label:'10. Outside Welder', _src:'row 17',
+    base18:{v:510,u:'s',l:'장입·Setting·배출 (18M)'}, base12:{v:550,u:'s',l:'장입·Setting·배출 (12M)'} },
+  FirstUT: { _label:'11. 1st-UT', _src:'row 18',
+    base:{v:240,u:'s',l:'기본'}, feedDiv:{v:150,u:'',l:'이송 분모 (L/150)'},
+    cutLen:{v:9600,u:'',l:'탭 절단 분자 (9600/절단속도)'},
+    cutTimes:{v:2,u:'회',l:'탭 절단 횟수'} },
+  Expander: { _label:'12~13. Expander (확관)', _src:'row 19·22·23 + Expander(RB)!J4',
+    m1Base:{v:177,u:'s',l:'#1호기 기본'},   m1Per:{v:12,u:'s',l:'#1호기 확관 1회당'},
+    m1FeedAdd:{v:3500,u:'mm',l:'#1호기 이송 가산 (L+3500)'},
+    m1FeedDiv:{v:300,u:'',l:'#1호기 이송 분모 (/300)'},
+    m2Base:{v:165,u:'s',l:'#2호기 기본'},   m2Per:{v:7.5,u:'s',l:'#2호기 확관 1회당'},
+    rbBase:{v:234,u:'s',l:'R/B 기본'},      rbPer:{v:15,u:'s',l:'R/B 확관 1회당'},
+    rbOffset:{v:2,u:'회',l:'R/B 확관 횟수 차감 (N−2)'},
+    marginM1:{v:150,u:'mm',l:'#1·#2호기 Step 여유 (다이−150)'},
+    marginM1Small:{v:100,u:'mm',l:'#1호기 소형 다이 여유 (step≤150 → −100)'},
+    marginRB:{v:90,u:'mm',l:'R/B Step 여유 (다이−90)'},
+    setupDrawbar:{v:270,u:'분',l:'셋업 — Drawbar 교체'},
+    setupHead:{v:150,u:'분',l:'셋업 — Head 교체'},
+    setupDie:{v:90,u:'분',l:'셋업 — Die 교체'} },
+  EndFacing: { _label:'14. End-Facing', _src:'row 24',
+    base:{v:363,u:'s',l:'기본 (저속절삭은 표 참조)'} },
+  OuterBead: { _label:'15. Outer bead removal', _src:'row 25',
+    base:{v:55,u:'s',l:'기본'}, feedDiv:{v:20,u:'',l:'이송 분모 (L/20, 컨베이어 1.2m/min)'} },
+  HydroTest: { _label:'16. Hydraulic Tester (수압)', _src:'row 26',
+    base:{v:90,u:'s',l:'기본'}, riseSec:{v:30,u:'s',l:'압력 상승'},
+    longAdd:{v:20,u:'s',l:'18M 충수 가산'}, longThresholdM:{v:17,u:'m',l:'18M 판정 기준 길이'},
+    bigInch:{v:36,u:'"',l:'대구경 판정 (이상이면 2차압빼기·에어벤트 상수 변경)'} },
+  FinalUT: { _label:'17. Final-UT', _src:'row 27',
+    base:{v:200,u:'s',l:'기본'}, scanDiv:{v:216.7,u:'',l:'스캔 분모 (L/216.7)'} },
+  RT: { _label:'18. RT (X-ray)', _src:'row 28~29',
+    base450:{v:325,u:'s',l:'기본 (전장 450kV)'}, base320:{v:345,u:'s',l:'기본 (전장 320kV)'},
+    shotLen:{v:140,u:'mm',l:'1회 촬영 길이 (ceil(L/140))'},
+    shotSec:{v:7.5,u:'s',l:'1회 촬영 시간'},
+    defectSec:{v:120,u:'s',l:'불량 1개소당 (전장)'},
+    endBase:{v:240,u:'s',l:'기본 (관단 End-RT)'},
+    endLead:{v:280,u:'mm',l:'관단 선단 여유 (L−280)'},
+    endDivA:{v:140,u:'',l:'관단 분모 A'}, endDivB:{v:180,u:'',l:'관단 분모 B'},
+    endDefectSec:{v:60,u:'s',l:'불량 1개소당 (관단)'} },
+  Packing: { _label:'19. 포장', _src:'row 30',
+    base:{v:634,u:'s',l:'기본'},
+    refLen:{v:45000,u:'mm',l:'이송 기준 길이 ((45000−L)/270)'},
+    feedDiv:{v:270,u:'',l:'이송 분모'},
+    markSec:{v:30,u:'s',l:'마킹 1건당 (×마킹사양×관단)'},
+    extraEvery:{v:10,u:'본',l:'추가 검사 주기 (n본마다)'},
+    extraSec:{v:250,u:'s',l:'추가 검사 소요'} },
+};
+
+/* 편집 가능한 현재값. REF.std[공정][키] 로 읽는다. */
+function refClone(o) { return JSON.parse(JSON.stringify(o)); }
+const REF = { std: refClone(REF_STD_DEFAULT), co: null, cap: {} };
+/** 설비 대수 반영. patch = { 노드ID: 대수 } — 빈 객체면 코드 기본값 사용 */
+function setRefCap(patch) {
+  REF.cap = {};
+  if (!patch) return REF.cap;
+  for (const id in patch) {
+    const v = Math.round(+patch[id]);
+    if (isFinite(v) && v >= 1 && v <= 20) REF.cap[id] = v;
+  }
+  return REF.cap;
+}
+/** 화면에서 고친 값을 반영. patch = { 공정: { 키: 숫자 } }
+    ★ **항상 기본값으로 되돌린 뒤 패치를 얹는다.** 빈 객체 {} 를 넘기면 전부 원래대로가 된다.
+      (종전에는 {} 가 truthy 라 "패치 없음"으로 흘러가 직전 수정값이 그대로 남았다) */
+function setRefStd(patch) {
+  REF.std = refClone(REF_STD_DEFAULT);
+  if (!patch) return REF.std;
+  for (const proc in patch) {
+    if (!REF.std[proc]) continue;
+    for (const k in patch[proc]) {
+      if (REF.std[proc][k] && typeof patch[proc][k] === 'number' && isFinite(patch[proc][k]))
+        REF.std[proc][k].v = patch[proc][k];
+    }
+  }
+  return REF.std;
+}
+/** 기본값과 다른 항목만 추린다 — 내보내기·변경 표시용 */
+function refDiff() {
+  const out = {};
+  for (const proc in REF.std) for (const k in REF.std[proc]) {
+    if (k[0] === '_') continue;
+    if (REF.std[proc][k].v !== REF_STD_DEFAULT[proc][k].v) {
+      (out[proc] = out[proc] || {})[k] = REF.std[proc][k].v;
+    }
+  }
+  return out;
+}
+/** 짧은 참조 — RSTD.EdgeMiller.base18 처럼 쓴다.
+    (flow.js 안에 지역변수 R 이 따로 있어 이름을 구분한다) */
+const RSTD = new Proxy({}, { get: (_, proc) =>
+  new Proxy({}, { get: (__, key) => (REF.std[proc] && REF.std[proc][key]) ? REF.std[proc][key].v : undefined }) });
+
 const STD = {};
 
 /* 1~2. Edge Miller (면취) */
 /* 엑셀 비고 「※ 첫 본 생산 시: +1분 50초」 — 오더의 첫 본에만 110초를 더한다.
    seqInOrder 는 flow.js 가 넘기는 오더 안 본 번호(1부터). 종전에는 이 항이 빠져 있었다. */
-const EM_FIRST_PIECE_SEC = 110;
 STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
+  const E = RSTD.EdgeMiller;
   const L = s.L, Lm = L / 1000;
   const feed = pickRange(T.emFeed, Lm);
-  const base = line === '18M' ? 348 : 283;
-  const first = (seqInOrder === 1) ? EM_FIRST_PIECE_SEC : 0;
+  const base = line === '18M' ? E.base18 : E.base12;
+  const first = (seqInOrder === 1) ? E.firstPiece : 0;
   if (s.grade === 'hiMn') {
-    const b = line === '18M' ? 2163 : 1810;
-    const sec = b + L * 0.06 + feed / 215.6 + first;
-    return { sec, expr: `${b} + L×0.06 + feed/215.6  (고망간)${first ? ' + 110(첫 본)' : ''}`,
-      terms: [['기본(고망간)', b], ['길이항 L×0.06', L * 0.06], ['피딩기 feed/215.6', feed / 215.6]]
-        .concat(first ? [['첫 본 생산 +1분50초', first]] : []) };
+    const b = line === '18M' ? E.hiMn18 : E.hiMn12;
+    const sec = b + L * E.lenA + feed / E.feedDiv + first;
+    return { sec, expr: `${b} + L×${E.lenA} + feed/${E.feedDiv}  (고망간)${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
+      terms: [['기본(고망간)', b], [`길이항 L×${E.lenA}`, L * E.lenA], [`피딩기 feed/${E.feedDiv}`, feed / E.feedDiv]]
+        .concat(first ? [['첫 본 생산 가산', first]] : []) };
   }
   const row = T.emSpeed.find(r => s.t >= r.tmin && s.t <= r.tmax) || T.emSpeed[1];
   const v = s.grade === 'high' ? row.high : row.normal;   // 고속 Setting [m/min]
-  const sec = base - 123 / v + feed / 215.6 + L * (0.06 / v - 0.0016) + first;
-  return { sec, expr: `${base} − 123/v + feed/215.6 + L×(0.06/v − 0.0016), v=${v}m/min, feed=${feed}mm${first ? ' + 110(첫 본)' : ''}`,
-    terms: [['기본', base], ['−123/v', -123 / v], ['피딩기 feed/215.6', feed / 215.6],
-            ['길이항', L * (0.06 / v - 0.0016)]].concat(first ? [['첫 본 생산 +1분50초', first]] : []) };
+  const sec = base - E.vNum / v + feed / E.feedDiv + L * (E.lenA / v - E.lenB) + first;
+  return { sec, expr: `${base} − ${E.vNum}/v + feed/${E.feedDiv} + L×(${E.lenA}/v − ${E.lenB}), v=${v}m/min, feed=${feed}mm${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
+    terms: [['기본', base], [`−${E.vNum}/v`, -E.vNum / v], [`피딩기 feed/${E.feedDiv}`, feed / E.feedDiv],
+            ['길이항', L * (E.lenA / v - E.lenB)]].concat(first ? [['첫 본 생산 가산', first]] : []) };
 };
 
 /* 3~4. Pre Bender */
 STD.PreBender = (s, line) => {
+  const P = RSTD.PreBender;
   const pitch = pickRange(T.preBenderPitch, s.t);
-  const base = line === '18M' ? 46.5 : 30;
-  const n = ceil((s.L - 2200) / pitch);
-  const sec = base + (pitch / 290 + 17.2) * n;
-  return { sec, expr: `${base} + (pitch/290 + 17.2) × ceil((L−2200)/pitch), pitch=${pitch}mm, n=${n}`,
-    terms: [['기본', base], [`성형 ${n}회`, (pitch / 290 + 17.2) * n]] };
+  const base = line === '18M' ? P.base18 : P.base12;
+  const n = ceil((s.L - P.lead) / pitch);
+  const sec = base + (pitch / P.pitchDiv + P.perStroke) * n;
+  return { sec, expr: `${base} + (pitch/${P.pitchDiv} + ${P.perStroke}) × ceil((L−${P.lead})/pitch), pitch=${pitch}mm, n=${n}`,
+    terms: [['기본', base], [`성형 ${n}회`, (pitch / P.pitchDiv + P.perStroke) * n]] };
 };
 
 /* 5~6. Press Bender */
 STD.PressBender = (s, line) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
   const x1 = pickInch(T.pressX1, inch);
-  const base = line === '18M' ? 203 : 178;
-  const k = line === '18M' ? 32 : 36;
-  const sec = base + (s.L / 1000) / 0.708 - s.od / 170 + x1 * k;
-  return { sec, expr: `${base} + L[m]/0.708 − OD/170 + X1×${k}, X1=${x1}회(${inch}")`,
-    terms: [['기본', base], ['길이항 L/0.708', (s.L / 1000) / 0.708], ['외경 보정 −OD/170', -s.od / 170],
+  const P = RSTD.PressBender;
+  const base = line === '18M' ? P.base18 : P.base12;
+  const k = line === '18M' ? P.k18 : P.k12;
+  const sec = base + (s.L / 1000) / P.lenDiv - s.od / P.odDiv + x1 * k;
+  return { sec, expr: `${base} + L[m]/${P.lenDiv} − OD/${P.odDiv} + X1×${k}, X1=${x1}회(${inch}")`,
+    terms: [['기본', base], [`길이항 L/${P.lenDiv}`, (s.L / 1000) / P.lenDiv], [`외경 보정 −OD/${P.odDiv}`, -s.od / P.odDiv],
             [`X1 Side Press ${x1}회`, x1 * k]] };
 };
 
 /* 7. Gap Press  (두께 25T 초과 시에만 투입) */
 STD.GapPress = (s) => {
+  const P = RSTD.GapPress;
   const Lm = s.L / 1000;
-  const seg = ceil(Lm / 6);
+  const seg = ceil(Lm / P.segLen);
   /* 엑셀 원문 (row 14)
        464s − (제품 Spec 길이/0.3) + [{('제품 Spec 길이/6M' 올림)x(45+20)} x2] x2
      비고 : ※ X70 이상인 경우: [ ] x2 적용
@@ -99,16 +234,16 @@ STD.GapPress = (s) => {
        같아서 Gap Press 를 지나는 제품은 **전부 high** 가 되어, 실질적으로 늘 4배였다.
        (2026-08-14 전수 감사) */
   const hi = s.grade === 'high';          // X70 이상 → 대괄호 밖 ×2
-  const bracket = seg * (45 + 20) * 2 * (hi ? 2 : 1);
-  const sec = 464 - Lm / 0.3 + bracket;
-  return { sec, expr: `464 − L[m]/0.3 + [ceil(L/6)×65×2]${hi ? '×2(X70↑)' : ''}, ceil(L/6)=${seg}`,
-    terms: [['기본', 464], ['길이 보정 −L/0.3', -Lm / 0.3], [`프레스 ${seg}구간`, bracket]] };
+  const bracket = seg * P.per * P.mult * (hi ? P.x70 : 1);
+  const sec = P.base - Lm / P.lenDiv + bracket;
+  return { sec, expr: `${P.base} − L[m]/${P.lenDiv} + [ceil(L/${P.segLen})×${P.per}×${P.mult}]${hi ? `×${P.x70}(X70↑)` : ''}, ceil(L/${P.segLen})=${seg}`,
+    terms: [['기본', P.base], [`길이 보정 −L/${P.lenDiv}`, -Lm / P.lenDiv], [`프레스 ${seg}구간`, bracket]] };
 };
 
 /* 8. Tack Welder (태그 웰딩) */
 STD.TackWelder = (s, line) => {
   const v = pickRange(T.tackWeld, s.t);          // mm/s
-  const base = line === '18M' ? 185 : 200;
+  const base = line === '18M' ? RSTD.TackWelder.base18 : RSTD.TackWelder.base12;
   const sec = base + s.L / v;
   return { sec, expr: `${base} + L / v,  v=${v.toFixed(1)}mm/s (WPS t=${s.t})`,
     terms: [['이송·Gap조정', base], ['용접 L/v', s.L / v]] };
@@ -118,7 +253,7 @@ STD.TackWelder = (s, line) => {
 STD.InsideWelder = (s, line) => {
   const v = pickRange(T.insideWeld, s.t);
   const p = pickRange(T.insideWeld, s.t, 3);
-  const base = line === '18M' ? 670 : 710;
+  const base = line === '18M' ? RSTD.InsideWelder.base18 : RSTD.InsideWelder.base12;
   const sec = base + s.L / v;
   return { sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
     terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] };
@@ -128,7 +263,7 @@ STD.InsideWelder = (s, line) => {
 STD.OutsideWelder = (s, line) => {
   const v = pickRange(T.outsideWeld, s.t);
   const p = pickRange(T.outsideWeld, s.t, 3);
-  const base = line === '18M' ? 510 : 550;
+  const base = line === '18M' ? RSTD.OutsideWelder.base18 : RSTD.OutsideWelder.base12;
   const sec = base + s.L / v;
   return { sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
     terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] };
@@ -136,10 +271,11 @@ STD.OutsideWelder = (s, line) => {
 
 /* 11. 1st-UT (관단탭 절단 포함) */
 STD.FirstUT = (s) => {
+  const P = RSTD.FirstUT;
   const cv = pickRange(T.utCut, s.t);
-  const sec = 240 + s.L / 150 + (9600 / cv) * 2;
-  return { sec, expr: `240 + L/150 + (9600/절단속도)×2, 절단속도=${cv}`,
-    terms: [['기본', 240], ['이송 L/150', s.L / 150], ['탭 절단 ×2', (9600 / cv) * 2]] };
+  const sec = P.base + s.L / P.feedDiv + (P.cutLen / cv) * P.cutTimes;
+  return { sec, expr: `${P.base} + L/${P.feedDiv} + (${P.cutLen}/절단속도)×${P.cutTimes}, 절단속도=${cv}`,
+    terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv], [`탭 절단 ×${P.cutTimes}`, (P.cutLen / cv) * P.cutTimes]] };
 };
 
 /* ====================================================================
@@ -254,8 +390,10 @@ function dieDuplicates(machine) {
    2026-08-14 확인. 종전 R/B 식은 이 −90 을 빠뜨리고 다이 Size 를 그대로 나눠
    확관 횟수를 과소 계상하고 있었다.
    -------------------------------------------------------------------- */
-const STEP_MARGIN = { M1: 150, M2: 150, M3: 150, BOTH: 150, RB: 90 };
-function stepMargin(machine) { return STEP_MARGIN[machine] || 150; }
+function stepMargin(machine) {
+  const E = RSTD.Expander;
+  return machine === 'RB' ? E.marginRB : E.marginM1;
+}
 
 /** 확관 Step Size / 다이 정보 (호기별)
     step  = 다이표 값(= 다이 Size)
@@ -310,7 +448,8 @@ function expanderN(s, machine) {
        예) OD508 t9.5 step170 → 분모 20 → 11.5m 에서 N=575 회 (2,987s → 7,127s).
        종전에는 하한 50 을 두었으나 정본과 어긋나므로 제거했다.
        분모가 0 이하가 되는 표상의 step 은 없지만, 만약을 대비해 0 나눗셈만 막는다. */
-    const den = step - (step <= 150 ? 100 : 150);
+    const E = RSTD.Expander;
+    const den = step - (step <= E.marginM1 ? E.marginM1Small : E.marginM1);
     return Math.round(s.L / (den > 0 ? den : 1));
   }
   let n = ceil((s.L - 500) / step) + 2;
@@ -323,8 +462,9 @@ function expanderN(s, machine) {
 STD.Expander = (s, machine, cfg) => {
   const tag = EXP_NMODE === 'ortools' ? '[운영모델 N식]' : '[엑셀 N식]';
   if (machine === 'BOTH') {                 // 14.021m 초과 → #1·#2호기 동시 가동
+    const E = RSTD.Expander;
     const n1 = expanderN(s, 'M1'), n2 = expanderN(s, 'M2');
-    const a = 177 + n1 * 12 + (s.L + 3500) / 300, b = 165 + n2 * 7.5;
+    const a = E.m1Base + n1 * E.m1Per + (s.L + E.m1FeedAdd) / E.m1FeedDiv, b = E.m2Base + n2 * E.m2Per;
     return { sec: Math.max(a, b),
       expr: `#1·#2호기 동시 가동: max(#1 ${a.toFixed(0)}s, #2 ${b.toFixed(0)}s) ${tag}`,
       terms: [['#1호기 소요', a], ['#2호기 소요', b], ['동시 가동 → max 적용', Math.max(a, b)]] };
@@ -346,23 +486,26 @@ STD.Expander = (s, machine, cfg) => {
        2026-08-14 초안에서 「기본 상수 234−15=219」로 읽었으나, 엑셀에 219 라는 수는
        어디에도 없어 지어낸 값이 됩니다. 문자 그대로의 해석으로 되돌렸습니다.
        cfg.rbHeatRule = 'none' 으로 두면 전 제품에 (N−2)×15 를 적용합니다. */
+    const E = RSTD.Expander;
     const heat = !!s.heat && (!cfg || cfg.rbHeatRule !== 'none');
-    const add = heat ? 0 : Math.max(n - 2, 0) * 15;
-    const sec = 234 + add;
+    const add = heat ? 0 : Math.max(n - E.rbOffset, 0) * E.rbPer;
+    const sec = E.rbBase + add;
     return { sec,
       expr: heat
-        ? `R/B: 234 고정 (옥외 열처리 → 「15초 제외」),  참고 N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−90)`
-        : `R/B: 234 + (ROUNDUP(L/StepSize)−2)×15,  N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−90)`,
-      terms: [['기본', 234]].concat(heat ? [] : [[`확관 ${n}회 (−2)×15s`, add]]) };
+        ? `R/B: ${E.rbBase} 고정 (옥외 열처리 → 「15초 제외」),  참고 N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−${E.marginRB})`
+        : `R/B: ${E.rbBase} + (ROUNDUP(L/StepSize)−${E.rbOffset})×${E.rbPer},  N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−${E.marginRB})`,
+      terms: [['기본', E.rbBase]].concat(heat ? [] : [[`확관 ${n}회 (−${E.rbOffset})×${E.rbPer}s`, add]]) };
   }
+  const E = RSTD.Expander;
   if (machine === 'M1') {
-    const sec = 177 + n * 12 + (s.L + 3500) / 300;
-    return { sec, expr: `#1호기: 177 + N×12 + (L+3500)/300,  N=${n}회, 다이 ${d.step}mm → StepSize ${d.recipe}mm ${tag}`,
-      terms: [['기본', 177], [`확관 ${n}회 ×12s`, n * 12], ['이송 (L+3500)/300', (s.L + 3500) / 300]] };
+    const sec = E.m1Base + n * E.m1Per + (s.L + E.m1FeedAdd) / E.m1FeedDiv;
+    return { sec, expr: `#1호기: ${E.m1Base} + N×${E.m1Per} + (L+${E.m1FeedAdd})/${E.m1FeedDiv},  N=${n}회, 다이 ${d.step}mm → StepSize ${d.recipe}mm ${tag}`,
+      terms: [['기본', E.m1Base], [`확관 ${n}회 ×${E.m1Per}s`, n * E.m1Per],
+              [`이송 (L+${E.m1FeedAdd})/${E.m1FeedDiv}`, (s.L + E.m1FeedAdd) / E.m1FeedDiv]] };
   }
-  const sec = 165 + n * 7.5;
-  return { sec, expr: `#2호기: 165 + N×7.5,  N=${n}회, 다이 ${d.step}mm (${d.dieT}) ${tag}`,
-    terms: [['기본', 165], [`확관 ${n}회 ×7.5s`, n * 7.5]] };
+  const sec = E.m2Base + n * E.m2Per;
+  return { sec, expr: `#2호기: ${E.m2Base} + N×${E.m2Per},  N=${n}회, 다이 ${d.step}mm (${d.dieT}) ${tag}`,
+    terms: [['기본', E.m2Base], [`확관 ${n}회 ×${E.m2Per}s`, n * E.m2Per]] };
 };
 
 /* 14. End-Facing (면취기) */
@@ -379,89 +522,124 @@ STD.EndFacing = (s) => {
   };
   for (const r of T.endFacing) { const d = score(r); if (d < bd) { bd = d; best = r; } }
   if (!best) best = T.endFacing[T.endFacing.length - 1];
-  const sec = 363 + best[3];
-  return { sec, expr: `363 + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = 363 + ${best[3]}s`,
-    terms: [['기본', 363], ['저속 절삭(안전계수 K=1.5)', best[3]]] };
+  const B = RSTD.EndFacing.base;
+  const sec = B + best[3];
+  return { sec, expr: `${B} + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = ${B} + ${best[3]}s`,
+    terms: [['기본', B], ['저속 절삭(안전계수 K=1.5)', best[3]]] };
 };
 
 /* 15. Outer bead removal (슬러그/비드 제거) */
-STD.OuterBead = (s) => ({
-  sec: 55 + s.L / 20, expr: `55 + L/20  (컨베이어 1.2m/min)`,
-  terms: [['기본', 55], ['이송 L/20', s.L / 20]]
-});
+STD.OuterBead = (s) => {
+  const P = RSTD.OuterBead;
+  return { sec: P.base + s.L / P.feedDiv, expr: `${P.base} + L/${P.feedDiv}  (컨베이어 1.2m/min)`,
+    terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv]] };
+};
 
 /* 16. Hydraulic Tester (수압) */
 STD.HydroTest = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
+  const P = RSTD.HydroTest;
   let fill = pickInch(T.hydroFill, inch);
-  if (s.L / 1000 >= 17) fill += 20;                       // 18미터일 시 20초씩 추가
+  if (s.L / 1000 >= P.longThresholdM) fill += P.longAdd;   // 18미터일 시 20초씩 추가
   /* 「36" 이상」 판정은 **공칭 인치**로 한다.
      종전에는 짝수 스냅(round(inch/2)×2)한 값을 썼기 때문에 OD889(정확히 35")가 36 으로 올라가
      2차 압빼기·에어 벤트 상수가 300/180 으로 잘못 바뀌었다(+180s). (2026-08-14 전수 감사) */
-  const big = Math.round(odInch(s.od)) >= 36;
+  const big = Math.round(odInch(s.od)) >= P.bigInch;
   const de = big ? T.hydroConst.deflate2nd_36up : T.hydroConst.deflate2nd;
   const av = big ? T.hydroConst.airVent_36up : T.hydroConst.airVent;
   const hold = s.holdSec != null ? s.holdSec : 60;        // MES 제작시방서 조회값
-  const sec = 90 + fill + 30 + hold + de + av;
-  return { sec, expr: `90 + 충수(${fill}s) + 압력상승(30s) + 유지(${hold}s) + 2차압빼기(${de}s) + 에어벤트(${av}s)`,
-    terms: [['기본', 90], [`충수 ${inch}"`, fill], ['압력 상승', 30], ['압력 유지(MES)', hold],
+  const sec = P.base + fill + P.riseSec + hold + de + av;
+  return { sec, expr: `${P.base} + 충수(${fill}s) + 압력상승(${P.riseSec}s) + 유지(${hold}s) + 2차압빼기(${de}s) + 에어벤트(${av}s)`,
+    terms: [['기본', P.base], [`충수 ${inch}"`, fill], ['압력 상승', P.riseSec], ['압력 유지(MES)', hold],
             ['2차 압빼기', de], ['에어 벤트', av]] };
 };
 
 /* 17. Final-UT */
-STD.FinalUT = (s) => ({
-  sec: 200 + s.L / 216.7, expr: `200 + L/216.7`,
-  terms: [['기본', 200], ['스캔 L/216.7', s.L / 216.7]]
-});
+STD.FinalUT = (s) => {
+  const P = RSTD.FinalUT;
+  return { sec: P.base + s.L / P.scanDiv, expr: `${P.base} + L/${P.scanDiv}`,
+    terms: [['기본', P.base], [`스캔 L/${P.scanDiv}`, s.L / P.scanDiv]] };
+};
 
 /* 18. RT (X-ray) */
 STD.RT = (s) => {
+  const P = RSTD.RT;
   const df = s.defects || 0;
   if (s.rtType === 'End-RT') {
-    const sec = 240 + (s.L - 280) / 140 + s.L / 180 + df * 60;
-    return { sec, expr: `End-RT: 240 + (L−280)/140 + L/180 + 불량×60`,
-      terms: [['기본', 240], ['(L−280)/140', (s.L - 280) / 140], ['L/180', s.L / 180], [`불량 ${df}개소`, df * 60]] };
+    const sec = P.endBase + (s.L - P.endLead) / P.endDivA + s.L / P.endDivB + df * P.endDefectSec;
+    return { sec, expr: `End-RT: ${P.endBase} + (L−${P.endLead})/${P.endDivA} + L/${P.endDivB} + 불량×${P.endDefectSec}`,
+      terms: [['기본', P.endBase], [`(L−${P.endLead})/${P.endDivA}`, (s.L - P.endLead) / P.endDivA],
+              [`L/${P.endDivB}`, s.L / P.endDivB], [`불량 ${df}개소`, df * P.endDefectSec]] };
   }
-  const base = s.rtType === '320kV' ? 345 : 325;
-  const shots = ceil(s.L / 140);
-  const sec = base + shots * 7.5 + df * 120;
-  return { sec, expr: `${base} + ceil(L/140)×7.5 + 불량×120,  ${shots}회 촬영`,
-    terms: [['기본', base], [`촬영 ${shots}회`, shots * 7.5], [`불량 ${df}개소`, df * 120]] };
+  const base = s.rtType === '320kV' ? P.base320 : P.base450;
+  const shots = ceil(s.L / P.shotLen);
+  const sec = base + shots * P.shotSec + df * P.defectSec;
+  return { sec, expr: `${base} + ceil(L/${P.shotLen})×${P.shotSec} + 불량×${P.defectSec},  ${shots}회 촬영`,
+    terms: [['기본', base], [`촬영 ${shots}회`, shots * P.shotSec], [`불량 ${df}개소`, df * P.defectSec]] };
 };
 
 /* 19. 포장 */
 STD.Packing = (s, _l, seq) => {
-  const mk = 30 * (s.markSpec || 2) * (s.markEnd || 2);
-  const extra = (seq && seq % 10 === 0) ? 250 : 0;         // 1/10본마다 추가 검사
-  const sec = 634 + (45000 - s.L) / 270 + mk + extra;
-  return { sec, expr: `634 + (45000−L)/270 + 30×마킹사양(${s.markSpec || 2})×관단(${s.markEnd || 2})${extra ? ' + 250(10본째)' : ''}`,
-    terms: [['기본', 634], ['이송 (45000−L)/270', (45000 - s.L) / 270], ['마킹', mk]].concat(extra ? [['10본째 추가검사', extra]] : []) };
+  const P = RSTD.Packing;
+  const mk = P.markSec * (s.markSpec || 2) * (s.markEnd || 2);
+  const extra = (seq && P.extraEvery > 0 && seq % P.extraEvery === 0) ? P.extraSec : 0;  // n본마다 추가 검사
+  const sec = P.base + (P.refLen - s.L) / P.feedDiv + mk + extra;
+  return { sec, expr: `${P.base} + (${P.refLen}−L)/${P.feedDiv} + ${P.markSec}×마킹사양(${s.markSpec || 2})×관단(${s.markEnd || 2})${extra ? ` + ${P.extraSec}(${P.extraEvery}본째)` : ''}`,
+    terms: [['기본', P.base], [`이송 (${P.refLen}−L)/${P.feedDiv}`, (P.refLen - s.L) / P.feedDiv], ['마킹', mk]]
+      .concat(extra ? [[`${P.extraEvery}본째 추가검사`, extra]] : []) };
 };
 
 /* --------------------------------------------------------------------
    설비 전환(Changeover) 시간 [초]  — PPT: "설비 전환 시간을 최소화하도록 스케줄링 필요"
    -------------------------------------------------------------------- */
-const CHANGEOVER = {
-  EdgeMiller:   { od: 0,    t: 1800, L: 0    },  // X-Tool 교체 30분 (25T 경계)
-  PreBender:    { od: 1800, t: 900,  L: 0    },  // Upper/Lower Tool 교체
-  PressBender:  { od: 3600, t: 0,    L: 0    },  // 상툴 1시간 / 하툴
-  GapPress:     { od: 600,  t: 0,    L: 0    },
-  TackWelder:   { od: 300,  t: 300,  L: 0    },
-  InsideWelder: { od: 600,  t: 900,  L: 0    },  // WPS 변경
-  OutsideWelder:{ od: 600,  t: 900,  L: 0    },
-  FirstUT:      { od: 150,  t: 150,  L: 0    },  // UT Calibration 2.5min
-  Expander:     { od: 5400, t: 1800, L: 3600 },  // (폴백) 실제는 EXP_SETUP 공구 계층 룰 사용
-  EndFacing:    { od: 3600, t: 600,  L: 0    },  // 클램프 교체 60분(외경 변화 시)
-  OuterBead:    { od: 120,  t: 0,    L: 0    },
-  HydroTest:    { od: 3000, t: 0,    L: 0    },  // 수압 면판 교체 40~60분
-  FinalUT:      { od: 150,  t: 150,  L: 0    },
-  RT:           { od: 300,  t: 300,  L: 0    },
-  Packing:      { od: 300,  t: 0,    L: 600  },
+/* 설비 전환시간 [초] — 기준정보(「전환시간」 탭)에서 고칠 수 있다.
+   od/t/L = 직전 본과 **외경 / 두께 / 길이**가 달라졌을 때 드는 시간. 가장 큰 값 하나만 적용된다. */
+const REF_CO_DEFAULT = {
+  EdgeMiller:   { od: 0,    t: 1800, L: 0,    _l:'Edge Miller',    _n:'X-Tool 교체 30분 (25T 경계)' },
+  PreBender:    { od: 1800, t: 900,  L: 0,    _l:'Pre Bender',     _n:'Upper/Lower Tool 교체' },
+  PressBender:  { od: 3600, t: 0,    L: 0,    _l:'Press Bender',   _n:'상툴 1시간 / 하툴' },
+  GapPress:     { od: 600,  t: 0,    L: 0,    _l:'Gap Press',      _n:'' },
+  TackWelder:   { od: 300,  t: 300,  L: 0,    _l:'Tack Welder',    _n:'' },
+  InsideWelder: { od: 600,  t: 900,  L: 0,    _l:'Inside Welder',  _n:'WPS 변경' },
+  OutsideWelder:{ od: 600,  t: 900,  L: 0,    _l:'Outside Welder', _n:'WPS 변경' },
+  FirstUT:      { od: 150,  t: 150,  L: 0,    _l:'1st-UT',         _n:'UT Calibration 2.5분' },
+  Expander:     { od: 5400, t: 1800, L: 3600, _l:'Expander',       _n:'폴백값 — 실제는 공구 계층 룰(Drawbar/Head/Die) 사용' },
+  EndFacing:    { od: 3600, t: 600,  L: 0,    _l:'End-Facing',     _n:'클램프 교체 60분 (외경 변화 시)' },
+  OuterBead:    { od: 120,  t: 0,    L: 0,    _l:'Outer bead',     _n:'' },
+  HydroTest:    { od: 3000, t: 0,    L: 0,    _l:'Hydraulic Tester',_n:'수압 면판 교체 40~60분' },
+  FinalUT:      { od: 150,  t: 150,  L: 0,    _l:'Final-UT',       _n:'' },
+  RT:           { od: 300,  t: 300,  L: 0,    _l:'RT',             _n:'' },
+  Packing:      { od: 300,  t: 0,    L: 600,  _l:'포장',           _n:'' },
 };
+const CHANGEOVER = refClone(REF_CO_DEFAULT);
+REF.co = CHANGEOVER;
+/** 전환시간 반영. patch = { 공정: { od|t|L: 초 } } */
+function setRefCo(patch) {
+  for (const k in REF_CO_DEFAULT) Object.assign(CHANGEOVER[k], REF_CO_DEFAULT[k]);   // 항상 초기화 후 적용
+  if (!patch) return CHANGEOVER;
+  for (const st in patch) {
+    if (!CHANGEOVER[st]) continue;
+    for (const k of ['od', 't', 'L']) {
+      const v = patch[st][k];
+      if (typeof v === 'number' && isFinite(v) && v >= 0) CHANGEOVER[st][k] = v;
+    }
+  }
+  return CHANGEOVER;
+}
+function refCoDiff() {
+  const out = {};
+  for (const st in CHANGEOVER) for (const k of ['od', 't', 'L'])
+    if (CHANGEOVER[st][k] !== REF_CO_DEFAULT[st][k]) (out[st] = out[st] || {})[k] = CHANGEOVER[st][k];
+  return out;
+}
 /* 확관 셋업 — 공구 계층 룰 (세아제강 운영 최적화 모델 specs.get_setup_time_val)
    드로바 교체 270분 > 헤드 교체 150분 > 다이 교체 90분 > 동일 0
    od/t 변화폭이 아니라 "장착 공구가 실제로 바뀌는가"로 판정한다. */
-const EXP_SETUP = { drawbar: 270 * 60, head: 150 * 60, die: 90 * 60 };
+/* 확관 셋업 — 분 단위 기준정보에서 읽어 초로 환산한다 */
+const EXP_SETUP = new Proxy({}, { get: (_, k) => {
+  const E = RSTD.Expander;
+  return ({ drawbar: E.setupDrawbar, head: E.setupHead, die: E.setupDie }[k] || 0) * 60;
+} });
 let EXP_SETUP_MODE = 'tool';                       // 'tool' | 'legacy'
 function setExpSetupMode(m) { EXP_SETUP_MODE = (m === 'legacy') ? 'legacy' : 'tool'; }
 function expanderSetup(prev, cur, machine) {

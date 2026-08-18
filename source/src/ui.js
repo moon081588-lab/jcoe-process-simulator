@@ -100,6 +100,7 @@ function runSim() {
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  if($('refKpi')) renderRefKpi();
   if($('mcHint')) renderStNote();
   if($('periodSum')) renderPeriod();
   if($('wizSteps')) renderWiz();
@@ -1505,5 +1506,228 @@ function boot(){
   $('btnDice').onclick=newSeed;
   /* 재계산은 invalidatePlan() 안에서 runSim() 이 이미 수행한다. 여기서는 계산기 탭만 갱신. */
   ['cfgExpSetup','cfgExpN','cfgApi5l'].forEach(id=>{ if($(id)) $(id).addEventListener('change', calc); });
-  runSim(); calc(); requestAnimationFrame(loop);
+  runSim(); calc(); initRefTab(); requestAnimationFrame(loop);
+}
+
+/* ====================================================================
+   기준정보 탭 — 현장에서 코드·빌드 없이 숫자를 고치는 화면
+   --------------------------------------------------------------------
+   · 설비 대수 / 전환시간 / 표준시간 상수를 화면에서 직접 편집
+   · 고치면 즉시 재시뮬 → 완료일·병목 변화가 바로 옆에 나온다
+   · 원본과 다른 칸은 노란색 + 되돌리기(↺)
+   · JSON 한 장으로 내보내고 불러온다 (메일로 주고받기 · 다음에 그대로 복원)
+   ==================================================================== */
+let REF_EDIT = { std:{}, co:{}, cap:{} };   // 기본값과 다른 것만 담는다
+let REF_BASE = null;                        // 아무것도 안 고친 상태의 시뮬 결과 (영향 비교용)
+
+/** 편집값을 엔진에 밀어 넣고 다시 계산한다 */
+function refApply(rerender = true) {
+  setRefStd(REF_EDIT.std);
+  setRefCo(REF_EDIT.co);
+  setRefCap(REF_EDIT.cap);
+  invalidatePlan();          // 확관 최적화 결과는 상수가 바뀌면 무효
+  runSim(); calc();
+  if (rerender) renderRef();
+  else renderRefKpi();
+}
+
+function refCount() {
+  let n = 0;
+  for (const p in REF_EDIT.std) n += Object.keys(REF_EDIT.std[p]).length;
+  for (const p in REF_EDIT.co)  n += Object.keys(REF_EDIT.co[p]).length;
+  n += Object.keys(REF_EDIT.cap).length;
+  return n;
+}
+
+/** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다 */
+function refSet(group, a, b, v) {
+  const G = REF_EDIT[group];
+  if (v === null) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
+  else { (G[a] = G[a] || {})[b] = v; }
+  refApply();
+}
+function refSetCap(id, v) {
+  if (v === null) delete REF_EDIT.cap[id]; else REF_EDIT.cap[id] = v;
+  refApply();
+}
+
+/* ---- 편집 칸 하나 만들기 ---------------------------------------------- */
+function refInput(cur, def, onChange, width) {
+  const chg = Math.abs(cur - def) > 1e-9;
+  const id = 'ri' + (refInput._n = (refInput._n || 0) + 1);
+  setTimeout(() => {
+    const el = $(id); if (!el) return;
+    el.onchange = () => {
+      const v = parseFloat(el.value);
+      if (!isFinite(v)) { el.value = cur; return; }
+      onChange(Math.abs(v - def) < 1e-9 ? null : v);
+    };
+    const u = $(id + 'u'); if (u) u.onclick = () => onChange(null);
+  }, 0);
+  return `<input id="${id}" class="refin${chg ? ' chg' : ''}" type="number" step="any" value="${cur}"
+            ${width ? `style="width:${width}px"` : ''} title="기본값 ${def}">
+          <button id="${id}u" class="undo${chg ? ' on' : ''}" title="기본값 ${def} 로 되돌리기">↺</button>`;
+}
+
+/* ---- KPI 줄 ----------------------------------------------------------- */
+function renderRefKpi() {
+  if (!$('refKpi') || !SIM) return;
+  const n = refCount();
+  const d = (SIM.kpi.makespanH / 24);
+  const b = SIM.stats[0];
+  let delta = '';
+  if (REF_BASE && n) {
+    const dd = d - REF_BASE.days;
+    delta = `<div class="kpi ${dd > 0 ? 'bn' : ''}"><b>${dd >= 0 ? '+' : ''}${dd.toFixed(1)}일</b><span>원래 대비 (${REF_BASE.days.toFixed(1)}일 → ${d.toFixed(1)}일)</span></div>`;
+  }
+  $('refKpi').innerHTML =
+      `<div class="kpi"><b>${d.toFixed(1)}일</b><span>완료까지</span></div>`
+    + `<div class="kpi bn"><b>${esc(b.label)} ${b.util.toFixed(1)}%</b><span>1위 병목</span></div>`
+    + delta
+    + `<div class="kpi"><b>${n}개</b><span>기본값과 다른 항목</span></div>`;
+  $('refDirty').textContent = n ? `변경 ${n}개 — 내보내기로 저장하십시오` : '변경 없음';
+  $('refDirty').style.color = n ? '#d29922' : '#6e7681';
+}
+
+/* ---- ① 설비 대수 ------------------------------------------------------ */
+function renderRefCap() {
+  const st = {}; for (const x of (SIM ? SIM.stats : [])) st[x.id] = x;
+  $('refCapBody').innerHTML = NODES.filter(n => n.kind === 'proc').map(n => {
+    const def = n.id === 'EXP' ? (CFG.useM3 ? 3 : 2) : (n.cap || 1);
+    const cur = REF_EDIT.cap[n.id] || def;
+    const s = st[n.id];
+    const fixed = n.id === 'EXP';
+    const cell = fixed
+      ? `<span style="color:#6e7681">${def} (설정 탭에서 지정)</span>`
+      : refInput(cur, def, v => refSetCap(n.id, v), 60);
+    const util = s ? s.util : 0;
+    const col = util > 90 ? '#ff7b72' : util > 70 ? '#e3b341' : '#6e7681';
+    return `<tr${util > 90 ? ' class="bnrow"' : ''}>
+      <td><b>${esc(n.label)}</b></td><td style="color:#6e7681">${esc(n.st || '—')}</td>
+      <td class="num">${cell}</td><td class="num" style="color:#6e7681">${def}</td>
+      <td class="num" style="color:${col}">${s ? util.toFixed(1) + '%' : '—'}</td>
+      <td style="color:#6e7681;font-size:11px">${util > 90 ? '병목 — 1대 늘리면 효과 큼' : util > 70 ? '여유 적음' : ''}</td>
+      <td></td></tr>`;
+  }).join('');
+}
+
+/* ---- ② 전환시간 ------------------------------------------------------- */
+function renderRefCo() {
+  $('refCoBody').innerHTML = Object.keys(REF_CO_DEFAULT).map(k => {
+    const D = REF_CO_DEFAULT[k], C = CHANGEOVER[k];
+    const cell = (f) => refInput(C[f], D[f], v => refSet('co', k, f, v), 70);
+    return `<tr><td><b>${esc(D._l)}</b></td>
+      <td class="num">${cell('od')}</td><td class="num">${cell('t')}</td><td class="num">${cell('L')}</td>
+      <td style="color:#6e7681;font-size:11px">${esc(D._n || '')}</td><td></td></tr>`;
+  }).join('');
+}
+
+/* ---- ③ 표준시간 상수 -------------------------------------------------- */
+const REF_PREVIEW_SPEC = { od:914, t:9.3, L:12802, qty:70, grade:'normal', api5l:true,
+  markSpec:2, markEnd:2, defects:0, holdSec:60, rtType:'450kV' };
+const REF_PREVIEW_FN = {
+  EdgeMiller: () => STD.EdgeMiller(REF_PREVIEW_SPEC, '12M', 5, 5),
+  PreBender:  () => STD.PreBender(REF_PREVIEW_SPEC, '12M'),
+  PressBender:() => STD.PressBender(REF_PREVIEW_SPEC, '12M'),
+  GapPress:   () => STD.GapPress({ ...REF_PREVIEW_SPEC, t:31.2, grade:'high' }),
+  TackWelder: () => STD.TackWelder(REF_PREVIEW_SPEC, '12M'),
+  InsideWelder:() => STD.InsideWelder(REF_PREVIEW_SPEC, '12M'),
+  OutsideWelder:() => STD.OutsideWelder(REF_PREVIEW_SPEC, '12M'),
+  FirstUT:    () => STD.FirstUT(REF_PREVIEW_SPEC),
+  Expander:   () => STD.Expander(REF_PREVIEW_SPEC, 'M1'),
+  EndFacing:  () => STD.EndFacing(REF_PREVIEW_SPEC),
+  OuterBead:  () => STD.OuterBead(REF_PREVIEW_SPEC),
+  HydroTest:  () => STD.HydroTest(REF_PREVIEW_SPEC),
+  FinalUT:    () => STD.FinalUT(REF_PREVIEW_SPEC),
+  RT:         () => STD.RT(REF_PREVIEW_SPEC),
+  Packing:    () => STD.Packing(REF_PREVIEW_SPEC, '12M', 5),
+};
+function renderRefStd() {
+  $('refStdWrap').innerHTML = Object.keys(REF_STD_DEFAULT).map(proc => {
+    const G = REF.std[proc], D = REF_STD_DEFAULT[proc];
+    const rows = Object.keys(G).filter(k => k[0] !== '_').map(k =>
+      `<div class="refrow"><span title="${esc(G[k].l)}">${esc(G[k].l)}</span>
+         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v))}
+         <i>${esc(G[k].u || '')}</i></div>`).join('');
+    let prev = '';
+    try {
+      const r = REF_PREVIEW_FN[proc] ? REF_PREVIEW_FN[proc]() : null;
+      if (r) prev = `<div class="refprev">미리보기 <b>${r.sec.toFixed(1)}s</b> &nbsp;·&nbsp; ${esc(r.expr)}</div>`;
+    } catch (e) { prev = `<div class="refprev" style="color:#ff7b72">미리보기 계산 오류: ${esc(String(e.message || e))}</div>`; }
+    return `<div class="refgrp"><h4>${esc(G._label)} <small>엑셀 ${esc(G._src)}</small></h4>
+      <div class="refgrid">${rows}</div>${prev}</div>`;
+  }).join('');
+}
+
+/* ---- ④ 룩업 표 (보기 전용) ------------------------------------------- */
+const REF_TBL_DESC = {
+  tackWeld:'태그 웰딩 속도 (두께 구간 → mm/s)', insideWeld:'내면 SAW 속도·패스 (WPS)',
+  outsideWeld:'외면 SAW 속도·패스 (WPS)', utCut:'관단탭 절단 속도', emSpeed:'Edge Miller 고속 Setting',
+  emFeed:'Edge Miller 메인 피딩기 전진거리', pressX1:'Press Bender X1 Side Press 횟수 (인치별)',
+  endFacing:'End-Facing 저속 절삭시간 (인치 × 두께)', endFacingTC:'End-Facing 보조 상수',
+  hydroFill:'수압 충수시간 (인치별)', hydroConst:'수압 고정 상수 (2차압빼기·에어벤트)',
+  preBenderPitch:'Pre Bender 피치 (두께별)', expanderDie:'확관 다이표 — 엑셀 Expander(1호기)',
+  packingMarking:'포장 마킹 상수', dieSpec:'확관 다이 스펙 (M1 107 · M2 68 · RB 37행) — specs.py 정본',
+};
+function renderRefTbl() {
+  $('refTblBody').innerHTML = Object.keys(T).map(k => {
+    const v = T[k];
+    const n = Array.isArray(v) ? v.length
+      : (v && typeof v === 'object' ? Object.values(v).reduce((a, x) => a + (Array.isArray(x) ? x.length : 1), 0) : 1);
+    return `<tr><td><b>${esc(k)}</b></td><td style="color:#6e7681">${esc(REF_TBL_DESC[k] || '')}</td>
+      <td class="num">${n.toLocaleString()}</td></tr>`;
+  }).join('');
+}
+
+function renderRef() {
+  if (!$('refKpi')) return;
+  renderRefKpi(); renderRefCap(); renderRefCo(); renderRefStd(); renderRefTbl();
+}
+
+/* ---- 내보내기 · 불러오기 ---------------------------------------------- */
+function refExport() {
+  const doc = {
+    _포맷: 'JCOE 시뮬레이터 기준정보',
+    _버전: 1,
+    _저장시각: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    _설명: '이 파일을 시뮬레이터 「기준정보」 탭에서 불러오면 같은 상태가 됩니다. 기본값과 다른 항목만 담겨 있습니다.',
+    설비대수: REF_EDIT.cap,
+    전환시간: REF_EDIT.co,
+    표준시간상수: REF_EDIT.std,
+  };
+  const blob = new Blob([JSON.stringify(doc, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `JCOE_기준정보_${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function refImportFile(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const d = JSON.parse(rd.result);
+      REF_EDIT = { std: d.표준시간상수 || d.std || {}, co: d.전환시간 || d.co || {}, cap: d.설비대수 || d.cap || {} };
+      refApply();
+      alert(`기준정보를 불러왔습니다 — 변경 ${refCount()}개 항목이 적용됐습니다.`);
+    } catch (e) { alert('기준정보 파일을 읽지 못했습니다: ' + (e.message || e)); }
+  };
+  rd.readAsText(file);
+}
+
+function initRefTab() {
+  if (!$('refKpi')) return;
+  REF_BASE = { days: SIM.kpi.makespanH / 24, top: SIM.stats[0] && SIM.stats[0].label };
+  document.querySelectorAll('#refTabs .stab').forEach(t => t.onclick = () => {
+    document.querySelectorAll('#refTabs .stab').forEach(x => x.classList.remove('on'));
+    document.querySelectorAll('#pRef .rpane').forEach(x => x.classList.remove('on'));
+    t.classList.add('on'); $(t.dataset.r).classList.add('on');
+  });
+  $('refRevert').onclick = () => {
+    if (!refCount()) return;
+    if (!confirm('고친 값을 전부 원래대로 되돌립니다. 계속할까요?')) return;
+    REF_EDIT = { std:{}, co:{}, cap:{} }; refApply();
+  };
+  $('refExport').onclick = refExport;
+  $('refImport').onchange = e => { if (e.target.files[0]) refImportFile(e.target.files[0]); e.target.value = ''; };
+  renderRef();
 }

@@ -879,7 +879,11 @@ function simulate(orders, cfg) {
   for (const n of NODES) {
     if (n.kind !== 'proc') continue;
     const units = [];
-    for (let i = 0; i < (n.cap || 1); i++)
+    /* 설비 대수 — 기준정보(「설비 대수」 탭)에서 바꾼 값이 있으면 그것을 쓴다.
+       확관(EXP)은 #3호기 사용 여부가 따로 있으므로 여기서 덮지 않는다. */
+    const capOverride = (n.id !== 'EXP' && REF.cap && REF.cap[n.id] > 0) ? REF.cap[n.id] : null;
+    const cap = capOverride || n.cap || 1;
+    for (let i = 0; i < cap; i++)
       units.push({ id: n.id + '#' + (i + 1), idx: i, free: t0, last: null, busy: 0, setup: 0, jobs: 0 });
     pools[n.id] = units;
   }

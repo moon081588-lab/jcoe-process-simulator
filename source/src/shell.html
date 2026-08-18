@@ -102,6 +102,26 @@ tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
 @media (max-width:1500px){ header h1 small{display:none} .tab{padding:7px 10px;font-size:12px} #simInfo{max-width:250px} }
 @media (max-width:1200px){ #simInfo{display:none} }
 
+.subtabs{display:flex;gap:4px;margin:0 0 13px}
+.stab{padding:6px 14px;border-radius:7px;border:1px solid var(--ln);background:var(--pnl);color:var(--dim);cursor:pointer;font-size:12px;font-weight:600}
+.stab.on{background:#1f6feb22;border-color:#1f6feb66;color:var(--acc)}
+.rpane{display:none}.rpane.on{display:block}
+input.refin{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radius:5px;padding:3px 6px;
+  font-size:12px;width:82px;text-align:right;font-variant-numeric:tabular-nums}
+input.refin:focus{border-color:var(--acc);outline:none}
+input.refin.chg{border-color:var(--yel);background:#d2992218;color:#e3b341;font-weight:700}
+.undo{background:none;border:none;color:var(--yel);cursor:pointer;font-size:13px;padding:0 4px;visibility:hidden}
+.undo.on{visibility:visible}
+.refgrp{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:12px 14px;margin-bottom:11px}
+.refgrp h4{font-size:12.5px;color:var(--acc);margin-bottom:3px;display:flex;justify-content:space-between;align-items:baseline}
+.refgrp h4 small{color:var(--dim);font-weight:400;font-size:10.5px}
+.refgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:5px 14px;margin-top:8px}
+.refrow{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);padding:2px 0}
+.refrow span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.refrow i{font-style:normal;color:#6e7681;width:24px;font-size:10px}
+.refprev{font-family:Consolas,monospace;font-size:10.5px;color:var(--dim);margin-top:7px;
+  padding-top:7px;border-top:1px solid var(--ln);line-height:1.6}
+.refprev b{color:#fff}
 .toolbar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:13px}
 .toolbar .f input,.toolbar .f select{width:auto;min-width:110px}
 .hint{font-size:11px;color:var(--dim);padding-bottom:6px;max-width:520px;line-height:1.5}
@@ -172,6 +192,7 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
   <div class="tabs">
     <div class="tab on" data-p="pWiz">계획 실행</div>
     <div class="tab" data-p="pFlow">공정 흐름</div>
+    <div class="tab" data-p="pRef">기준정보</div>
     <div class="tab" data-p="pCalc">표준시간</div>
     <div class="tab" data-p="pIO">In · Out</div>
     <div class="tab" data-p="pOpt">확관 최적화</div>
@@ -448,6 +469,64 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
   </div></section>
 
   <!-- ========== 실적 검증 ========== -->
+  <!-- ============================ 기준정보 ============================ -->
+  <section class="pane" id="pRef"><div class="inner">
+    <div class="kpis" id="refKpi"></div>
+
+    <div class="toolbar">
+      <div class="f ck"><b id="refDirty" style="color:#d29922">변경 없음</b></div>
+      <button class="ghost" id="refRevert">전부 원래대로</button>
+      <button class="ghost" id="refExport">기준정보 내보내기 (.json)</button>
+      <label class="ghost" for="refImport" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid var(--ln);border-radius:6px">불러오기</label>
+      <input type="file" id="refImport" accept=".json,application/json" style="display:none">
+      <div class="hint">값을 고치면 <b>바로 다시 계산</b>됩니다. 원래 값과 다른 칸은 노란색으로 표시되고,
+        칸마다 <b>되돌리기(↺)</b> 버튼이 생깁니다. 내보낸 <code>.json</code> 을 다른 사람이 불러오면 똑같은 상태가 됩니다.</div>
+    </div>
+
+    <div class="subtabs" id="refTabs">
+      <div class="stab on" data-r="rCap">설비 대수</div>
+      <div class="stab" data-r="rCo">전환시간</div>
+      <div class="stab" data-r="rStd">표준시간 상수</div>
+      <div class="stab" data-r="rTbl">룩업 표</div>
+    </div>
+
+    <!-- 설비 대수 -->
+    <div class="rpane on" id="rCap">
+      <div class="note">설비를 몇 대로 볼지 정합니다. <b>대수를 바꾸면 완료일과 병목이 어떻게 움직이는지 오른쪽에 바로 나옵니다.</b>
+        확관(Expander)은 「계획서 · 설정」 탭의 #3호기 사용 여부로 정해지므로 여기서는 바꾸지 않습니다.</div>
+      <div class="tblwrap"><table><thead><tr>
+        <th>설비</th><th>공정</th><th style="text-align:right">대수</th><th style="text-align:right">기본</th>
+        <th style="text-align:right">가동률</th><th>영향</th><th></th></tr></thead>
+        <tbody id="refCapBody"></tbody></table></div>
+    </div>
+
+    <!-- 전환시간 -->
+    <div class="rpane" id="rCo">
+      <div class="note">직전 본과 <b>외경 / 두께 / 길이</b>가 달라졌을 때 드는 시간[초]입니다.
+        셋 중 <b>가장 큰 값 하나만</b> 적용됩니다. 확관은 실제로는 공구 계층 룰(Drawbar 270분 / Head 150분 / Die 90분)을
+        쓰므로 여기 값은 폴백입니다 — 공구 셋업 시간은 「표준시간 상수 → Expander」 에서 고치십시오.</div>
+      <div class="tblwrap"><table><thead><tr>
+        <th>공정</th><th style="text-align:right">외경 변경</th><th style="text-align:right">두께 변경</th>
+        <th style="text-align:right">길이 변경</th><th>비고</th><th></th></tr></thead>
+        <tbody id="refCoBody"></tbody></table></div>
+    </div>
+
+    <!-- 표준시간 상수 -->
+    <div class="rpane" id="rStd">
+      <div class="note">표준시간 산출식의 상수입니다. 출처는 전부 <b>「JCOE 공정 생산 표준 시간 분석」 엑셀 Total Summary</b> 이고,
+        공정마다 엑셀 행 번호를 적어 두었습니다. 값을 고치면 아래 <b>미리보기</b>(OD914 × t9.3 × 12.802m 기준)가 즉시 바뀝니다.</div>
+      <div id="refStdWrap"></div>
+    </div>
+
+    <!-- 룩업 표 -->
+    <div class="rpane" id="rTbl">
+      <div class="note">엑셀에서 뽑아 온 구간 표입니다. 행 수가 많아 <b>보기 전용</b>으로 둡니다 —
+        고쳐야 하면 <code>source/data/tables.json</code> 을 바꾸고 <code>python3 source/build.py</code> 를 돌리십시오.</div>
+      <div class="tblwrap"><table><thead><tr><th>표</th><th>내용</th><th style="text-align:right">행 수</th></tr></thead>
+        <tbody id="refTblBody"></tbody></table></div>
+    </div>
+  </div></section>
+
   <section class="pane" id="pLog"><div class="inner">
     <h3>① 실적 로그 업로드 <span class="sub">machine_prod_log — 스냅샷 방식 생산실적 (조관계획서 없음)</span></h3>
     <div class="toolbar">
