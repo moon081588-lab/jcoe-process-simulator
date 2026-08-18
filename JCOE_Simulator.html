@@ -4110,8 +4110,12 @@ function updateBadges(){
 function statsByFlow(){ const o=NODES.map(n=>n.id);
   return SIM.stats.slice().sort((a,b)=>o.indexOf(a.id)-o.indexOf(b.id)); }
 function buildStat(){
+  /* 막대 id 에도 v3_ 접두어를 붙인다.
+     2D 사이드 패널(ui.js)도 같은 이름(sf_EM12 …)으로 막대를 만들기 때문에,
+     접두어가 없으면 한 문서 안에 id 가 중복되어 이 안의 $() 가 3D 막대를 찾지 못하고
+     **가동률이 전부 0% 로 보였다.** (2026-08-14 2D·3D 통합 후 발견) */
   $('statBars').innerHTML = statsByFlow().map(s=>`<div class="sr"><span class="sn">${s.label.replace('\n',' ')}</span>
-    <div class="sb"><div class="sf" id="sf_${s.id}"></div><span class="sv" id="sv_${s.id}">0%</span></div>
+    <div class="sb"><div class="sf" id="v3_sf_${s.id}"></div><span class="sv" id="v3_sv_${s.id}">0%</span></div>
     <span class="sc">×${s.cap}</span></div>`).join('');
 }
 function updateStat(){

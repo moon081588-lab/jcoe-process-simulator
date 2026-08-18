@@ -69,6 +69,14 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   console.log('3D mount:', mounted); if(!mounted) fail++;
   console.log('3D info:', (await q.textContent('#v3_simInfo')).trim());
 
+  /* 공정별 가동률 막대가 실제로 값을 보여주는가.
+     2D 사이드 패널도 같은 id(sf_EM12 …)로 막대를 만들어서, 3D 막대 id 에 v3_ 접두어가 빠지면
+     id 가 중복되어 전부 0% 로 보인다 (2026-08-14 통합 직후 실제로 발생). */
+  const bars = await q.$$eval('#v3_statBars .sv', els => els.map(e => parseFloat(e.textContent) || 0));
+  const nz = bars.filter(v => v > 0).length;
+  console.log(`3D 가동률 막대: ${bars.length}개 중 ${nz}개가 0% 초과 (최대 ${Math.max(...bars).toFixed(0)}%)`);
+  if (!(bars.length > 10 && nz > 5)) { console.log('  FAIL: 3D 가동률이 표시되지 않는다'); fail++; }
+
   /* 2D 에서 조건을 바꾸면 3D 가 **같은 결과**를 받아야 한다.
      종전에는 3D 가 별도 파일에서 자체 시뮬을 돌려 두 화면이 어긋날 수 있었다. */
   await q.click('.tab[data-p="pCfg"]'); await q.waitForTimeout(300);
