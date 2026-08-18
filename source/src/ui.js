@@ -101,6 +101,8 @@ function runSim() {
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
   if($('refKpi')) renderRefKpi();
+  /* 3D 탭이 이미 떠 있으면 같은 결과로 갱신 — 두 화면이 어긋나지 않게 한다 */
+  if (window.JCOE3D && JCOE3D.isMounted()) JCOE3D.update(SIM, CFG, PLAN_SRC);
   if($('mcHint')) renderStNote();
   if($('periodSum')) renderPeriod();
   if($('wizSteps')) renderWiz();
@@ -1485,6 +1487,11 @@ function boot(){
     document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));
     t.classList.add('on'); $(t.dataset.p).classList.add('on');
     if (t.dataset.p==='pFlow') fit();
+    /* 3D 는 처음 열 때 한 번만 초기화하고(three.js 장면 구성 비용이 크다),
+       그 뒤로는 2D 가 계산한 SIM 을 그대로 받아 그린다. */
+    if (t.dataset.p==='p3D' && window.JCOE3D) {
+      if (JCOE3D.mount()) { JCOE3D.update(SIM, CFG, PLAN_SRC); JCOE3D.resize(); }
+    }
   });
   $('btnPlay').onclick=()=>{ playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
   $('btnReset').onclick=()=>{ animT=SIM.t0; evIdx=0; completed=0; logs.length=0;
@@ -1498,7 +1505,7 @@ function boot(){
     hover = hitTest(e.clientX-r.left, e.clientY-r.top);
     cvs.style.cursor = hover?'pointer':'default'; };
   cvs.onmouseleave = ()=>{ hover=null; };
-  window.onresize=()=>{ fit(); if(SIM) renderGantt(); };
+  window.onresize=()=>{ fit(); if(SIM) renderGantt(); if(window.JCOE3D) JCOE3D.resize(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
   fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod(); initWizard(); initLogTab();
   $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };

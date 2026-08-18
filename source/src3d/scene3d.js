@@ -1,9 +1,19 @@
+/* ====================================================================
+   3D 공장 뷰
+   --------------------------------------------------------------------
+   ui.js 와 SIM · CFG · $ · fmtT · loop · nodeState · logs 등 **전역 이름이 겹치므로**
+   통째로 별도 스코프에 넣는다. DOM id 도 겹치므로 이 안의 $() 는 `v3_` 접두어를 붙인다
+   (예: $('gl') → <canvas id="v3_gl">).
+
+   계산은 하지 않는다. 2D 앱이 돌린 SIM 을 JCOE3D.update(SIM, CFG) 로 받아 그리기만 한다.
+   ==================================================================== */
+window.JCOE3D = (function(){
 /* =====================================================================
    JCOE 3D — 공정 흐름도의 입체화
    2D 다이어그램 좌표(1600×900)를 그대로 3D 월드에 투영.
      world.x = (x2d - 800)/12      world.z = (y2d - 460)/12
    ===================================================================== */
-const $ = id => document.getElementById(id);
+const $ = id => document.getElementById('v3_' + id);
 const fmtT = s => { const d=new Date(s*1000), p=n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 
@@ -532,42 +542,27 @@ function buildLogicalCurves(){
 }
 
 /* ---------------- 시뮬레이션 연동 ---------------- */
-let PLAN3 = null, SEED = 1, LOOP = false, seeking = false;
-function readCfg(){ return {
-  startDate: ($('cfgStart')&&$('cfgStart').value) || (ORDERS[0]&&ORDERS[0].start?ORDERS[0].start.slice(0,10):'2026-03-02'),
-  deadline: ($('cfgDeadline')&&$('cfgDeadline').value) || null,
-  dateMode: ($('cfgDateMode')||{}).value || 'plan',
-  seqGapH: +(($('cfgSeqGap')||{}).value || 6),
-  shifts:+$('cfgShifts').value, netHoursPerShift:7.5,
-  skipWeekend:false, useRB:$('cfgRB').checked, useCP:false, processingFinalUT:false,
-  holdSec:60, changeover:$('cfgCO').checked, freeStationSec:300, eventCap:1e9,
-  dispatchRule: ($('cfgRule')||{}).value || 'EAT', sameODConcurrency:true, useM3:false,
-  seed: SEED, stochastic: { on: $('stOn') ? $('stOn').checked : false, mtbfH: 200 },
-  applyOptSeq:true, plan:PLAN3 }; }
-const CO_BACKUP = JSON.stringify(CHANGEOVER);
-function runSim(){
-  CFG=readCfg();
-  if(CFG.dispatchRule==='OPT' && !PLAN3){ PLAN3=optimizeExpander(ORDERS, CFG, {iters:24000}); CFG.plan=PLAN3; }
-  if(!CFG.changeover) for(const k in CHANGEOVER) CHANGEOVER[k]={od:0,t:0,L:0};
-  else Object.assign(CHANGEOVER, JSON.parse(CO_BACKUP));
-  SIM = simulate(ORDERS, CFG);
-  SIM.events.sort((a,b)=>a.s-b.s);
-  SIM.byR = SIM.events.slice().sort((a,b)=>a.r-b.r);
-  animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
+let LOOP = false, seeking = false;
+
+/* 2D 앱이 계산한 SIM 을 그대로 받아 화면만 갱신한다.
+   ── 종전에는 이 파일이 자체 readCfg()/runSim() 으로 **따로 시뮬을 돌렸다.**
+      그래서 2D 에서 기준정보(설비 대수·표준시간)를 고쳐도 3D 는 옛 값 그대로였고,
+      두 화면이 서로 다른 답을 보여줄 수 있었다. 이제 계산은 한 곳에서만 한다. */
+function applySim(sim, cfg, srcLabel){
+  if(!sim) return;
+  SIM = sim; CFG = cfg || CFG;
+  animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0; playing=false;
+  if($('btnPlay')) $('btnPlay').textContent='▶';
   if($('seek')) $('seek').value=0;
   for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
-  $('simInfo').textContent = `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
-    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
-    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
-    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '')
-    + (SIM.kpi.deadline ? ` · 마감 달성 ${(SIM.kpi.doneInPeriod/Math.max(1,SIM.kpi.doneInPeriod+SIM.kpi.overflow)*100).toFixed(0)}%` : '');
-  if($('periodHint')){
-    const k=SIM.kpi;
-    $('periodHint').innerHTML = `실제 소요 <b>${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)}</b> (${(SIM.horizonH/24).toFixed(1)}일)`
-      + (k.deadline ? ` · 마감일까지 <b>${k.doneInPeriod.toLocaleString()}본</b> 완료, <b>${k.overflow.toLocaleString()}본</b> 이월` : '');
-  }
+  if($('simInfo')) $('simInfo').textContent =
+      `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일)`
+    + ` · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
+    + (srcLabel ? ` · ${srcLabel}` : '')
+    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed}` : '');
   buildStat(); updateStat(); refreshVisual();
 }
+
 const _oc={};
 function orderHue(no){ if(_oc[no]===undefined) _oc[no]=(Object.keys(_oc).length*53)%360; return _oc[no]; }
 
@@ -789,7 +784,8 @@ function showInfo(){
       <div class="ir"><span>현재 가동 / 대기</span><b>${s.active.length} / ${s.q}</b></div>`;
     if(st.units.length>1) html+=st.units.map((u,i)=>`<div class="ir sm"><span>${n.id==='EXP'?('확관 #'+(i+1)+'호기'):u.id}</span><b>${u.jobs}본 · ${u.busyH.toFixed(1)}h</b></div>`).join('');
     if(n.id==='EXP'){
-      html+=`<div class="ir"><span>배분 규칙</span><b>${DISPATCH_RULES[CFG.dispatchRule].label}</b></div>`;
+      const dr = (CFG && DISPATCH_RULES[CFG.dispatchRule]) ? DISPATCH_RULES[CFG.dispatchRule].label : '—';
+      html+=`<div class="ir"><span>배분 규칙</span><b>${dr}</b></div>`;
       html+=`<div class="ifx"><b>공정 제약</b><br>#1호기 14m 이상 불가 · #2호기 12.8m 이상 불가<br>
         <span>12.8~14m → #1호기 전용 · 14m 초과 → #1·#2 동시 가동(소요=max)</span></div>`;
     }
@@ -823,26 +819,6 @@ function seekTo(t){
 }
 
 /* ---------------- 계획서 로더 ---------------- */
-let PLAN_SRC = null;
-function applyOrders(list, srcLabel){
-  ORDERS = list; PLAN3 = null; PLAN_SRC = srcLabel || null;
-  Object.keys(_oc).forEach(k=>delete _oc[k]);
-  if($('cfgRule').value==='OPT') $('cfgRule').value='EAT';
-  runSim();
-  $('planModal').classList.remove('on');
-}
-function initPlanLoader(){
-  const el=$('planLoader'); if(!el||typeof PlanLoader==='undefined') return;
-  PlanLoader.mount(el, {
-    startDate:'2026-03-02',
-    onApply:list=>{ if(list[0]&&list[0].start) $('cfgStart').value=list[0].start.slice(0,10);
-                    applyOrders(list,'업로드 계획서'); },
-    onReset:()=>applyOrders(ORDERS_DEFAULT.slice(), null),
-  });
-  $('btnPlan').onclick=()=>$('planModal').classList.add('on');
-  $('pmClose').onclick=()=>$('planModal').classList.remove('on');
-}
-
 /* ---------------- 루프 & 부트 ---------------- */
 function resize(){
   const w=$('c3d').clientWidth, h=$('c3d').clientHeight;
@@ -855,29 +831,43 @@ function loop(ts){
   renderer.render(scene,camera);
   requestAnimationFrame(loop);
 }
-function boot(){
-  buildScene(); buildLogicalCurves(); initBadges(); initControls(renderer.domElement);
+let mounted = false;
+/** 3D 탭을 처음 열 때 한 번만 호출된다. WebGL 이 없으면 false 를 돌려준다. */
+function mount(){
+  if(mounted) return true;
+  if(!$('gl') || !$('c3d')) return false;
+  try {
+    buildScene(); buildLogicalCurves(); initBadges(); initControls(renderer.domElement);
+  } catch(e){
+    console.error('[3D] 초기화 실패', e);
+    if($('c3d')) $('c3d').innerHTML =
+      `<div style="padding:40px;color:#8b949e;line-height:1.8">
+         <b style="color:#ff7b72">3D 화면을 띄우지 못했습니다.</b><br>
+         이 PC 에서 WebGL 을 쓸 수 없는 것으로 보입니다 (그래픽 드라이버 또는 브라우저 설정).<br>
+         나머지 기능은 모두 정상 동작합니다 — 「공정 흐름」 탭의 2D 화면을 쓰십시오.<br>
+         <span style="font-size:11px;color:#6e7681">${String(e.message||e)}</span></div>`;
+    return false;
+  }
   resize(); window.addEventListener('resize', resize);
   renderer.domElement.addEventListener('click', e=>pick(e.clientX,e.clientY));
-  $('btnPlay').onclick=()=>{ playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
-  $('btnReset').onclick=()=>{ animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
+  $('btnPlay').onclick=()=>{ if(!SIM) return; playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
+  $('btnReset').onclick=()=>{ if(!SIM) return; animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
     for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
     updateStat(); refreshVisual(); };
   $('spd').oninput=e=>{ speed=[600,3600,18000,86400,259200][+e.target.value];
     $('spdL').textContent=['10분/s','1시간/s','5시간/s','1일/s','3일/s'][+e.target.value]; };
-  document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>goView(b.dataset.view));
-  $('cfgRule').innerHTML=Object.entries(DISPATCH_RULES).map(([k,v])=>
-    `<option value="${k}">${v.label.replace(/\s*\(.*\)/,'')}</option>`).join('');
-  $('cfgShifts').onchange=runSim; $('cfgRB').onchange=runSim; $('cfgCO').onchange=runSim;
-  $('cfgRule').onchange=runSim;
-  $('stOn').onchange=runSim;
-  $('seek').oninput=e=>{ seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
+  document.querySelectorAll('#p3D [data-view]').forEach(b=>b.onclick=()=>goView(b.dataset.view));
+  $('seek').oninput=e=>{ if(!SIM) return; seeking=true; seekTo(SIM.t0+(SIM.tEnd-SIM.t0)*(+e.target.value/1000)); seeking=false; };
   $('loopChk').onchange=e=>LOOP=e.target.checked;
-  $('btnDice').onclick=()=>{ SEED=Math.floor(Math.random()*2147483646)+1; runSim(); };
-  const updGap=()=>{ $('fGap').style.display = $('cfgDateMode').value==='seq'?'flex':'none'; };
-  $('cfgDateMode').onchange=()=>{ updGap(); runSim(); }; updGap();
-  ['cfgStart','cfgDeadline','cfgSeqGap'].forEach(id=>$(id).onchange=runSim);
-  $('btnPeriod').onclick=()=>{ runSim(); $('planModal').classList.remove('on'); };
-  initPlanLoader();
-  runSim(); requestAnimationFrame(loop);
+  mounted = true;
+  requestAnimationFrame(loop);
+  return true;
 }
+
+  return {
+    mount,
+    update: applySim,
+    resize: () => { if (mounted) resize(); },
+    isMounted: () => mounted,
+  };
+})();

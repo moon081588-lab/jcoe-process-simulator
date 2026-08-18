@@ -59,16 +59,29 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   await p.click('.tab[data-p="pFlow"]'); await p.waitForTimeout(400);
   await p.screenshot({path:'/tmp/v_2d.png'});
   await p.close();
-  // ---- 3D ----
+  // ---- 3D 공장 탭 (2026-08-14 부터 같은 파일 안에 있다) ----
   const q = await b.newPage({viewport:{width:1680,height:960}});
   const e3=[]; q.on('pageerror',e=>e3.push(''+e)); q.on('console',m=>{if(m.type()==='error')e3.push(m.text());});
-  await q.goto('file://'+path.join(ROOT,'JCOE_3D.html'),{waitUntil:'load'});
+  await q.goto('file://'+path.join(ROOT,'JCOE_Simulator.html'),{waitUntil:'load'});
   await q.waitForTimeout(3000);
-  console.log('3D info:', await q.textContent('#simInfo'));
-  await q.selectOption('#cfgRule','OPT'); await q.waitForTimeout(2000);
-  console.log('3D OPT:', await q.textContent('#simInfo'));
-  await q.selectOption('#cfgRule','SETUP'); await q.waitForTimeout(1200);
-  console.log('3D SETUP:', await q.textContent('#simInfo'));
+  await q.click('.tab[data-p="p3D"]'); await q.waitForTimeout(4000);
+  const mounted = await q.evaluate(()=>window.JCOE3D && JCOE3D.isMounted());
+  console.log('3D mount:', mounted); if(!mounted) fail++;
+  console.log('3D info:', (await q.textContent('#v3_simInfo')).trim());
+
+  /* 2D 에서 조건을 바꾸면 3D 가 **같은 결과**를 받아야 한다.
+     종전에는 3D 가 별도 파일에서 자체 시뮬을 돌려 두 화면이 어긋날 수 있었다. */
+  await q.click('.tab[data-p="pCfg"]'); await q.waitForTimeout(300);
+  await q.selectOption('#cfgShifts','3');
+  await q.click('#btnRun'); await q.waitForTimeout(2500);   // 설정 탭은 「시뮬레이션 실행」을 눌러야 반영된다
+  const d2 = await q.evaluate(()=>+(SIM.kpi.makespanH/24).toFixed(2));
+  await q.click('.tab[data-p="p3D"]'); await q.waitForTimeout(1500);
+  const t3 = (await q.textContent('#v3_simInfo')).trim();
+  const d3 = parseFloat((t3.match(/\(([\d.]+)일\)/)||[])[1]);
+  console.log(`3근 전환 — 2D ${d2}일 / 3D ${d3}일`);
+  if (!(Math.abs(d3-d2) < 0.05)) { console.log('  FAIL: 2D·3D 결과 불일치'); fail++; }
+  if (!(d2 < 20)) { console.log('  FAIL: 3근 전환이 반영되지 않았다 (2근 24.4일 → 3근 16.4일 이어야 함)'); fail++; }
+
   await q.screenshot({path:'/tmp/v_3d.png'});
   console.log('3D errors:', e3.slice(0,6)); if(e3.length) fail++;
   await b.close();

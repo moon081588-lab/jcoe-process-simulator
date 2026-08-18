@@ -15,7 +15,7 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | 파일 | 크기 | 내용 |
 |---|---|---|
 | [`JCOE_Simulator.html`](JCOE_Simulator.html) | ~1.1 MB | **2D (기본)** — 계획 실행 / 공정 흐름 / 표준시간 계산기 / In·Out 시간표 / 확관 배분·최적화 / 반복 실행 / 오더 간트 / 병목 분석 |
-| [`JCOE_3D.html`](JCOE_3D.html) | ~1.7 MB | 3D — 공정 흐름도 입체화 + 자재 적치·이동 애니메이션 (three.js 내장, 오프라인 동작) |
+| [`JCOE_Simulator.html 의 「3D 공장」 탭`](JCOE_Simulator.html 의 「3D 공장」 탭) | ~1.7 MB | 3D — 공정 흐름도 입체화 + 자재 적치·이동 애니메이션 (three.js 내장, 오프라인 동작) |
 
 둘 다 **의존성 없는 단일 HTML 파일**입니다.
 
@@ -41,7 +41,7 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | **실적 검증** | `machine_prod_log` 스냅샷 실적 CSV 업로드 → 설비별 실적 본수·실적 본당 소요, **표준시간 산출식 대조**, 실적 오더셋으로 바로 시뮬레이션 |
 | **계획서 · 설정** | 계획 기간(시작일·**투입 순서**·납기 분석 on/off), 교대 수, Shift당 실가동 시간, 주말 비가동, RB 라인·Calibration Press 사용 여부 |
 
-### 3D 시뮬레이터 (`JCOE_3D.html`)
+### 3D 시뮬레이터 (`JCOE_Simulator.html 의 「3D 공장」 탭`)
 
 **3D 전용 레이아웃**입니다. 2D 도면을 그대로 투영하면 설비 간격이 좁아 어느 공정 앞에 물량이 걸렸는지
 읽기 어려워서, 흐름을 좌 → 우 로 통일하고 행(aisle)을 넉넉히 벌린 배치로 다시 설계했습니다.
@@ -375,7 +375,7 @@ s.t. ② Σ(m∈ℳ) z(j,m) = 1                      ∀j ∈ 𝒥        모든
 
 ```bash
 node source/tools/verify_formulas.js   # 산출식·공구·셋업·N·폴백을 손계산과 교차검증
-node source/tools/verify_audit.js      # 2026-08-14 전수 감사 회귀 방지 34항목
+node source/tools/verify_audit.js      # 2026-08-14 전수 감사 + 기준정보 회귀 방지 40항목
 node source/tools/verify_prodlog.js <machine_prod_log.csv>   # 실적 로그 파서 · 표준시간 대조
 node source/tools/verify_ui.js         # 2D·3D 브라우저 렌더링 · 탭 전환 · 위저드 원클릭 · 필터 · CSV (playwright 필요)
 python3 source/tools/extract_images.py <xlsx> -o source/data/evidence   # 엑셀에 이미지로만 든 내용 추출
@@ -431,7 +431,7 @@ python3 source/build.py       # → ./JCOE_Simulator.html
 
 # 3D (three.js 를 source/vendor/ 에 먼저 받아야 함 — 이미 커밋되어 있으면 생략)
 python3 source/tools/fetch_three.py
-python3 source/build3d.py     # → ./JCOE_3D.html
+python3 source/build.py     # → ./JCOE_Simulator.html 의 「3D 공장」 탭
 ```
 
 검증:
@@ -459,7 +459,7 @@ python3 source/tools/extract_tables.py "★JCOE 공정 생산 표준 시간 분�
 
 ```
 JCOE_Simulator.html         ★ 2D 시뮬레이터 — 받아서 브라우저로 열면 끝 (1.1MB)
-JCOE_3D.html                ★ 3D 시뮬레이터 (1.7MB)
+JCOE_Simulator.html 의 「3D 공장」 탭                ★ 3D 시뮬레이터 (1.7MB)
 README.md                   이 문서
 CHANGELOG.md                변경 이력 — 각 변경의 근거·수치 영향
 세아제강_확인요청.md            회신 완료 항목 + 남은 확인 요청 (세아제강 송부용)
@@ -467,7 +467,7 @@ CHANGELOG.md                변경 이력 — 각 변경의 근거·수치 영�
 
 source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기만 할 거면 볼 일 없음
 ├── build.py                    2D 빌드 → ../JCOE_Simulator.html
-├── build3d.py                  3D 빌드 → ../JCOE_3D.html
+├── build3d.py                  3D 빌드 → ../JCOE_Simulator.html 의 「3D 공장」 탭
 ├── src/                    2D 소스 — 여기를 고치고 build.py 를 돌립니다
 │   ├── engine.js               표준시간 계산 엔진 (엑셀 산출식 19종 + 확관 공구/셋업/N)
 │   ├── flow.js                 공정 노드 그래프 · 라우팅 · 확관 제약(EXP_RULESET) · 교대 캘린더 · 시뮬레이터 · 최적화 엔진
@@ -563,3 +563,40 @@ source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기
 - 상수가 바뀌면 **확관 최적화 해는 자동으로 무효** 처리됩니다 (옛 조건의 해가 현재 값처럼 보이지 않도록).
 - 회귀 검사 `verify_audit.js` 에 기준정보 항목(C1~C6)이 들어 있습니다 —
   반영·되돌리기·왕복 저장이 깨지면 바로 FAIL 납니다.
+
+## 파일이 하나입니다 — 2D 와 3D 가 같은 계산을 씁니다
+
+`JCOE_Simulator.html` **한 장**만 열면 됩니다. 3D 공장 뷰는 그 안의 「3D 공장」 탭입니다.
+
+### 왜 합쳤나
+
+2026-08-14 이전에는 `JCOE_Simulator.html` 과 `JCOE_Simulator.html 의 「3D 공장」 탭` 두 파일이었습니다. 문제가 둘 있었습니다.
+
+1. **엔진과 xlsx 라이브러리 880KB 가 두 파일에 통째로 중복**됐습니다.
+2. 더 중요하게 — **3D 가 자체 `runSim()` 으로 따로 시뮬을 돌렸습니다.**
+   그래서 2D 에서 기준정보(설비 대수·표준시간)나 계획서를 바꿔도 3D 는 옛 값 그대로였고,
+   **두 화면이 서로 다른 답을 보여줄 수 있었습니다.**
+
+이제 계산은 2D 앱에서 **한 번만** 하고, 3D 는 그 결과(`SIM`)를 받아 그리기만 합니다.
+
+| | 종전 | 지금 |
+|---|---:|---:|
+| 파일 수 | 2개 | **1개** |
+| 크기 | 1,171 + 1,716 = 2,887 KB | **1,874 KB** |
+| 2D·3D 결과 일치 | 보장 안 됨 | 구조적으로 항상 일치 |
+
+### 어떻게 합쳤나
+
+`ui.js` 와 `scene3d.js` 는 `SIM` · `CFG` · `$` · `fmtT` · `loop` · `nodeState` · `logs` 를
+각각 최상위에 선언하고 있어 그냥 이어붙이면 `Identifier 'SIM' has already been declared` 로 죽습니다.
+DOM id 도 33개 중 24개가 겹쳤습니다 (`btnPlay` · `seek` · `spd` · `cfgShifts` …).
+
+- `scene3d.js` 전체를 `window.JCOE3D = (function(){ … })()` 로 감싸 **별도 스코프**에 넣었습니다.
+- 그 안의 `$()` 는 **`v3_` 접두어**를 붙입니다 — `$('gl')` → `<canvas id="v3_gl">`.
+  3D 쪽 DOM 이름을 하나도 안 고치고 충돌만 없앴습니다.
+- `scene3d.js` 의 `readCfg()` · `runSim()` · 계획서 로더 · 설정 컨트롤을 **삭제**하고,
+  `JCOE3D.update(SIM, CFG)` 로 결과를 받는 구조로 바꿨습니다.
+- 3D 탭을 처음 열 때만 `JCOE3D.mount()` 로 장면을 만듭니다(three.js 장면 구성 비용이 커서).
+  WebGL 을 못 쓰는 PC 에서는 3D 탭에만 안내가 뜨고 **나머지 기능은 전부 정상 동작**합니다.
+
+`verify_ui.js` 가 「2D 에서 3근으로 바꾸면 3D 도 16.4일로 같이 바뀐다」를 매번 확인합니다.
