@@ -123,9 +123,12 @@ function extractRawLength(v) {
 }
 
 /* ---------- 헤더 행 탐지 ---------- */
+const HEADER_SCAN_ROWS = 60;   // 자동 탐지·수동 선택 모두 이 범위
 function detectHeader(rows) {
   let best = { idx: 0, score: -1 };
-  const scan = Math.min(rows.length, 25);
+  /* 표지·머리말이 긴 실제 계획서는 헤더가 25행보다 아래에 있을 수 있다.
+     종전에는 그런 파일을 **아예 불러올 수 없었다**(자동 탐지도 실패, 수동 선택 목록에도 없음). */
+  const scan = Math.min(rows.length, HEADER_SCAN_ROWS);
   for (let i = 0; i < scan; i++) {
     const r = rows[i] || [];
     let score = 0, filled = 0;
@@ -153,7 +156,7 @@ function autoMap(headers, body) {
   const map = {};
   const used = new Set();
   for (const f of ['no', 'od', 't', 'L', 'qty', 'date', 'due', 'bn', 'rawL', 'mat', 'use', 'kind']) {
-    let hit = -1, hitRank = 1e9;
+    let hit = -1, hitRank = 1e9, hitScore = 1e9;
     headers.forEach((h, ci) => {
       if (used.has(ci)) return;
       const n = norm(h);
@@ -162,11 +165,16 @@ function autoMap(headers, body) {
         const nk = norm(k);
         if (!nk) return;
         const exact = n === nk, part = n.includes(nk);
-        if ((exact || part) && rank < hitRank) {
-          /* 너무 짧은 키워드(t, l)는 완전일치만 인정 */
-          if (nk.length <= 1 && !exact) return;
-          hitRank = rank; hit = ci;
-        }
+        if (!exact && !part) return;
+        /* 너무 짧은 키워드(t, l)는 완전일치만 인정 */
+        if (nk.length <= 1 && !exact) return;
+        /* ★ **완전일치가 언제나 부분일치를 이긴다.**
+           종전에는 rank 만 비교해서, 별칭 'o.d'(rank 2)가 헤더 'MODEL' 에 부분일치하면
+           바로 뒤 열의 정확한 헤더 'OD'(rank 3)가 영영 이기지 못했다.
+           그 결과 외경 열로 모델명(800·1200)이 들어가 전 행의 외경이 통째로 틀렸다.
+           (2026-08-14 전수 감사) */
+        const score = (exact ? 0 : 1000) + rank;
+        if (score < hitScore) { hitScore = score; hitRank = rank; hit = ci; }
       });
     });
     if (hit >= 0) { map[f] = hit; used.add(hit); }
@@ -217,6 +225,7 @@ function buildOrders(body, map, units, opt) {
   const orders = [], skipped = [];
   const seen = {};
   let seqDate = opt.startDate ? new Date(opt.startDate + 'T08:00:00') : null;
+  let lastDate = null;                       // 병합된 일자 셀을 이어받기 위한 직전 값
 
   body.forEach((r, i) => {
     const rowNo = rowBase + i + 1;
@@ -232,7 +241,11 @@ function buildOrders(body, map, units, opt) {
 
     if (units.od === 'inch') od = od * 25.4;
     if (units.L === 'm') L = L * 1000;
+    /* 소수 수량(0.4 등)이 반올림으로 0 이 되면 **0본짜리 오더**가 그대로 흘러갔다.
+       수량 0 은 위에서 걸러지는데 이쪽만 빠져 있었다. (2026-08-14 전수 감사) */
+    const qtyRaw = qty;
     qty = Math.round(qty);
+    if (qty <= 0) { skipped.push({ row: rowNo, why: `수량 ${qtyRaw} (반올림하면 0본)` }); return; }
 
     const rng = [];
     if (od < 200 || od > 2200) rng.push(`외경 ${od.toFixed(0)}mm`);
@@ -248,11 +261,24 @@ function buildOrders(body, map, units, opt) {
 
     let no = g('no');
     no = (no == null || no === '') ? `R${rowNo}` : String(no).trim();
-    if (seen[no]) { seen[no]++; no = `${no}-${seen[no]}`; } else seen[no] = 1;
+    /* 같은 판매오더가 여러 행일 때 붙이는 접미어.
+       종전에는 무조건 `-2` 를 붙여서, 파일에 원래 `A-2` 라는 오더가 있으면 **두 오더가 같은 번호**가 됐고
+       한쪽이 통째로 사라졌다. 이미 쓰인 번호는 피해서 붙인다. (2026-08-14 전수 감사) */
+    if (seen[no] != null) {
+      const base = no; let k = seen[base];
+      do { k++; no = `${base}-${k}`; } while (seen[no] != null);
+      seen[base] = k;
+    }
+    seen[no] = seen[no] || 1;
 
     let d = toDate(g('date'));
+    /* ★ 조관계획서의 일자 열은 보통 **병합 셀**이라 그룹의 첫 행에만 값이 있다.
+       종전에는 값이 빈 행을 「날짜 없음」으로 보고 시작일부터 6시간 간격 사다리를 만들어,
+       4월 1일 그룹의 2·3행이 3월 2일로 한 달 앞당겨졌다. 직전 행의 날짜를 이어받는다. */
+    if (!d && lastDate) d = new Date(lastDate);
     if (!d && seqDate) { d = new Date(seqDate); seqDate.setHours(seqDate.getHours() + 6); }
     if (!d) d = new Date(opt.startDate + 'T08:00:00');
+    if (toDate(g('date'))) lastDate = new Date(d);
     if (d.getHours() === 0 && d.getMinutes() === 0) d.setHours(8);
 
     const o = { no, od, t, L, qty, start: fmtDT(d) };
@@ -389,7 +415,7 @@ function mount(el, opts) {
         <div class="pl-f"><label>시트</label>
           ${sel('plSheet', sheetName, WB.SheetNames.map(n => ({ v: n, t: n })))}</div>
         <div class="pl-f"><label>헤더 행</label>
-          ${sel('plHdr', HDR, ROWS.slice(0, Math.min(ROWS.length, 25)).map((r, i) =>
+          ${sel('plHdr', HDR, ROWS.slice(0, Math.min(ROWS.length, HEADER_SCAN_ROWS)).map((r, i) =>
             ({ v: i, t: `${i + 1}행 · ${(r || []).filter(x => x != null && x !== '').slice(0, 4).join(' | ').slice(0, 40)}` })))}</div>
       </div>
       <div class="pl-row">

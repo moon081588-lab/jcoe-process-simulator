@@ -57,6 +57,10 @@ const NODES = [
   { id:'PACKRB',label:'배척 포장', sub:'PK112', st:'Packing', kind:'proc', x:912, y:800, cap:1 },
 ];
 const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+/* 코드에 적힌 원래 설비 대수 — 기준정보에서 바꾼 뒤 되돌릴 때 기준이 된다.
+   (확관 EXP 는 #3호기 사용 여부로 매 실행마다 정해지므로 제외) */
+const NODE_CAP_DEFAULT = {};
+for (const n of NODES) if (n.kind === 'proc' && n.id !== 'EXP') NODE_CAP_DEFAULT[n.id] = n.cap || 1;
 /* R/B 라인 소속 노드 — 별도 근무조 캘린더를 쓴다 */
 const RB_LINE = new Set(['RB','RBEF','RBRT','PACKRB']);
 /* 한 본이 지날 수 있는 최대 노드 수 (재작업 루프 포함). 초과분은 routeAborted 로 집계한다. */
@@ -879,10 +883,9 @@ function simulate(orders, cfg) {
   for (const n of NODES) {
     if (n.kind !== 'proc') continue;
     const units = [];
-    /* 설비 대수 — 기준정보(「설비 대수」 탭)에서 바꾼 값이 있으면 그것을 쓴다.
-       확관(EXP)은 #3호기 사용 여부가 따로 있으므로 여기서 덮지 않는다. */
-    const capOverride = (n.id !== 'EXP' && REF.cap && REF.cap[n.id] > 0) ? REF.cap[n.id] : null;
-    const cap = capOverride || n.cap || 1;
+    /* 설비 대수는 setRefCap() 이 NODE[].cap 에 직접 반영해 두므로 여기서는 그대로 읽는다.
+       (종전에는 여기서만 덮어써서, 3D 장면·투입산출 탭의 호기 목록은 옛 대수를 쓰고 있었다) */
+    const cap = n.cap || 1;
     for (let i = 0; i < cap; i++)
       units.push({ id: n.id + '#' + (i + 1), idx: i, free: t0, last: null, busy: 0, setup: 0, jobs: 0 });
     pools[n.id] = units;

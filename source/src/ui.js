@@ -826,7 +826,7 @@ function readImport(file){
       $('ruleDesc').textContent=DISPATCH_RULES.IMPORT.desc;
       renderImport(); runSim();
     }catch(err){
-      $('impInfo').innerHTML=`<div class="warn"><b>읽지 못했습니다</b><br>${String(err.message||err)}</div>`;
+      $('impInfo').innerHTML=`<div class="warn"><b>읽지 못했습니다</b><br>${esc(String(err.message||err))}</div>`;
     }
   };
   if(isJson) fr.readAsText(file); else fr.readAsArrayBuffer(file);
@@ -846,11 +846,11 @@ function renderImport(){
       <div class="kpi"><b>${matched} / ${P.nOrders}</b><span>현재 오더셋과 매칭</span></div>
       <div class="kpi"><b>${P.count.M1}/${P.count.M2}/${P.count.RB}/${P.count.BOTH}</b><span>#1 / #2 / RB / 동시</span></div>
       ${P.spanH?`<div class="kpi"><b>${(P.spanH/24).toFixed(1)}일</b><span>CP-SAT Makespan (${P.unit==='sec'?'초':'분'} 단위 해석)</span></div>`:''}
-      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?IMP_SRC:'배분 규칙을 「외부 최적화 스케줄」 로 바꾸세요'}</span></div>
+      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?esc(IMP_SRC):'배분 규칙을 「외부 최적화 스케줄」 로 바꾸세요'}</span></div>
     </div>
     ${matched===0?`<div class="warn"><b>매칭된 오더가 0건입니다.</b> 파일의 OrderNo(판매오더)와 시뮬레이터 오더번호 체계가 다릅니다.
       계획서 탭에서 같은 조관계획서를 먼저 불러오면 매칭됩니다.</div>`:''}
-    ${P.warn.length?`<div class="warn"><b>경고 ${P.warn.length}건</b><br>${P.warn.slice(0,8).join('<br>')}${P.warn.length>8?'<br>…':''}</div>`:''}`;
+    ${P.warn.length?`<div class="warn"><b>경고 ${P.warn.length}건</b><br>${P.warn.slice(0,8).map(esc).join('<br>')}${P.warn.length>8?'<br>…':''}</div>`:''}`;
   if(seqEl){
     const byM={};
     P.detail.forEach(d=>{ (byM[d.m]=byM[d.m]||[]).push(d); });
@@ -1411,15 +1411,23 @@ function renderCalibSum(){
 
 function renderLog(){
   if(!$('lgWC')) return;
+  /* 로그를 해제하거나 읽기에 실패해도 아래 표·요약이 **이전 파일의 것으로 남아 있었다.**
+     어떤 경로로 나가든 먼저 비운다. (2026-08-14 전수 감사) */
+  const clearLogPanels = () => {
+    for (const id of ['lgKpi','lgWC','lgVerify','lgOrders','lgCalibSum'])
+      if ($(id)) $(id).innerHTML = '';
+  };
   if(!PLOG){
-    $('lgKpi').innerHTML=''; $('lgErr').innerHTML='';
-    $('lgWC').innerHTML='<tr><td colspan="7" style="color:#6e7681">실적 로그 CSV 를 올려 주세요.</td></tr>';
-    $('lgVerify').innerHTML='<tr><td colspan="8" style="color:#6e7681">—</td></tr>';
+    clearLogPanels(); $('lgErr').innerHTML='';
+    $('lgWC').innerHTML='<tr><td colspan="10" style="color:#6e7681">실적 로그 CSV 를 올려 주세요.</td></tr>';
+    $('lgVerify').innerHTML='<tr><td colspan="10" style="color:#6e7681">—</td></tr>';
     $('lgOrders').innerHTML='<tr><td colspan="9" style="color:#6e7681">—</td></tr>';
     return;
   }
   if(PLOG.error){
-    $('lgErr').innerHTML=`<div class="note" style="color:#ff7b72">읽지 못했습니다 — ${esc(PLOG.error)}</div>`;
+    clearLogPanels();
+    $('lgErr').innerHTML=`<div class="note" style="color:#ff7b72">읽지 못했습니다 — ${esc(PLOG.error)}
+      <br><span style="color:#8b949e">이전에 올린 로그의 표는 지웠습니다.</span></div>`;
     return;
   }
   $('lgErr').innerHTML='';
@@ -1471,7 +1479,9 @@ function renderLog(){
     <td class="num">${o.packQty||'—'}</td><td class="num">${o.maxQty}</td>
     <td>${o.heat?'<span style="color:#d29922">C2 · 열처리</span>':'—'}</td>
     <td style="font-size:11px">${o.wcs.length}개</td></tr>`).join('')
-    + (L.badSpec.length ? `<tr><td colspan="9" style="color:#ff7b72">규격 파싱 실패 WO — ${L.badSpec.join(', ')}</td></tr>` : '');
+    /* ★ 업로드한 CSV 의 WO 번호를 그대로 innerHTML 에 넣고 있었다 —
+       WO_NO 에 <img onerror=...> 를 넣은 CSV 로 스크립트가 실행됐다. 반드시 escape 한다. */
+    + (L.badSpec.length ? `<tr><td colspan="9" style="color:#ff7b72">규격 파싱 실패 WO — ${L.badSpec.map(esc).join(', ')}</td></tr>` : '');
 
   renderCalibSum();
 }
@@ -1525,19 +1535,60 @@ function boot(){
    · JSON 한 장으로 내보내고 불러온다 (메일로 주고받기 · 다음에 그대로 복원)
    ==================================================================== */
 let REF_EDIT = { std:{}, co:{}, cap:{} };   // 기본값과 다른 것만 담는다
+
+/* 표준시간 상수의 하한.
+   **분모로 쓰이는 값이 0 이 되면** 소요시간이 Infinity 가 되어 완료일이 146만 일로 튀고
+   병목 가동률이 Infinity% 로 표시된다. 음수 상수도 가동시간을 음수로 만든다.
+   → 분모·속도·주기류는 0 초과, 나머지는 0 이상만 허용한다. (2026-08-14 전수 감사) */
+const REF_POSITIVE_KEYS = /Div|Len$|segLen|extraEvery|shotLen|pitchDiv|perStroke|marginRB|marginM1/;
+function REF_STD_MIN(proc, key) {
+  return REF_POSITIVE_KEYS.test(key) ? 1e-6 : 0;
+}
 let REF_BASE = null;                        // 아무것도 안 고친 상태의 시뮬 결과 (영향 비교용)
 
-/** 편집값을 엔진에 밀어 넣고 다시 계산한다 */
-function refApply(rerender = true) {
+/** 편집값을 엔진에 밀어 넣고 다시 계산한다.
+    ★ 표를 **다시 그리지 않는다.**
+      종전에는 값 하나를 고칠 때마다 renderRef() 가 innerHTML 로 표 전체를 새로 만들었다.
+      그러면 사용자가 Tab 이나 클릭으로 옮겨 가려던 다음 칸이 그 순간 사라져
+      **두 번째 입력부터 조용히 버려졌다** (포커스가 body 로 날아감).
+      이제 갱신이 필요한 것만 제자리에서 고친다 — KPI · 미리보기 · 변경 표시. */
+function refApply(full = false) {
   setRefStd(REF_EDIT.std);
   setRefCo(REF_EDIT.co);
   setRefCap(REF_EDIT.cap);
-  invalidatePlan();          // 확관 최적화 결과는 상수가 바뀌면 무효
-  runSim(); calc();
-  if (rerender) renderRef();
-  else renderRefKpi();
+  /* 확관 최적화 해가 실제로 있을 때만 무효화한다.
+     종전에는 값 하나만 고쳐도 invalidatePlan() 이 배분 규칙을 OPT→EAT 로 되돌려 놓고,
+     그 때문에 생긴 makespan 변화가 마치 편집 때문인 것처럼 보였다. 그리고 runSim() 이 두 번 돌았다. */
+  const hadPlan = !!PLAN;
+  if (hadPlan) invalidatePlan(); else { runSim(); calc(); }
+  if (hadPlan) calc();
+  if (full) renderRef(); else { renderRefKpi(); renderRefPreviews(); refMarkDirty(); }
+  if (hadPlan && $('refPlanWarn'))
+    $('refPlanWarn').textContent = '※ 확관 최적화 해는 상수가 바뀌어 무효가 됐고, 배분 규칙이 EAT 로 되돌아갔습니다.';
 }
 
+/** 표준시간 상수 탭의 미리보기 줄만 다시 계산한다 (입력칸은 건드리지 않는다) */
+function renderRefPreviews() {
+  if (!$('refStdWrap')) return;
+  document.querySelectorAll('#refStdWrap .refgrp').forEach(g => {
+    const proc = g.dataset.proc, el = g.querySelector('.refprev');
+    if (!el || !REF_PREVIEW_FN[proc]) return;
+    try {
+      const r = REF_PREVIEW_FN[proc]();
+      el.innerHTML = `미리보기 <b>${r.sec.toFixed(1)}s</b> &nbsp;·&nbsp; ${esc(r.expr)}`;
+      el.style.color = '';
+    } catch (e) {
+      el.textContent = '미리보기 계산 오류: ' + (e.message || e); el.style.color = '#ff7b72';
+    }
+  });
+}
+
+function refMarkDirty() {
+  if (!$('refDirty')) return;
+  const n = refCount();
+  $('refDirty').textContent = n ? `변경 ${n}개 — 내보내기로 저장하십시오` : '변경 없음';
+  $('refDirty').style.color = n ? '#d29922' : '#6e7681';
+}
 function refCount() {
   let n = 0;
   for (const p in REF_EDIT.std) n += Object.keys(REF_EDIT.std[p]).length;
@@ -1546,39 +1597,74 @@ function refCount() {
   return n;
 }
 
-/** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다 */
+/** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다.
+    적용 결과가 유한하지 않으면(Infinity·NaN) 되돌리고 알린다 — 하한 규칙이 못 잡는 조합 대비. */
 function refSet(group, a, b, v) {
   const G = REF_EDIT[group];
+  const prev = G[a] ? G[a][b] : undefined;
   if (v === null) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
   else { (G[a] = G[a] || {})[b] = v; }
   refApply();
+  if (SIM && !isFinite(SIM.kpi.makespanH)) {
+    if (prev === undefined) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
+    else (G[a] = G[a] || {})[b] = prev;
+    refApply(true);
+    alert('그 값을 넣으면 계산 결과가 무한대가 되어 되돌렸습니다.');
+  }
 }
 function refSetCap(id, v) {
   if (v === null) delete REF_EDIT.cap[id]; else REF_EDIT.cap[id] = v;
   refApply();
 }
 
-/* ---- 편집 칸 하나 만들기 ---------------------------------------------- */
-function refInput(cur, def, onChange, width) {
+/* ---- 편집 칸 하나 만들기 ----------------------------------------------
+   opts.min / opts.max / opts.int 로 허용 범위를 준다. 범위를 벗어나면
+   **되돌리고 이유를 알려준다** — 종전에는 조용히 무시하면서 화면에는 입력값이 남아
+   "포장 25대" 로 보이는데 실제로는 1대로 계산되는 상태가 만들어졌다. */
+function refInput(cur, def, onChange, opts) {
+  opts = opts || {};
   const chg = Math.abs(cur - def) > 1e-9;
   const id = 'ri' + (refInput._n = (refInput._n || 0) + 1);
-  setTimeout(() => {
-    const el = $(id); if (!el) return;
+  const html = `<input id="${id}" class="refin${chg ? ' chg' : ''}" type="number" step="${opts.int ? 1 : 'any'}"
+            value="${cur}"${opts.width ? ` style="width:${opts.width}px"` : ''} title="기본값 ${def}">
+          <button id="${id}u" class="undo${chg ? ' on' : ''}" title="기본값 ${def} 로 되돌리기">↺</button>`;
+  /* 화면에 붙은 직후 바인딩한다 (표를 다시 그리지 않으므로 한 번만 걸린다) */
+  refInput._pending.push(() => {
+    const el = $(id), u = $(id + 'u'); if (!el) return;
+    const paint = (v) => {
+      const c = Math.abs(v - def) > 1e-9;
+      el.classList.toggle('chg', c); if (u) u.classList.toggle('on', c);
+    };
     el.onchange = () => {
-      const v = parseFloat(el.value);
-      if (!isFinite(v)) { el.value = cur; return; }
+      let v = parseFloat(el.value);
+      if (!isFinite(v)) { el.value = el.dataset.last || cur; return; }
+      if (opts.int) v = Math.round(v);
+      if ((opts.min != null && v < opts.min) || (opts.max != null && v > opts.max)) {
+        alert(`${opts.min ?? '-∞'} ~ ${opts.max ?? '∞'} 범위의 값만 넣을 수 있습니다.`);
+        el.value = el.dataset.last || cur; return;
+      }
+      el.value = v; el.dataset.last = v; paint(v);
       onChange(Math.abs(v - def) < 1e-9 ? null : v);
     };
-    const u = $(id + 'u'); if (u) u.onclick = () => onChange(null);
-  }, 0);
-  return `<input id="${id}" class="refin${chg ? ' chg' : ''}" type="number" step="any" value="${cur}"
-            ${width ? `style="width:${width}px"` : ''} title="기본값 ${def}">
-          <button id="${id}u" class="undo${chg ? ' on' : ''}" title="기본값 ${def} 로 되돌리기">↺</button>`;
+    if (u) u.onclick = () => { el.value = def; el.dataset.last = def; paint(def); onChange(null); };
+    el.dataset.last = cur;
+  });
+  return html;
 }
+refInput._pending = [];
+/** refInput 이 만든 칸들을 화면에 붙인 뒤 한 번에 바인딩한다 */
+function refBind() { const q = refInput._pending; refInput._pending = []; q.forEach(f => f()); }
 
 /* ---- KPI 줄 ----------------------------------------------------------- */
+/** 변경이 하나도 없을 때의 결과를 기준선으로 계속 갱신한다.
+    종전에는 부팅 때 한 번만 잡아 둬서, 교대·계획서를 바꾼 뒤 기준정보를 고치면
+    「+18.9일 악화」처럼 **부호까지 반대로** 표시됐다. (2026-08-14 전수 감사) */
+function refRebase() {
+  if (SIM && refCount() === 0) REF_BASE = { days: SIM.kpi.makespanH / 24, top: SIM.stats[0] && SIM.stats[0].label };
+}
 function renderRefKpi() {
   if (!$('refKpi') || !SIM) return;
+  refRebase();
   const n = refCount();
   const d = (SIM.kpi.makespanH / 24);
   const b = SIM.stats[0];
@@ -1606,7 +1692,7 @@ function renderRefCap() {
     const fixed = n.id === 'EXP';
     const cell = fixed
       ? `<span style="color:#6e7681">${def} (설정 탭에서 지정)</span>`
-      : refInput(cur, def, v => refSetCap(n.id, v), 60);
+      : refInput(cur, def, v => refSetCap(n.id, v), { width: 60, int: true, min: 1, max: 20 });
     const util = s ? s.util : 0;
     const col = util > 90 ? '#ff7b72' : util > 70 ? '#e3b341' : '#6e7681';
     return `<tr${util > 90 ? ' class="bnrow"' : ''}>
@@ -1616,17 +1702,19 @@ function renderRefCap() {
       <td style="color:#6e7681;font-size:11px">${util > 90 ? '병목 — 1대 늘리면 효과 큼' : util > 70 ? '여유 적음' : ''}</td>
       <td></td></tr>`;
   }).join('');
+  refBind();
 }
 
 /* ---- ② 전환시간 ------------------------------------------------------- */
 function renderRefCo() {
   $('refCoBody').innerHTML = Object.keys(REF_CO_DEFAULT).map(k => {
     const D = REF_CO_DEFAULT[k], C = CHANGEOVER[k];
-    const cell = (f) => refInput(C[f], D[f], v => refSet('co', k, f, v), 70);
+    const cell = (f) => refInput(C[f], D[f], v => refSet('co', k, f, v), { width: 70, min: 0, max: 86400 });
     return `<tr><td><b>${esc(D._l)}</b></td>
       <td class="num">${cell('od')}</td><td class="num">${cell('t')}</td><td class="num">${cell('L')}</td>
       <td style="color:#6e7681;font-size:11px">${esc(D._n || '')}</td><td></td></tr>`;
   }).join('');
+  refBind();
 }
 
 /* ---- ③ 표준시간 상수 -------------------------------------------------- */
@@ -1654,16 +1742,17 @@ function renderRefStd() {
     const G = REF.std[proc], D = REF_STD_DEFAULT[proc];
     const rows = Object.keys(G).filter(k => k[0] !== '_').map(k =>
       `<div class="refrow"><span title="${esc(G[k].l)}">${esc(G[k].l)}</span>
-         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v))}
+         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v), { min: REF_STD_MIN(proc, k) })}
          <i>${esc(G[k].u || '')}</i></div>`).join('');
     let prev = '';
     try {
       const r = REF_PREVIEW_FN[proc] ? REF_PREVIEW_FN[proc]() : null;
       if (r) prev = `<div class="refprev">미리보기 <b>${r.sec.toFixed(1)}s</b> &nbsp;·&nbsp; ${esc(r.expr)}</div>`;
     } catch (e) { prev = `<div class="refprev" style="color:#ff7b72">미리보기 계산 오류: ${esc(String(e.message || e))}</div>`; }
-    return `<div class="refgrp"><h4>${esc(G._label)} <small>엑셀 ${esc(G._src)}</small></h4>
+    return `<div class="refgrp" data-proc="${esc(proc)}"><h4>${esc(G._label)} <small>엑셀 ${esc(G._src)}</small></h4>
       <div class="refgrid">${rows}</div>${prev}</div>`;
   }).join('');
+  refBind();
 }
 
 /* ---- ④ 룩업 표 (보기 전용) ------------------------------------------- */
@@ -1708,15 +1797,86 @@ function refExport() {
   a.download = `JCOE_기준정보_${new Date().toISOString().slice(0,10)}.json`;
   a.click(); URL.revokeObjectURL(a.href);
 }
+/** 불러온 JSON 을 **검증해서** REF_EDIT 모양으로 바꾼다. 못 쓰는 항목은 사유와 함께 걸러낸다. */
+function refSanitize(d) {
+  const bad = [];
+  const plain = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  /* `__proto__` · `constructor` 같은 키를 그대로 인덱싱하면 Object.prototype 이 오염된다.
+     자기 소유 키만 받아들인다. (2026-08-14 전수 감사) */
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const RISKY = new Set(['__proto__', 'constructor', 'prototype']);
+  const num = (v) => typeof v === 'number' && isFinite(v);
+  const out = { std:{}, co:{}, cap:{} };
+
+  const cap = d.설비대수 ?? d.cap;
+  if (cap != null) {
+    if (!plain(cap)) bad.push('설비대수 형식이 올바르지 않습니다');
+    else for (const id in cap) {
+      if (!own(cap, id) || RISKY.has(id)) { bad.push(`설비대수: 쓸 수 없는 키 ${id}`); continue; }
+      const v = Math.round(+cap[id]);
+      if (id === 'EXP') bad.push('설비대수: 확관(EXP) 은 「설정」 탭의 #3호기 사용 여부로 정합니다');
+      else if (!NODE[id] || NODE[id].kind !== 'proc') bad.push(`설비대수: 없는 설비 ${id}`);
+      else if (!isFinite(v) || v < 1 || v > 20) bad.push(`설비대수 ${id}: 1~20 범위 밖 (${cap[id]})`);
+      else out.cap[id] = v;
+    }
+  }
+  const co = d.전환시간 ?? d.co;
+  if (co != null) {
+    if (!plain(co)) bad.push('전환시간 형식이 올바르지 않습니다');
+    else for (const st in co) {
+      if (!own(co, st) || RISKY.has(st)) { bad.push(`전환시간: 쓸 수 없는 키 ${st}`); continue; }
+      if (!plain(co[st])) { bad.push(`전환시간: ${st} 형식 오류`); continue; }
+      if (!own(REF_CO_DEFAULT, st)) { bad.push(`전환시간: 없는 공정 ${st}`); continue; }
+      for (const k of ['od','t','L']) {
+        if (co[st][k] === undefined) continue;
+        const v = +co[st][k];
+        if (!num(v) || v < 0) bad.push(`전환시간 ${st}.${k}: 0 이상 숫자만 (${co[st][k]})`);
+        else (out.co[st] = out.co[st] || {})[k] = v;
+      }
+    }
+  }
+  const std = d.표준시간상수 ?? d.std;
+  if (std != null) {
+    if (!plain(std)) bad.push('표준시간상수 형식이 올바르지 않습니다');
+    else for (const proc in std) {
+      if (!own(std, proc) || RISKY.has(proc)) { bad.push(`표준시간상수: 쓸 수 없는 키 ${proc}`); continue; }
+      if (!plain(std[proc])) { bad.push(`표준시간상수: ${proc} 형식 오류`); continue; }
+      if (!own(REF_STD_DEFAULT, proc)) { bad.push(`표준시간상수: 없는 공정 ${proc}`); continue; }
+      for (const k in std[proc]) {
+        if (!own(std[proc], k) || RISKY.has(k)) { bad.push(`표준시간상수 ${proc}.${k}: 쓸 수 없는 키`); continue; }
+        if (!own(REF_STD_DEFAULT[proc], k)) { bad.push(`표준시간상수 ${proc}.${k}: 없는 항목`); continue; }
+        const v = +std[proc][k];
+        if (!num(v) || v < REF_STD_MIN(proc, k)) bad.push(`표준시간상수 ${proc}.${k}: 값 오류 (${std[proc][k]})`);
+        else (out.std[proc] = out.std[proc] || {})[k] = v;
+      }
+    }
+  }
+  return { out, bad };
+}
 function refImportFile(file) {
   const rd = new FileReader();
   rd.onload = () => {
+    /* ★ **원자적으로** 적용한다.
+       종전에는 REF_EDIT 를 먼저 덮어쓰고 엔진에 밀어 넣는 도중 예외가 나면
+       표준시간은 이미 바뀐 채로 전환시간·설비대수는 안 바뀐 **반쯤 적용된 상태**가 됐고,
+       그 뒤로는 편집도 되돌리기도 전부 예외를 던져 새로고침 말고는 방법이 없었다. */
+    const prev = JSON.parse(JSON.stringify(REF_EDIT));
+    let d;
+    try { d = JSON.parse(rd.result); }
+    catch (e) { alert('JSON 을 읽지 못했습니다: ' + (e.message || e)); return; }
+    const { out, bad } = refSanitize(d);
     try {
-      const d = JSON.parse(rd.result);
-      REF_EDIT = { std: d.표준시간상수 || d.std || {}, co: d.전환시간 || d.co || {}, cap: d.설비대수 || d.cap || {} };
-      refApply();
-      alert(`기준정보를 불러왔습니다 — 변경 ${refCount()}개 항목이 적용됐습니다.`);
-    } catch (e) { alert('기준정보 파일을 읽지 못했습니다: ' + (e.message || e)); }
+      REF_EDIT = out;
+      refApply(true);
+    } catch (e) {
+      REF_EDIT = prev; refApply(true);
+      alert('기준정보를 적용하지 못해 이전 상태로 되돌렸습니다: ' + (e.message || e));
+      return;
+    }
+    const n = refCount();
+    alert(`기준정보를 불러왔습니다 — ${n}개 항목 적용.`
+      + (bad.length ? `\n\n걸러낸 항목 ${bad.length}개:\n· ` + bad.slice(0, 10).join('\n· ')
+          + (bad.length > 10 ? `\n… 외 ${bad.length - 10}개` : '') : ''));
   };
   rd.readAsText(file);
 }

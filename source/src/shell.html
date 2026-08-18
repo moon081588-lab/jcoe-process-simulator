@@ -564,6 +564,7 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       <button class="ghost" id="refExport">기준정보 내보내기 (.json)</button>
       <label class="ghost" for="refImport" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid var(--ln);border-radius:6px">불러오기</label>
       <input type="file" id="refImport" accept=".json,application/json" style="display:none">
+      <div class="hint" id="refPlanWarn" style="color:#d29922"></div>
       <div class="hint">값을 고치면 <b>바로 다시 계산</b>됩니다. 원래 값과 다른 칸은 노란색으로 표시되고,
         칸마다 <b>되돌리기(↺)</b> 버튼이 생깁니다. 내보낸 <code>.json</code> 을 다른 사람이 불러오면 똑같은 상태가 됩니다.</div>
     </div>

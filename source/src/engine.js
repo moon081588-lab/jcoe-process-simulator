@@ -132,10 +132,24 @@ const REF = { std: refClone(REF_STD_DEFAULT), co: null, cap: {} };
 /** 설비 대수 반영. patch = { 노드ID: 대수 } — 빈 객체면 코드 기본값 사용 */
 function setRefCap(patch) {
   REF.cap = {};
-  if (!patch) return REF.cap;
-  for (const id in patch) {
-    const v = Math.round(+patch[id]);
-    if (isFinite(v) && v >= 1 && v <= 20) REF.cap[id] = v;
+  if (patch && typeof patch === 'object') for (const id in patch) {
+    if (!own(patch, id)) continue;
+    /* 확관(EXP) 대수는 「설정」 탭의 #3호기 사용 여부로 정해진다.
+       여기서 받아 두면 적용은 안 되면서 「변경 1개」로만 남아, 기준선 재기준이 영영 안 된다. */
+    if (id === 'EXP') continue;
+    const raw = patch[id];
+    if (typeof raw !== 'number' || !isFinite(raw)) continue;   // true·'5'·[3] 등은 받지 않는다
+    const v = Math.round(raw);
+    if (v >= 1 && v <= 20) REF.cap[id] = v;
+  }
+  /* ★ NODE[].cap 에 **직접** 반영한다.
+     시뮬레이터의 자원 풀뿐 아니라 3D 설비 메쉬·투입산출 탭의 호기 목록·호기 라벨이
+     전부 NODE[].cap 을 보기 때문이다. 종전에는 풀 생성부에서만 덮어써서
+     대수를 늘려도 3D 는 옛 대수 그대로였고, 투입산출 탭 호기 칸이 '-' 로 나왔다. */
+  if (typeof NODE !== 'undefined' && typeof NODE_CAP_DEFAULT !== 'undefined') {
+    for (const id in NODE_CAP_DEFAULT) {
+      if (NODE[id]) NODE[id].cap = REF.cap[id] || NODE_CAP_DEFAULT[id];
+    }
   }
   return REF.cap;
 }
@@ -145,11 +159,14 @@ function setRefCap(patch) {
 function setRefStd(patch) {
   REF.std = refClone(REF_STD_DEFAULT);
   if (!patch) return REF.std;
+  if (typeof patch !== 'object') return REF.std;
   for (const proc in patch) {
-    if (!REF.std[proc]) continue;
-    for (const k in patch[proc]) {
-      if (REF.std[proc][k] && typeof patch[proc][k] === 'number' && isFinite(patch[proc][k]))
-        REF.std[proc][k].v = patch[proc][k];
+    if (!own(patch, proc) || !own(REF.std, proc)) continue;
+    const src = patch[proc];
+    if (!src || typeof src !== 'object') continue;
+    for (const k in src) {
+      if (!own(src, k) || !own(REF.std[proc], k)) continue;
+      if (typeof src[k] === 'number' && isFinite(src[k])) REF.std[proc][k].v = src[k];
     }
   }
   return REF.std;
@@ -390,9 +407,16 @@ function dieDuplicates(machine) {
    2026-08-14 확인. 종전 R/B 식은 이 −90 을 빠뜨리고 다이 Size 를 그대로 나눠
    확관 횟수를 과소 계상하고 있었다.
    -------------------------------------------------------------------- */
-function stepMargin(machine) {
+/** 확관 Step 여유값 [mm].
+    ★ 「끝단 남을 길이가 150mm 이하일 경우 −100 을 적용」 규칙은 **다이 크기에 따라** 달라진다.
+      종전에는 이 함수가 무조건 150 을 돌려줘서, step ≤ 150 인 다이(M1 표에 15행)에서
+      recipe = max(step−150, 1) = **1mm** 가 됐다. 엑셀 N 모드는 그 1mm 로 나누므로
+      OD508 t20.25 18.288m 에서 N 이 366 회가 아니라 **18,288 회**, 소요 4,642s → 219,706s 로 튀었다
+      (기본 오더셋 makespan 24.4일 → 301.1일). 화면에 찍히는 HMI 레시피 값도 1mm 로 틀렸다. */
+function stepMargin(machine, step) {
   const E = RSTD.Expander;
-  return machine === 'RB' ? E.marginRB : E.marginM1;
+  if (machine === 'RB') return E.marginRB;
+  return (step != null && step <= E.marginM1) ? E.marginM1Small : E.marginM1;
 }
 
 /** 확관 Step Size / 다이 정보 (호기별)
@@ -400,9 +424,11 @@ function stepMargin(machine) {
     recipe = 실제 HMI 에 입력하는 확관 Step Size = 다이 Size − 여유값 */
 function expanderStep(s, machine) {
   const ti = toolInfo(s.od, s.t, machine || 'M2');
-  const m = stepMargin(machine || 'M2');
-  if (ti.step) return { step: ti.step, recipe: Math.max(ti.step - m, 1), margin: m,
-                        dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
+  if (ti.step) {
+    const m = stepMargin(machine || 'M2', ti.step);
+    return { step: ti.step, recipe: Math.max(ti.step - m, 1), margin: m,
+             dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
+  }
   /* 호기별 다이표에 없으면 엑셀 「Expander(1호기)」 표로 폴백 */
   const inch = Math.round(odInch(s.od));
   const keys = Object.keys(T.expanderDie).map(Number).sort((a, b) => a - b);
@@ -410,6 +436,7 @@ function expanderStep(s, machine) {
   for (const k of keys) if (Math.abs(k - inch) < Math.abs(bk - inch)) bk = k;
   const dies = T.expanderDie[bk];
   const die = dies.find(d => d[0] >= s.t) || dies[dies.length - 1];
+  const m = stepMargin(machine || 'M2', die[1]);
   return { step: die[1], recipe: Math.max(die[1] - m, 1), margin: m,
            dieT: `t${die[0]}`, inch: bk, tool: ti, fallback: true };
 }
@@ -448,9 +475,8 @@ function expanderN(s, machine) {
        예) OD508 t9.5 step170 → 분모 20 → 11.5m 에서 N=575 회 (2,987s → 7,127s).
        종전에는 하한 50 을 두었으나 정본과 어긋나므로 제거했다.
        분모가 0 이하가 되는 표상의 step 은 없지만, 만약을 대비해 0 나눗셈만 막는다. */
-    const E = RSTD.Expander;
-    const den = step - (step <= E.marginM1 ? E.marginM1Small : E.marginM1);
-    return Math.round(s.L / (den > 0 ? den : 1));
+    /* recipe 가 이미 「다이 − 여유값」이다 (여유값은 다이 크기에 따라 150/100). */
+    return Math.round(s.L / (recipe > 0 ? recipe : 1));
   }
   let n = ceil((s.L - 500) / step) + 2;
   if (EXP_NMODE === 'ortools') { if (n % 2 === 1) n += 1; }   // 짝수 보정
@@ -614,13 +640,20 @@ const REF_CO_DEFAULT = {
 const CHANGEOVER = refClone(REF_CO_DEFAULT);
 REF.co = CHANGEOVER;
 /** 전환시간 반영. patch = { 공정: { od|t|L: 초 } } */
+/* ★ 패치 키를 그대로 인덱싱하면 `__proto__` 로 **Object.prototype 이 오염**된다.
+     그러면 모든 객체가 od/t/L 를 갖게 되어 `for…in` 을 쓰는 화면들이 줄줄이 터지고,
+     초기화로도 되돌릴 수 없다. 자기 소유 키인지 반드시 확인한다. (2026-08-14 전수 감사) */
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 function setRefCo(patch) {
   for (const k in REF_CO_DEFAULT) Object.assign(CHANGEOVER[k], REF_CO_DEFAULT[k]);   // 항상 초기화 후 적용
-  if (!patch) return CHANGEOVER;
+  if (!patch || typeof patch !== 'object') return CHANGEOVER;
   for (const st in patch) {
-    if (!CHANGEOVER[st]) continue;
+    if (!own(patch, st) || !own(CHANGEOVER, st)) continue;
+    const src = patch[st];
+    if (!src || typeof src !== 'object') continue;
     for (const k of ['od', 't', 'L']) {
-      const v = patch[st][k];
+      if (!own(src, k)) continue;
+      const v = src[k];
       if (typeof v === 'number' && isFinite(v) && v >= 0) CHANGEOVER[st][k] = v;
     }
   }

@@ -69,7 +69,10 @@ function plogParseCSV(text) {
     if (q) {
       if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; }
       else cur += c;
-    } else if (c === '"') q = true;
+    /* 따옴표는 **필드 맨 앞에 있을 때만** 인용 시작이다.
+       종전에는 필드 중간의 따옴표(자재내역의 42" 같은 인치 표기)도 인용 시작으로 봐서
+       거기서부터 파일 나머지를 통째로 한 필드에 삼켰다. (2026-08-14 전수 감사) */
+    } else if (c === '"' && cur === '') q = true;
     else if (c === ',') { row.push(cur); cur = ''; }
     else if (c === '\n') { row.push(cur); cur = ''; if (row.some(v => v !== '')) rows.push(row); row = []; }
     else if (c !== '\r') cur += c;
@@ -80,7 +83,9 @@ function plogParseCSV(text) {
   return rows.slice(1).map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] ?? '').trim()])));
 }
 
-const PLOG_SPEC_RX = /(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[tT]\s*[xX]\s*(\d+(?:\.\d+)?)\s*[mM]/;
+/* 길이 단위: `12.802M` 는 미터, `12192mm` 는 밀리미터.
+   종전 정규식은 [mM] 하나만 봐서 'mm' 의 첫 글자에 걸렸고, 12192mm 를 12,192,000mm 로 읽었다. */
+const PLOG_SPEC_RX = /(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[tT]\s*[xX]\s*(\d+(?:\.\d+)?)\s*(mm|MM|[mM])\b/;
 
 /** 자재 내역 → 규격.  ex) '원Z483C2X70M BBE 1067x19.6tx12.192M A45' */
 function plogSpec(desc) {
@@ -88,7 +93,7 @@ function plogSpec(desc) {
   if (!m) return null;
   const head = String(desc).split(/\s+/)[0] || '';
   return {
-    od: +m[1], t: +m[2], L: +m[3] * 1000,
+    od: +m[1], t: +m[2], L: +m[3] * (/^mm$/i.test(m[4]) ? 1 : 1000),
     /* 표준시간 엑셀 No.20 메모 — 「자재내역의 'C2' 강관기호가 있으면 옥외 열처리 진행」 */
     heat: /C2/.test(head),
     /* '편' 은 편척(짧게 잘라 쓴 것) — 배척 여부의 대리 지표. 확인 필요 */
@@ -111,8 +116,12 @@ function loadProdLog(text) {
   const rows = raw.map(r => ({
     wc: r.REAL_WC_ID, wcDesc: r.REAL_WC_DESC, op: r.OPERATION_NM,
     wo: r.WO_NO, mat: r.MATERIAL_DESC, date: r.WORK_DATE, shift: +r.SHIFT || 0,
-    last: plogTs(r.LAST_TIME), poll: plogTs(r.poll_time), cum: +r.PROD_QTY_cum || 0,
-  })).filter(r => r.wc && r.last != null);
+    last: plogTs(r.LAST_TIME), poll: plogTs(r.poll_time),
+    cum: (isFinite(+r.PROD_QTY_cum) && String(r.PROD_QTY_cum).trim() !== '') ? +r.PROD_QTY_cum : null,
+  })).filter(r => r.wc && r.last != null && r.cum != null);
+  /* 시각을 하나도 못 읽으면 여기서 rows 가 비고, 아래에서 rows[0].last 로 터졌다.
+     열이 없을 때와 같이 **오류 객체로 돌려준다.** (2026-08-14 전수 감사) */
+  if (!rows.length) return { error: 'LAST_TIME 을 읽을 수 있는 행이 없습니다 (예: 2026-07-20 15:01:14 형식)' };
   rows.sort((a, b) => a.last - b.last);
 
   /* ① 본수 — (설비·WO·일·근) 별 최대 누적의 합 (qty_delta 는 쓰지 않는다) */
@@ -122,10 +131,9 @@ function loadProdLog(text) {
     const b = bucket.get(k);
     if (!b || r.cum > b.cum) bucket.set(k, { ...r, cum: r.cum });
   }
-  const qtyWC = {}, qtyWO = {}, qtyWCWO = {};
+  const qtyWC = {}, qtyWCWO = {};
   for (const b of bucket.values()) {
     qtyWC[b.wc] = (qtyWC[b.wc] || 0) + b.cum;
-    qtyWO[b.wo] = Math.max(qtyWO[b.wo] || 0, 0);
     qtyWCWO[`${b.wc}|${b.wo}`] = (qtyWCWO[`${b.wc}|${b.wo}`] || 0) + b.cum;
   }
 
@@ -160,7 +168,13 @@ function loadProdLog(text) {
       if (p && r.cum > p.cum && r.last > p.last) {
         const dt = r.last - p.last, dq = r.cum - p.cum;
         const d = dt / dq;
-        if (d > 20 && d < 4 * 3600) { gaps.push(d); sumDt += dt; sumDq += dq; }
+        /* ★ 처리량 기준 합계(perPipeSec)는 **긴 유휴 구간도 포함**해야 한다.
+           종전에는 4시간 넘는 구간을 sumDt 에서도 빼서, 실적의 7.6% (1,592h 중 120h)가
+           통째로 사라졌다. 그러면 「처리량 기준」이라고 부르면서 실제로는 걸러낸 페이스였다.
+           30일을 넘는 값만 데이터 오류로 보고 제외한다.
+           페이스 중위수(paceSec)는 종전대로 20초~4시간 표본만 쓴다. (2026-08-14 전수 감사) */
+        if (d > 0 && d < 30 * 86400) { sumDt += dt; sumDq += dq; }
+        if (d > 20 && d < 4 * 3600) gaps.push(d);
       }
       if (!p || r.cum >= p.cum) seen.set(k, r);
     }
@@ -199,7 +213,10 @@ function loadProdLog(text) {
     for (const wc of o.wcs) mx = Math.max(mx, qtyWCWO[`${wc}|${o.wo}`] || 0);
     orders.push({
       no: String(o.wo), od: sp.od, t: sp.t, L: sp.L,
-      qty: pack || mx || 1, packQty: pack, maxQty: mx,
+      /* 오더 본수 — 포장까지 끝난 수(pack)만 쓰면 아직 공정 중인 본이 통째로 빠진다.
+         실제 로그에서 456본 중 69본(15%)이 사라졌다. 어느 설비에서든 관측된 최대치를 쓴다.
+         (2026-08-14 전수 감사) */
+      qty: Math.max(pack || 0, mx || 0) || 1, packQty: pack, maxQty: mx,
       start: null, due: null,
       mat: o.mat, code: sp.code, heat: sp.heat, partial: sp.partial,
       /* 열처리(C2) → 병목공정 HT102 로 표기해 R/B 강제 투입 규칙을 그대로 태운다 */
@@ -211,7 +228,7 @@ function loadProdLog(text) {
 
   const t0 = rows[0].last, t1 = rows[rows.length - 1].last;
   return {
-    rows, wcStat, orders, badSpec,
+    rows, wcStat, orders, badSpec, qtyWCWO,
     span: { from: t0, to: t1, hours: (t1 - t0) / 3600 },
     unmapped: wcStat.filter(w => !w.node).map(w => `${w.wc} ${w.label}`),
     totalPack: (qtyWC.PK113 || 0) + (qtyWC.PK112 || 0),
@@ -230,7 +247,9 @@ function verifyProdLog(log, cfg) {
     if (!w.node || w.perPipeSec == null) continue;
     const node = (typeof NODE !== 'undefined') ? NODE[w.node] : null;
     if (!node || !node.st) continue;
-    /* 그 설비를 지난 오더들의 표준시간을 실적 본수로 가중평균한다 */
+    /* 그 설비를 지난 오더들의 표준시간을 **그 설비에서의 실적 본수**로 가중평균한다.
+       종전에는 오더 전체 본수(포장 기준)로 가중해서, 상류 설비에서 아직 43본을 돌리고 있는데
+       포장은 6본만 끝난 오더가 6본짜리로 계산됐다 (EM102 표준 471s → 실제 522s). */
     let num = 0, den = 0;
     for (const o of log.orders) {
       if (!o.wcs.includes(w.wc)) continue;

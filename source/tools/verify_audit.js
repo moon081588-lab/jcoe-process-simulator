@@ -12,13 +12,16 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
 const src = fs.readFileSync(path.join(ROOT, 'src/engine.js'), 'utf8') + '\n'
-          + fs.readFileSync(path.join(ROOT, 'src/flow.js'), 'utf8');
+          + fs.readFileSync(path.join(ROOT, 'src/flow.js'), 'utf8') + '\n'
+          + fs.readFileSync(path.join(ROOT, 'src/prodlog.js'), 'utf8') + '\n'
+          + fs.readFileSync(path.join(ROOT, 'src/planload.js'), 'utf8');
 const T = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/tables.json'), 'utf8'));
 const ORDERS = JSON.parse(fs.readFileSync(path.join(ROOT, 'data/orders.json'), 'utf8'));
 const api = new Function('T', 'ORDERS', src + `
   return { simulate, optimizeExpander, routeOf, STD, NODES, NODE, importOptPlan,
            normMachine, rbCapable, forceRB, useRBLine, expanderStep, expanderN, toolInfo,
-           setRefStd, setRefCo, setRefCap, refDiff, refCoDiff, REF, REF_STD_DEFAULT, CHANGEOVER };
+           setRefStd, setRefCo, setRefCap, refDiff, refCoDiff, REF, REF_STD_DEFAULT, CHANGEOVER,
+           setExpanderNMode, PlanLoader, loadProdLog, plogSpec, plogParseCSV, verifyProdLog };
 `)(T, ORDERS);
 
 let failed = 0;
@@ -220,6 +223,97 @@ api.setRefCap({});
 /* C6. 기준정보를 안 건드리면 엑셀 대조값과 완전히 같다 (verify_formulas 와 이중 확인) */
 near('C6 무변경 시 포장 = 873.3s', api.STD.Packing(SP, '12M', 5).sec, 873.3, 0.1);
 near('C6 무변경 시 확관 #1 = 507.3s (177 + N23×12 + (12802+3500)/300)', api.STD.Expander(SP, 'M1').sec, 507.34, 0.1);
+
+/* ==================================================================
+   2026-08-14 2차 전수 감사 — 병렬 코드 감사에서 나온 결함들
+   ================================================================== */
+console.log('\n── 2차 감사: 엔진 ──');
+
+/* D1. 소형 다이(step ≤ 150) 의 −100 여유 규칙이 모든 경로에 적용되는가.
+   종전: stepMargin 이 무조건 150 → recipe = max(step−150,1) = 1mm
+        → 엑셀 N 모드에서 OD508 t20.25 18.288m 이 N=18,288회 / 219,706s 로 폭주 */
+const SMALL = { od:508, t:20.25, L:18288 };
+near('D1 소형 다이 recipe = step−100', api.expanderStep(SMALL, 'M1').recipe, 50, 0);
+api.setExpanderNMode('excel');
+near('D1 엑셀 N = ceil(L/50)', api.expanderN(SMALL, 'M1'), Math.ceil(18288/50), 0);
+near('D1 엑셀 소요 4,642s (종전 219,706s)', api.STD.Expander(SMALL, 'M1').sec, 4642, 1);
+api.setExpanderNMode('ortools');
+near('D1 운영모델도 같은 분모', api.expanderN(SMALL, 'M1'), Math.ceil(18288/50), 0);
+near('D1 큰 다이는 −150 그대로', api.expanderStep({od:914,t:9.3,L:12802},'M1').recipe, 550, 0);
+
+/* D2. 프로토타입 오염 — `__proto__` 키가 Object.prototype 을 건드리면 안 된다 */
+api.setRefCo(JSON.parse('{"__proto__":{"od":9999,"t":1,"L":2}}'));
+ok('D2 setRefCo 가 Object.prototype 을 오염시키지 않는다', ({}).od === undefined, '({}).od=' + ({}).od);
+api.setRefStd(JSON.parse('{"__proto__":{"base":1}}'));
+ok('D2 setRefStd 도 안전', ({}).base === undefined);
+api.setRefCo({}); api.setRefStd({});
+
+/* D3. 확관 대수는 기준정보에서 못 바꾼다 (설정 탭 소관) — 받아두면 기준선이 영영 안 잡힌다 */
+ok('D3 setRefCap 이 EXP 를 받지 않는다', (api.setRefCap({ EXP: 4 }), Object.keys(api.REF.cap).length === 0));
+/* D4. 숫자가 아닌 값은 받지 않는다 */
+ok('D4 true / "5" / [3] 거부', (api.setRefCap({ PACK: true }), Object.keys(api.REF.cap).length === 0)
+   && (api.setRefCap({ PACK: '5' }), Object.keys(api.REF.cap).length === 0)
+   && (api.setRefCap({ PACK: [3] }), Object.keys(api.REF.cap).length === 0));
+ok('D4 setRefCo 가 null 항목에 안 터진다', (() => { try { api.setRefCo({ Packing: null }); return true; } catch (e) { return false; } })());
+api.setRefCap({});
+
+console.log('\n── 2차 감사: 계획서 로더 ──');
+const PL = api.PlanLoader;
+const runPlan = (rows) => {
+  const h = PL.detectHeader(rows), m = PL.autoMap(rows[h], rows.slice(h + 1));
+  return PL.buildOrders(rows.slice(h + 1), m, PL.guessUnits(rows.slice(h + 1), m),
+                        { startDate: '2026-03-02', rowBase: h + 1 });
+};
+/* E1. 열 별칭 'o.d' 가 'MODEL' 에 부분일치해 외경 열을 가로채던 문제 — 완전일치가 이겨야 한다 */
+const e1 = runPlan([['ORDER','MODEL','OD','THK','LENGTH','QTY'],
+  ['A',800,914,9.3,12802,10],['B',800,762,9.5,12802,20],['C',1200,1219,25.4,12000,30]]);
+ok('E1 MODEL 열이 외경을 가로채지 않는다', e1.orders.map(o=>o.od).join(',') === '914,762,1219',
+   e1.orders.map(o=>o.od).join(','));
+/* E2. 중복 오더 접미어가 실제 '-2' 오더와 충돌하던 문제 */
+const e2 = runPlan([['판매오더','외경','두께','길이','수량'],
+  ['A',914,9.3,12802,10],['A',914,9.3,12802,20],['A-2',1219,25.4,12000,30],['A',762,9.5,12802,40]]);
+ok('E2 오더번호가 서로 겹치지 않는다',
+   new Set(e2.orders.map(o=>o.no)).size === e2.orders.length && e2.orders.length === 4,
+   e2.orders.map(o=>o.no).join(','));
+/* E3. 병합된 일자 셀 — 직전 날짜를 이어받아야 한다 (종전: 시작일부터 6시간 사다리) */
+const e3 = runPlan([['일자','외경','두께','길이','수량'],
+  ['2026-04-01',914,9.3,12802,10],['',914,9.3,12802,10],['',914,9.3,12802,10],
+  ['2026-04-08',914,9.3,12802,10],['',914,9.3,12802,10]]);
+ok('E3 병합 일자 셀이 직전 날짜를 잇는다',
+   e3.orders.map(o=>o.start.slice(0,10)).join(' ') === '2026-04-01 2026-04-01 2026-04-01 2026-04-08 2026-04-08',
+   e3.orders.map(o=>o.start.slice(0,10)).join(' '));
+/* E4. 반올림하면 0 이 되는 수량은 오더로 내보내지 않는다 */
+const e4 = runPlan([['판매오더','외경','두께','길이','수량'],
+  ['A',914,9.3,12802,0.4],['B',914,9.3,12802,1.6],['C',914,9.3,12802,10]]);
+ok('E4 소수 수량 0.4 는 건너뛰고 알린다',
+   e4.orders.length === 2 && e4.skipped.some(x=>/0\.4/.test(x.why)), JSON.stringify(e4.skipped));
+
+console.log('\n── 2차 감사: 실적 로그 ──');
+/* F1. 자재내역의 인치 표기(42") 가 파일 나머지를 삼키던 CSV 파서 버그 */
+const f1 = api.plogParseCSV([
+  'a,b,c',
+  'NX52L2 BBE 42" 762x9.5tx12.802M,2,3',
+  'x,y,z',
+].join('\n'));
+ok('F1 필드 중간 따옴표가 파일을 삼키지 않는다', f1.length === 2 && f1[1].a === 'x',
+   `${f1.length}행 · ${JSON.stringify(f1[0]).slice(0,60)}`);
+/* F2. mm 표기를 미터로 오독해 길이가 1000배가 되던 문제 */
+near('F2 12192mm → 12192', api.plogSpec('NX52L2 BBE 762x9.5tx12192mm A44').L, 12192, 0);
+near('F2 12.802M → 12802', api.plogSpec('NX52L2 BBE 762x9.5tx12.802M A44').L, 12802, 0);
+/* F3. 시각을 하나도 못 읽는 파일은 던지지 말고 오류로 돌려준다 */
+const f3 = api.loadProdLog([
+  'poll_time,REAL_WC_ID,REAL_WC_DESC,OPERATION_NM,WO_NO,MATERIAL_DESC,WORK_DATE,SHIFT,LAST_TIME,PROD_QTY_cum,qty_delta',
+  '2026/07/20 15:01:14,PK113,포장,포장,1,NX52L2 BBE 762x9.5tx12.802M,2026-07-20,2,2026/07/20 15:01:05,2,2',
+].join('\n'));
+ok('F3 시각 전부 실패 → error 객체', !!(f3 && f3.error), JSON.stringify(f3).slice(0, 80));
+/* F4. 숫자가 아닌 누적값은 0 으로 삼키지 않는다 */
+const f4 = api.loadProdLog([
+  'poll_time,REAL_WC_ID,REAL_WC_DESC,OPERATION_NM,WO_NO,MATERIAL_DESC,WORK_DATE,SHIFT,LAST_TIME,PROD_QTY_cum,qty_delta',
+  '2026-07-20 15:01:14,PK113,포장,포장,1,NX52L2 BBE 762x9.5tx12.802M,2026-07-20,2,2026-07-20 15:01:05,N/A,0',
+  '2026-07-20 16:01:14,PK113,포장,포장,1,NX52L2 BBE 762x9.5tx12.802M,2026-07-20,2,2026-07-20 16:01:05,7,7',
+].join('\n'));
+ok('F4 N/A 누적행을 버리고 7본으로 센다', !f4.error && f4.wcStat[0].qty === 7,
+   f4.error || (f4.wcStat[0].qty + '본'));
 
 console.log(failed ? `\n${failed}건 FAIL` : '\n전 항목 PASS');
 process.exit(failed ? 1 : 0);

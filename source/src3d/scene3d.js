@@ -227,10 +227,14 @@ function buildScene(){
 
   camera = new THREE.PerspectiveCamera(46, 1, 0.5, 800);
   const wrap = $('c3d');
-  renderer = new THREE.WebGLRenderer({antialias:true, canvas:$('gl')});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  /* 렌더러는 처음 한 번만 만든다 — 장면을 다시 만들 때 같은 canvas 로 두 번 만들면
+     WebGL 컨텍스트가 쌓여 결국 "Too many active WebGL contexts" 로 죽는다. */
+  if (!renderer) {
+    renderer = new THREE.WebGLRenderer({antialias:true, canvas:$('gl')});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  }
 
   scene.add(new THREE.HemisphereLight(0x9ec5ff, 0x0b0f16, 1.15));
   const dl = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -548,19 +552,64 @@ let LOOP = false, seeking = false;
    ── 종전에는 이 파일이 자체 readCfg()/runSim() 으로 **따로 시뮬을 돌렸다.**
       그래서 2D 에서 기준정보(설비 대수·표준시간)를 고쳐도 3D 는 옛 값 그대로였고,
       두 화면이 서로 다른 답을 보여줄 수 있었다. 이제 계산은 한 곳에서만 한다. */
+/** 설비 대수가 바뀌었을 때 3D 장면을 다시 만든다 (렌더러·이벤트 바인딩은 유지) */
+function rebuildScene(){
+  if (scene) {                       // 옛 지오메트리·머티리얼을 GPU 에서 내린다
+    scene.traverse(o=>{
+      if (o.geometry) o.geometry.dispose();
+      const m = o.material;
+      if (m) (Array.isArray(m) ? m : [m]).forEach(x=>{ if(x.map) x.map.dispose(); x.dispose(); });
+    });
+  }
+  for (const k in node3d) delete node3d[k];
+  for (const k in EDGE_CURVE) delete EDGE_CURVE[k];
+  for (const k in EDGE_PATH) delete EDGE_PATH[k];
+  for (const k in badgeEls) delete badgeEls[k];
+  pipePool = []; pipeUsed = 0; pickables = []; selected = null;
+  if ($('badges')) $('badges').innerHTML = '';
+  if ($('infoPanel')) $('infoPanel').classList.remove('on');
+  buildScene(); buildLogicalCurves(); initBadges();
+  resize();
+}
+
+/** 설비 대수 구성이 바뀌었는지 — 바뀌면 장면을 다시 만들어야 한다 */
+function capSig(sim){ return sim.stats.map(s=>s.id+':'+s.cap).join(','); }
+let sceneSig = null;
+
 function applySim(sim, cfg, srcLabel){
   if(!sim) return;
+  if(!mounted) return;                       // mount 전에는 아무것도 하지 않는다 (종전엔 TypeError)
+  const same = (SIM === sim);                // 같은 결과를 다시 넘겨받은 경우(탭 재진입)
   SIM = sim; CFG = cfg || CFG;
-  animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0; playing=false;
-  if($('btnPlay')) $('btnPlay').textContent='▶';
-  if($('seek')) $('seek').value=0;
-  for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+
+  /* 설비 대수가 바뀌면 3D 장면을 다시 만든다.
+     종전에는 mount() 때의 NODE[].cap 으로 만든 설비 메쉬가 그대로 남아,
+     기준정보에서 내면 SAW 를 8대로 늘려도 화면엔 4대만 있고 나머지 4대의 파이프가
+     1호기 위에 겹쳐 쌓였다. (2026-08-14 전수 감사) */
+  const sig = capSig(SIM);
+  if (sceneSig !== null && sig !== sceneSig) {
+    try { rebuildScene(); } catch(e){ console.error('[3D] 장면 재구성 실패', e); }
+  }
+  sceneSig = sig;
+
+  /* 탭을 닫았다 다시 열었을 뿐이면 재생 위치를 유지한다.
+     종전에는 탭 재진입마다 update() 가 불려 재생이 멈추고 시점이 처음으로 돌아갔다. */
+  if(!same){
+    animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0; playing=false;
+    if($('btnPlay')) $('btnPlay').textContent='▶';
+    if($('seek')) $('seek').value=0;
+    for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+    if($('doneCnt')) $('doneCnt').textContent='0';          // 종전: 이전 실행의 값이 남아 있었다
+    selected=null;                                           // 이전 실행 기준의 설비 정보 패널을 닫는다
+    if($('infoPanel')) $('infoPanel').classList.remove('on');
+  }
   if($('simInfo')) $('simInfo').textContent =
       `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일)`
     + ` · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
     + (srcLabel ? ` · ${srcLabel}` : '')
     + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed}` : '');
   buildStat(); updateStat(); refreshVisual();
+  if(!same && $('simClock')) $('simClock').textContent = fmtT(SIM.t0);
 }
 
 const _oc={};
@@ -742,21 +791,31 @@ function buildStat(){
     <div class="sb"><div class="sf" id="v3_sf_${s.id}"></div><span class="sv" id="v3_sv_${s.id}">0%</span></div>
     <span class="sc">×${s.cap}</span></div>`).join('');
 }
+const RB_NODES3 = new Set(['RB','RBEF','RBRT','PACKRB']);
 function updateStat(){
   if(!SIM) return;
   const useOverall = animT<=SIM.t0+1;
   const win=Math.max(3600, Math.min(86400*3, animT-SIM.t0));
+  /* ── 2D(ui.js) 와 **완전히 같은 공식**을 쓴다. 종전에는
+       · 호기별로 나누지 않고 전부 더한 뒤 대수로 나눠 (평균) → 병목이 실제보다 낮게 보였고
+       · 전환시간(e.co) 을 빼먹었으며
+       · R/B 라인도 본류 캘린더(SIM.cal)로 나눠
+     같은 시각에 2D 는 확관 100%, 3D 는 64% 로 서로 다른 값을 보여줬다. (2026-08-14 전수 감사) */
   const busy={};
+  const add=(n,u,v)=>{ (busy[n]||(busy[n]={}))[u]=(busy[n][u]||0)+v; };
   if(!useOverall){ const ev=SIM.events;
     let lo=0,hi=ev.length-1,st=ev.length;
     while(lo<=hi){const m=(lo+hi)>>1; if(ev[m].e>=animT-win){st=m;hi=m-1;} else lo=m+1;}
     for(let i=Math.max(0,st-2000);i<ev.length&&ev[i].s<=animT;i++){
       const e=ev[i], a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
-      if(b>a) busy[e.n]=(busy[e.n]||0)+(b-a); } }
+      if(b>a) add(e.n, e.u, b-a);
+      if(e.co>0){ const ca=Math.max(e.s-e.co,animT-win), cb=Math.min(e.s,animT); if(cb>ca) add(e.n, e.u, cb-ca); } } }
   for(const s of SIM.stats){
     const el=$('sf_'+s.id); if(!el) continue;
-    const u = useOverall ? Math.min(100,s.util)
-      : Math.min(100,(busy[s.id]||0)/(win*s.cap*(SIM.cal.dayCap/86400))*100);
+    const dayCap = ((RB_NODES3.has(s.id) ? SIM.calRB : SIM.cal) || SIM.cal).dayCap;
+    const per = busy[s.id] || {};
+    const top = Object.keys(per).length ? Math.max(...Object.values(per)) : 0;
+    const u = useOverall ? Math.min(100,s.util) : Math.min(100, top/(win*(dayCap/86400))*100);
     el.style.width=u.toFixed(0)+'%';
     el.style.background = u>=85?'#f05252':u>=60?'#e3b341':'#2ea043';
     $('sv_'+s.id).textContent=u.toFixed(0)+'%';
@@ -777,7 +836,9 @@ function showInfo(){
   const p=$('infoPanel');
   if(!selected){ p.classList.remove('on'); return; }
   const n=selected, st=SIM&&SIM.stats.find(x=>x.id===n.id), s=nodeState[n.id]||{q:0,done:0,active:[]};
-  let html=`<h4>${n.label.replace('\n',' ')}<button id="infoX">✕</button></h4>`;
+  /* 닫기 버튼 id 에도 v3_ 접두어. 없으면 아래 $('infoX') 가 null 이라
+     **설비를 클릭하는 순간 TypeError 로 터진다.** (sf_/sv_ 와 같은 종류의 누락) */
+  let html=`<h4>${n.label.replace('\n',' ')}<button id="v3_infoX">✕</button></h4>`;
   if(n.sub) html+=`<div class="isub">${n.sub}</div>`;
   if(st){
     html+=`<div class="ir"><span>설비 대수</span><b>${st.cap}대</b></div>
@@ -794,10 +855,23 @@ function showInfo(){
         <span>12.8~14m → #1호기 전용 · 14m 초과 → #1·#2 동시 가동(소요=max)</span></div>`;
     }
     if(n.st){
-      const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,rtType:'450kV'};
-      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2') : STD[n.st](A,'12M',1);
+      /* rtType 은 **노드마다 다르다** (관단 R/T = 'End-RT'). 시뮬레이터는 n.rtType 을 쓰는데
+         여기서는 450kV 로 고정돼 있어 관단 R/T 산출식이 실제의 2.5배로 표시됐다. */
+      const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,
+               rtType: n.rtType || '450kV'};
+      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2', CFG) : STD[n.st](A,'12M',1,1);
       html+=`<div class="ifx"><b>표준시간 산출식</b><br>${r.expr}<br><span>기준 OD914×t9.3×12.8m → ${r.sec.toFixed(1)}s</span></div>`;
     }
+  } else if(n.kind==='proc' && n.st){
+    /* SIM.stats 는 이번 실행에서 처리량이 0 인 설비를 빼기 때문에(flow.js),
+       R/B 처럼 안 돌린 설비가 「측정 대상 외」로 잘못 표시됐다. 산출식은 있으므로 보여준다. */
+    const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,
+             rtType: n.rtType || '450kV'};
+    try {
+      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2', CFG) : STD[n.st](A,'12M',1,1);
+      html+=`<div class="ifx"><b>이번 실행에서는 가동되지 않았습니다</b><br>${r.expr}
+        <br><span>기준 OD914×t9.3×12.8m → ${r.sec.toFixed(1)}s</span></div>`;
+    } catch(e){ html+=`<div class="ifx">이번 실행에서는 가동되지 않았습니다</div>`; }
   } else if(n.kind==='dec') html+=`<div class="ifx">분기 조건 (Decision Node)</div>`;
   else if(n.kind==='buf') html+=`<div class="ifx">버퍼 · 최대 4,000톤 적재</div>`;
   else html+=`<div class="ifx">표준시간 측정 대상 외 공정</div>`;
@@ -829,11 +903,19 @@ function resize(){
   renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix();
 }
 let last=null;
+/* 3D 탭이 화면에 없으면 그리지 않는다.
+   종전에는 탭을 한 번 열면 숨어 있어도 매 프레임 렌더 + 뱃지 DOM 갱신을 계속해
+   **CPU 코어 하나를 통째로 먹었다** (6초 동안 스크립트 6.1초). (2026-08-14 전수 감사) */
+function visible3d(){
+  const el = document.getElementById('p3D');
+  return !!el && el.classList.contains('on');
+}
 function loop(ts){
+  requestAnimationFrame(loop);
+  if(!visible3d()){ last=null; return; }
   if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
   if(playing) step(Math.min(dt,0.1)); else if(SIM) updateBadges();
   renderer.render(scene,camera);
-  requestAnimationFrame(loop);
 }
 let mounted = false;
 /** 3D 탭을 처음 열 때 한 번만 호출된다. WebGL 이 없으면 false 를 돌려준다. */

@@ -564,6 +564,7 @@ label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4
       <button class="ghost" id="refExport">기준정보 내보내기 (.json)</button>
       <label class="ghost" for="refImport" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid var(--ln);border-radius:6px">불러오기</label>
       <input type="file" id="refImport" accept=".json,application/json" style="display:none">
+      <div class="hint" id="refPlanWarn" style="color:#d29922"></div>
       <div class="hint">값을 고치면 <b>바로 다시 계산</b>됩니다. 원래 값과 다른 칸은 노란색으로 표시되고,
         칸마다 <b>되돌리기(↺)</b> 버튼이 생깁니다. 내보낸 <code>.json</code> 을 다른 사람이 불러오면 똑같은 상태가 됩니다.</div>
     </div>
@@ -901,9 +902,12 @@ function extractRawLength(v) {
 }
 
 /* ---------- 헤더 행 탐지 ---------- */
+const HEADER_SCAN_ROWS = 60;   // 자동 탐지·수동 선택 모두 이 범위
 function detectHeader(rows) {
   let best = { idx: 0, score: -1 };
-  const scan = Math.min(rows.length, 25);
+  /* 표지·머리말이 긴 실제 계획서는 헤더가 25행보다 아래에 있을 수 있다.
+     종전에는 그런 파일을 **아예 불러올 수 없었다**(자동 탐지도 실패, 수동 선택 목록에도 없음). */
+  const scan = Math.min(rows.length, HEADER_SCAN_ROWS);
   for (let i = 0; i < scan; i++) {
     const r = rows[i] || [];
     let score = 0, filled = 0;
@@ -931,7 +935,7 @@ function autoMap(headers, body) {
   const map = {};
   const used = new Set();
   for (const f of ['no', 'od', 't', 'L', 'qty', 'date', 'due', 'bn', 'rawL', 'mat', 'use', 'kind']) {
-    let hit = -1, hitRank = 1e9;
+    let hit = -1, hitRank = 1e9, hitScore = 1e9;
     headers.forEach((h, ci) => {
       if (used.has(ci)) return;
       const n = norm(h);
@@ -940,11 +944,16 @@ function autoMap(headers, body) {
         const nk = norm(k);
         if (!nk) return;
         const exact = n === nk, part = n.includes(nk);
-        if ((exact || part) && rank < hitRank) {
-          /* 너무 짧은 키워드(t, l)는 완전일치만 인정 */
-          if (nk.length <= 1 && !exact) return;
-          hitRank = rank; hit = ci;
-        }
+        if (!exact && !part) return;
+        /* 너무 짧은 키워드(t, l)는 완전일치만 인정 */
+        if (nk.length <= 1 && !exact) return;
+        /* ★ **완전일치가 언제나 부분일치를 이긴다.**
+           종전에는 rank 만 비교해서, 별칭 'o.d'(rank 2)가 헤더 'MODEL' 에 부분일치하면
+           바로 뒤 열의 정확한 헤더 'OD'(rank 3)가 영영 이기지 못했다.
+           그 결과 외경 열로 모델명(800·1200)이 들어가 전 행의 외경이 통째로 틀렸다.
+           (2026-08-14 전수 감사) */
+        const score = (exact ? 0 : 1000) + rank;
+        if (score < hitScore) { hitScore = score; hitRank = rank; hit = ci; }
       });
     });
     if (hit >= 0) { map[f] = hit; used.add(hit); }
@@ -995,6 +1004,7 @@ function buildOrders(body, map, units, opt) {
   const orders = [], skipped = [];
   const seen = {};
   let seqDate = opt.startDate ? new Date(opt.startDate + 'T08:00:00') : null;
+  let lastDate = null;                       // 병합된 일자 셀을 이어받기 위한 직전 값
 
   body.forEach((r, i) => {
     const rowNo = rowBase + i + 1;
@@ -1010,7 +1020,11 @@ function buildOrders(body, map, units, opt) {
 
     if (units.od === 'inch') od = od * 25.4;
     if (units.L === 'm') L = L * 1000;
+    /* 소수 수량(0.4 등)이 반올림으로 0 이 되면 **0본짜리 오더**가 그대로 흘러갔다.
+       수량 0 은 위에서 걸러지는데 이쪽만 빠져 있었다. (2026-08-14 전수 감사) */
+    const qtyRaw = qty;
     qty = Math.round(qty);
+    if (qty <= 0) { skipped.push({ row: rowNo, why: `수량 ${qtyRaw} (반올림하면 0본)` }); return; }
 
     const rng = [];
     if (od < 200 || od > 2200) rng.push(`외경 ${od.toFixed(0)}mm`);
@@ -1026,11 +1040,24 @@ function buildOrders(body, map, units, opt) {
 
     let no = g('no');
     no = (no == null || no === '') ? `R${rowNo}` : String(no).trim();
-    if (seen[no]) { seen[no]++; no = `${no}-${seen[no]}`; } else seen[no] = 1;
+    /* 같은 판매오더가 여러 행일 때 붙이는 접미어.
+       종전에는 무조건 `-2` 를 붙여서, 파일에 원래 `A-2` 라는 오더가 있으면 **두 오더가 같은 번호**가 됐고
+       한쪽이 통째로 사라졌다. 이미 쓰인 번호는 피해서 붙인다. (2026-08-14 전수 감사) */
+    if (seen[no] != null) {
+      const base = no; let k = seen[base];
+      do { k++; no = `${base}-${k}`; } while (seen[no] != null);
+      seen[base] = k;
+    }
+    seen[no] = seen[no] || 1;
 
     let d = toDate(g('date'));
+    /* ★ 조관계획서의 일자 열은 보통 **병합 셀**이라 그룹의 첫 행에만 값이 있다.
+       종전에는 값이 빈 행을 「날짜 없음」으로 보고 시작일부터 6시간 간격 사다리를 만들어,
+       4월 1일 그룹의 2·3행이 3월 2일로 한 달 앞당겨졌다. 직전 행의 날짜를 이어받는다. */
+    if (!d && lastDate) d = new Date(lastDate);
     if (!d && seqDate) { d = new Date(seqDate); seqDate.setHours(seqDate.getHours() + 6); }
     if (!d) d = new Date(opt.startDate + 'T08:00:00');
+    if (toDate(g('date'))) lastDate = new Date(d);
     if (d.getHours() === 0 && d.getMinutes() === 0) d.setHours(8);
 
     const o = { no, od, t, L, qty, start: fmtDT(d) };
@@ -1167,7 +1194,7 @@ function mount(el, opts) {
         <div class="pl-f"><label>시트</label>
           ${sel('plSheet', sheetName, WB.SheetNames.map(n => ({ v: n, t: n })))}</div>
         <div class="pl-f"><label>헤더 행</label>
-          ${sel('plHdr', HDR, ROWS.slice(0, Math.min(ROWS.length, 25)).map((r, i) =>
+          ${sel('plHdr', HDR, ROWS.slice(0, Math.min(ROWS.length, HEADER_SCAN_ROWS)).map((r, i) =>
             ({ v: i, t: `${i + 1}행 · ${(r || []).filter(x => x != null && x !== '').slice(0, 4).join(' | ').slice(0, 40)}` })))}</div>
       </div>
       <div class="pl-row">
@@ -1408,10 +1435,24 @@ const REF = { std: refClone(REF_STD_DEFAULT), co: null, cap: {} };
 /** 설비 대수 반영. patch = { 노드ID: 대수 } — 빈 객체면 코드 기본값 사용 */
 function setRefCap(patch) {
   REF.cap = {};
-  if (!patch) return REF.cap;
-  for (const id in patch) {
-    const v = Math.round(+patch[id]);
-    if (isFinite(v) && v >= 1 && v <= 20) REF.cap[id] = v;
+  if (patch && typeof patch === 'object') for (const id in patch) {
+    if (!own(patch, id)) continue;
+    /* 확관(EXP) 대수는 「설정」 탭의 #3호기 사용 여부로 정해진다.
+       여기서 받아 두면 적용은 안 되면서 「변경 1개」로만 남아, 기준선 재기준이 영영 안 된다. */
+    if (id === 'EXP') continue;
+    const raw = patch[id];
+    if (typeof raw !== 'number' || !isFinite(raw)) continue;   // true·'5'·[3] 등은 받지 않는다
+    const v = Math.round(raw);
+    if (v >= 1 && v <= 20) REF.cap[id] = v;
+  }
+  /* ★ NODE[].cap 에 **직접** 반영한다.
+     시뮬레이터의 자원 풀뿐 아니라 3D 설비 메쉬·투입산출 탭의 호기 목록·호기 라벨이
+     전부 NODE[].cap 을 보기 때문이다. 종전에는 풀 생성부에서만 덮어써서
+     대수를 늘려도 3D 는 옛 대수 그대로였고, 투입산출 탭 호기 칸이 '-' 로 나왔다. */
+  if (typeof NODE !== 'undefined' && typeof NODE_CAP_DEFAULT !== 'undefined') {
+    for (const id in NODE_CAP_DEFAULT) {
+      if (NODE[id]) NODE[id].cap = REF.cap[id] || NODE_CAP_DEFAULT[id];
+    }
   }
   return REF.cap;
 }
@@ -1421,11 +1462,14 @@ function setRefCap(patch) {
 function setRefStd(patch) {
   REF.std = refClone(REF_STD_DEFAULT);
   if (!patch) return REF.std;
+  if (typeof patch !== 'object') return REF.std;
   for (const proc in patch) {
-    if (!REF.std[proc]) continue;
-    for (const k in patch[proc]) {
-      if (REF.std[proc][k] && typeof patch[proc][k] === 'number' && isFinite(patch[proc][k]))
-        REF.std[proc][k].v = patch[proc][k];
+    if (!own(patch, proc) || !own(REF.std, proc)) continue;
+    const src = patch[proc];
+    if (!src || typeof src !== 'object') continue;
+    for (const k in src) {
+      if (!own(src, k) || !own(REF.std[proc], k)) continue;
+      if (typeof src[k] === 'number' && isFinite(src[k])) REF.std[proc][k].v = src[k];
     }
   }
   return REF.std;
@@ -1666,9 +1710,16 @@ function dieDuplicates(machine) {
    2026-08-14 확인. 종전 R/B 식은 이 −90 을 빠뜨리고 다이 Size 를 그대로 나눠
    확관 횟수를 과소 계상하고 있었다.
    -------------------------------------------------------------------- */
-function stepMargin(machine) {
+/** 확관 Step 여유값 [mm].
+    ★ 「끝단 남을 길이가 150mm 이하일 경우 −100 을 적용」 규칙은 **다이 크기에 따라** 달라진다.
+      종전에는 이 함수가 무조건 150 을 돌려줘서, step ≤ 150 인 다이(M1 표에 15행)에서
+      recipe = max(step−150, 1) = **1mm** 가 됐다. 엑셀 N 모드는 그 1mm 로 나누므로
+      OD508 t20.25 18.288m 에서 N 이 366 회가 아니라 **18,288 회**, 소요 4,642s → 219,706s 로 튀었다
+      (기본 오더셋 makespan 24.4일 → 301.1일). 화면에 찍히는 HMI 레시피 값도 1mm 로 틀렸다. */
+function stepMargin(machine, step) {
   const E = RSTD.Expander;
-  return machine === 'RB' ? E.marginRB : E.marginM1;
+  if (machine === 'RB') return E.marginRB;
+  return (step != null && step <= E.marginM1) ? E.marginM1Small : E.marginM1;
 }
 
 /** 확관 Step Size / 다이 정보 (호기별)
@@ -1676,9 +1727,11 @@ function stepMargin(machine) {
     recipe = 실제 HMI 에 입력하는 확관 Step Size = 다이 Size − 여유값 */
 function expanderStep(s, machine) {
   const ti = toolInfo(s.od, s.t, machine || 'M2');
-  const m = stepMargin(machine || 'M2');
-  if (ti.step) return { step: ti.step, recipe: Math.max(ti.step - m, 1), margin: m,
-                        dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
+  if (ti.step) {
+    const m = stepMargin(machine || 'M2', ti.step);
+    return { step: ti.step, recipe: Math.max(ti.step - m, 1), margin: m,
+             dieT: ti.label, inch: Math.round(odInch(s.od)), tool: ti };
+  }
   /* 호기별 다이표에 없으면 엑셀 「Expander(1호기)」 표로 폴백 */
   const inch = Math.round(odInch(s.od));
   const keys = Object.keys(T.expanderDie).map(Number).sort((a, b) => a - b);
@@ -1686,6 +1739,7 @@ function expanderStep(s, machine) {
   for (const k of keys) if (Math.abs(k - inch) < Math.abs(bk - inch)) bk = k;
   const dies = T.expanderDie[bk];
   const die = dies.find(d => d[0] >= s.t) || dies[dies.length - 1];
+  const m = stepMargin(machine || 'M2', die[1]);
   return { step: die[1], recipe: Math.max(die[1] - m, 1), margin: m,
            dieT: `t${die[0]}`, inch: bk, tool: ti, fallback: true };
 }
@@ -1724,9 +1778,8 @@ function expanderN(s, machine) {
        예) OD508 t9.5 step170 → 분모 20 → 11.5m 에서 N=575 회 (2,987s → 7,127s).
        종전에는 하한 50 을 두었으나 정본과 어긋나므로 제거했다.
        분모가 0 이하가 되는 표상의 step 은 없지만, 만약을 대비해 0 나눗셈만 막는다. */
-    const E = RSTD.Expander;
-    const den = step - (step <= E.marginM1 ? E.marginM1Small : E.marginM1);
-    return Math.round(s.L / (den > 0 ? den : 1));
+    /* recipe 가 이미 「다이 − 여유값」이다 (여유값은 다이 크기에 따라 150/100). */
+    return Math.round(s.L / (recipe > 0 ? recipe : 1));
   }
   let n = ceil((s.L - 500) / step) + 2;
   if (EXP_NMODE === 'ortools') { if (n % 2 === 1) n += 1; }   // 짝수 보정
@@ -1890,13 +1943,20 @@ const REF_CO_DEFAULT = {
 const CHANGEOVER = refClone(REF_CO_DEFAULT);
 REF.co = CHANGEOVER;
 /** 전환시간 반영. patch = { 공정: { od|t|L: 초 } } */
+/* ★ 패치 키를 그대로 인덱싱하면 `__proto__` 로 **Object.prototype 이 오염**된다.
+     그러면 모든 객체가 od/t/L 를 갖게 되어 `for…in` 을 쓰는 화면들이 줄줄이 터지고,
+     초기화로도 되돌릴 수 없다. 자기 소유 키인지 반드시 확인한다. (2026-08-14 전수 감사) */
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 function setRefCo(patch) {
   for (const k in REF_CO_DEFAULT) Object.assign(CHANGEOVER[k], REF_CO_DEFAULT[k]);   // 항상 초기화 후 적용
-  if (!patch) return CHANGEOVER;
+  if (!patch || typeof patch !== 'object') return CHANGEOVER;
   for (const st in patch) {
-    if (!CHANGEOVER[st]) continue;
+    if (!own(patch, st) || !own(CHANGEOVER, st)) continue;
+    const src = patch[st];
+    if (!src || typeof src !== 'object') continue;
     for (const k of ['od', 't', 'L']) {
-      const v = patch[st][k];
+      if (!own(src, k)) continue;
+      const v = src[k];
       if (typeof v === 'number' && isFinite(v) && v >= 0) CHANGEOVER[st][k] = v;
     }
   }
@@ -2008,6 +2068,10 @@ const NODES = [
   { id:'PACKRB',label:'배척 포장', sub:'PK112', st:'Packing', kind:'proc', x:912, y:800, cap:1 },
 ];
 const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+/* 코드에 적힌 원래 설비 대수 — 기준정보에서 바꾼 뒤 되돌릴 때 기준이 된다.
+   (확관 EXP 는 #3호기 사용 여부로 매 실행마다 정해지므로 제외) */
+const NODE_CAP_DEFAULT = {};
+for (const n of NODES) if (n.kind === 'proc' && n.id !== 'EXP') NODE_CAP_DEFAULT[n.id] = n.cap || 1;
 /* R/B 라인 소속 노드 — 별도 근무조 캘린더를 쓴다 */
 const RB_LINE = new Set(['RB','RBEF','RBRT','PACKRB']);
 /* 한 본이 지날 수 있는 최대 노드 수 (재작업 루프 포함). 초과분은 routeAborted 로 집계한다. */
@@ -2830,10 +2894,9 @@ function simulate(orders, cfg) {
   for (const n of NODES) {
     if (n.kind !== 'proc') continue;
     const units = [];
-    /* 설비 대수 — 기준정보(「설비 대수」 탭)에서 바꾼 값이 있으면 그것을 쓴다.
-       확관(EXP)은 #3호기 사용 여부가 따로 있으므로 여기서 덮지 않는다. */
-    const capOverride = (n.id !== 'EXP' && REF.cap && REF.cap[n.id] > 0) ? REF.cap[n.id] : null;
-    const cap = capOverride || n.cap || 1;
+    /* 설비 대수는 setRefCap() 이 NODE[].cap 에 직접 반영해 두므로 여기서는 그대로 읽는다.
+       (종전에는 여기서만 덮어써서, 3D 장면·투입산출 탭의 호기 목록은 옛 대수를 쓰고 있었다) */
+    const cap = n.cap || 1;
     for (let i = 0; i < cap; i++)
       units.push({ id: n.id + '#' + (i + 1), idx: i, free: t0, last: null, busy: 0, setup: 0, jobs: 0 });
     pools[n.id] = units;
@@ -3155,7 +3218,10 @@ function plogParseCSV(text) {
     if (q) {
       if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; }
       else cur += c;
-    } else if (c === '"') q = true;
+    /* 따옴표는 **필드 맨 앞에 있을 때만** 인용 시작이다.
+       종전에는 필드 중간의 따옴표(자재내역의 42" 같은 인치 표기)도 인용 시작으로 봐서
+       거기서부터 파일 나머지를 통째로 한 필드에 삼켰다. (2026-08-14 전수 감사) */
+    } else if (c === '"' && cur === '') q = true;
     else if (c === ',') { row.push(cur); cur = ''; }
     else if (c === '\n') { row.push(cur); cur = ''; if (row.some(v => v !== '')) rows.push(row); row = []; }
     else if (c !== '\r') cur += c;
@@ -3166,7 +3232,9 @@ function plogParseCSV(text) {
   return rows.slice(1).map(r => Object.fromEntries(head.map((h, i) => [h, (r[i] ?? '').trim()])));
 }
 
-const PLOG_SPEC_RX = /(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[tT]\s*[xX]\s*(\d+(?:\.\d+)?)\s*[mM]/;
+/* 길이 단위: `12.802M` 는 미터, `12192mm` 는 밀리미터.
+   종전 정규식은 [mM] 하나만 봐서 'mm' 의 첫 글자에 걸렸고, 12192mm 를 12,192,000mm 로 읽었다. */
+const PLOG_SPEC_RX = /(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[tT]\s*[xX]\s*(\d+(?:\.\d+)?)\s*(mm|MM|[mM])\b/;
 
 /** 자재 내역 → 규격.  ex) '원Z483C2X70M BBE 1067x19.6tx12.192M A45' */
 function plogSpec(desc) {
@@ -3174,7 +3242,7 @@ function plogSpec(desc) {
   if (!m) return null;
   const head = String(desc).split(/\s+/)[0] || '';
   return {
-    od: +m[1], t: +m[2], L: +m[3] * 1000,
+    od: +m[1], t: +m[2], L: +m[3] * (/^mm$/i.test(m[4]) ? 1 : 1000),
     /* 표준시간 엑셀 No.20 메모 — 「자재내역의 'C2' 강관기호가 있으면 옥외 열처리 진행」 */
     heat: /C2/.test(head),
     /* '편' 은 편척(짧게 잘라 쓴 것) — 배척 여부의 대리 지표. 확인 필요 */
@@ -3197,8 +3265,12 @@ function loadProdLog(text) {
   const rows = raw.map(r => ({
     wc: r.REAL_WC_ID, wcDesc: r.REAL_WC_DESC, op: r.OPERATION_NM,
     wo: r.WO_NO, mat: r.MATERIAL_DESC, date: r.WORK_DATE, shift: +r.SHIFT || 0,
-    last: plogTs(r.LAST_TIME), poll: plogTs(r.poll_time), cum: +r.PROD_QTY_cum || 0,
-  })).filter(r => r.wc && r.last != null);
+    last: plogTs(r.LAST_TIME), poll: plogTs(r.poll_time),
+    cum: (isFinite(+r.PROD_QTY_cum) && String(r.PROD_QTY_cum).trim() !== '') ? +r.PROD_QTY_cum : null,
+  })).filter(r => r.wc && r.last != null && r.cum != null);
+  /* 시각을 하나도 못 읽으면 여기서 rows 가 비고, 아래에서 rows[0].last 로 터졌다.
+     열이 없을 때와 같이 **오류 객체로 돌려준다.** (2026-08-14 전수 감사) */
+  if (!rows.length) return { error: 'LAST_TIME 을 읽을 수 있는 행이 없습니다 (예: 2026-07-20 15:01:14 형식)' };
   rows.sort((a, b) => a.last - b.last);
 
   /* ① 본수 — (설비·WO·일·근) 별 최대 누적의 합 (qty_delta 는 쓰지 않는다) */
@@ -3208,10 +3280,9 @@ function loadProdLog(text) {
     const b = bucket.get(k);
     if (!b || r.cum > b.cum) bucket.set(k, { ...r, cum: r.cum });
   }
-  const qtyWC = {}, qtyWO = {}, qtyWCWO = {};
+  const qtyWC = {}, qtyWCWO = {};
   for (const b of bucket.values()) {
     qtyWC[b.wc] = (qtyWC[b.wc] || 0) + b.cum;
-    qtyWO[b.wo] = Math.max(qtyWO[b.wo] || 0, 0);
     qtyWCWO[`${b.wc}|${b.wo}`] = (qtyWCWO[`${b.wc}|${b.wo}`] || 0) + b.cum;
   }
 
@@ -3246,7 +3317,13 @@ function loadProdLog(text) {
       if (p && r.cum > p.cum && r.last > p.last) {
         const dt = r.last - p.last, dq = r.cum - p.cum;
         const d = dt / dq;
-        if (d > 20 && d < 4 * 3600) { gaps.push(d); sumDt += dt; sumDq += dq; }
+        /* ★ 처리량 기준 합계(perPipeSec)는 **긴 유휴 구간도 포함**해야 한다.
+           종전에는 4시간 넘는 구간을 sumDt 에서도 빼서, 실적의 7.6% (1,592h 중 120h)가
+           통째로 사라졌다. 그러면 「처리량 기준」이라고 부르면서 실제로는 걸러낸 페이스였다.
+           30일을 넘는 값만 데이터 오류로 보고 제외한다.
+           페이스 중위수(paceSec)는 종전대로 20초~4시간 표본만 쓴다. (2026-08-14 전수 감사) */
+        if (d > 0 && d < 30 * 86400) { sumDt += dt; sumDq += dq; }
+        if (d > 20 && d < 4 * 3600) gaps.push(d);
       }
       if (!p || r.cum >= p.cum) seen.set(k, r);
     }
@@ -3285,7 +3362,10 @@ function loadProdLog(text) {
     for (const wc of o.wcs) mx = Math.max(mx, qtyWCWO[`${wc}|${o.wo}`] || 0);
     orders.push({
       no: String(o.wo), od: sp.od, t: sp.t, L: sp.L,
-      qty: pack || mx || 1, packQty: pack, maxQty: mx,
+      /* 오더 본수 — 포장까지 끝난 수(pack)만 쓰면 아직 공정 중인 본이 통째로 빠진다.
+         실제 로그에서 456본 중 69본(15%)이 사라졌다. 어느 설비에서든 관측된 최대치를 쓴다.
+         (2026-08-14 전수 감사) */
+      qty: Math.max(pack || 0, mx || 0) || 1, packQty: pack, maxQty: mx,
       start: null, due: null,
       mat: o.mat, code: sp.code, heat: sp.heat, partial: sp.partial,
       /* 열처리(C2) → 병목공정 HT102 로 표기해 R/B 강제 투입 규칙을 그대로 태운다 */
@@ -3297,7 +3377,7 @@ function loadProdLog(text) {
 
   const t0 = rows[0].last, t1 = rows[rows.length - 1].last;
   return {
-    rows, wcStat, orders, badSpec,
+    rows, wcStat, orders, badSpec, qtyWCWO,
     span: { from: t0, to: t1, hours: (t1 - t0) / 3600 },
     unmapped: wcStat.filter(w => !w.node).map(w => `${w.wc} ${w.label}`),
     totalPack: (qtyWC.PK113 || 0) + (qtyWC.PK112 || 0),
@@ -3316,7 +3396,9 @@ function verifyProdLog(log, cfg) {
     if (!w.node || w.perPipeSec == null) continue;
     const node = (typeof NODE !== 'undefined') ? NODE[w.node] : null;
     if (!node || !node.st) continue;
-    /* 그 설비를 지난 오더들의 표준시간을 실적 본수로 가중평균한다 */
+    /* 그 설비를 지난 오더들의 표준시간을 **그 설비에서의 실적 본수**로 가중평균한다.
+       종전에는 오더 전체 본수(포장 기준)로 가중해서, 상류 설비에서 아직 43본을 돌리고 있는데
+       포장은 6본만 끝난 오더가 6본짜리로 계산됐다 (EM102 표준 471s → 실제 522s). */
     let num = 0, den = 0;
     for (const o of log.orders) {
       if (!o.wcs.includes(w.wc)) continue;
@@ -3603,10 +3685,14 @@ function buildScene(){
 
   camera = new THREE.PerspectiveCamera(46, 1, 0.5, 800);
   const wrap = $('c3d');
-  renderer = new THREE.WebGLRenderer({antialias:true, canvas:$('gl')});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  /* 렌더러는 처음 한 번만 만든다 — 장면을 다시 만들 때 같은 canvas 로 두 번 만들면
+     WebGL 컨텍스트가 쌓여 결국 "Too many active WebGL contexts" 로 죽는다. */
+  if (!renderer) {
+    renderer = new THREE.WebGLRenderer({antialias:true, canvas:$('gl')});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  }
 
   scene.add(new THREE.HemisphereLight(0x9ec5ff, 0x0b0f16, 1.15));
   const dl = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -3924,19 +4010,64 @@ let LOOP = false, seeking = false;
    ── 종전에는 이 파일이 자체 readCfg()/runSim() 으로 **따로 시뮬을 돌렸다.**
       그래서 2D 에서 기준정보(설비 대수·표준시간)를 고쳐도 3D 는 옛 값 그대로였고,
       두 화면이 서로 다른 답을 보여줄 수 있었다. 이제 계산은 한 곳에서만 한다. */
+/** 설비 대수가 바뀌었을 때 3D 장면을 다시 만든다 (렌더러·이벤트 바인딩은 유지) */
+function rebuildScene(){
+  if (scene) {                       // 옛 지오메트리·머티리얼을 GPU 에서 내린다
+    scene.traverse(o=>{
+      if (o.geometry) o.geometry.dispose();
+      const m = o.material;
+      if (m) (Array.isArray(m) ? m : [m]).forEach(x=>{ if(x.map) x.map.dispose(); x.dispose(); });
+    });
+  }
+  for (const k in node3d) delete node3d[k];
+  for (const k in EDGE_CURVE) delete EDGE_CURVE[k];
+  for (const k in EDGE_PATH) delete EDGE_PATH[k];
+  for (const k in badgeEls) delete badgeEls[k];
+  pipePool = []; pipeUsed = 0; pickables = []; selected = null;
+  if ($('badges')) $('badges').innerHTML = '';
+  if ($('infoPanel')) $('infoPanel').classList.remove('on');
+  buildScene(); buildLogicalCurves(); initBadges();
+  resize();
+}
+
+/** 설비 대수 구성이 바뀌었는지 — 바뀌면 장면을 다시 만들어야 한다 */
+function capSig(sim){ return sim.stats.map(s=>s.id+':'+s.cap).join(','); }
+let sceneSig = null;
+
 function applySim(sim, cfg, srcLabel){
   if(!sim) return;
+  if(!mounted) return;                       // mount 전에는 아무것도 하지 않는다 (종전엔 TypeError)
+  const same = (SIM === sim);                // 같은 결과를 다시 넘겨받은 경우(탭 재진입)
   SIM = sim; CFG = cfg || CFG;
-  animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0; playing=false;
-  if($('btnPlay')) $('btnPlay').textContent='▶';
-  if($('seek')) $('seek').value=0;
-  for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+
+  /* 설비 대수가 바뀌면 3D 장면을 다시 만든다.
+     종전에는 mount() 때의 NODE[].cap 으로 만든 설비 메쉬가 그대로 남아,
+     기준정보에서 내면 SAW 를 8대로 늘려도 화면엔 4대만 있고 나머지 4대의 파이프가
+     1호기 위에 겹쳐 쌓였다. (2026-08-14 전수 감사) */
+  const sig = capSig(SIM);
+  if (sceneSig !== null && sig !== sceneSig) {
+    try { rebuildScene(); } catch(e){ console.error('[3D] 장면 재구성 실패', e); }
+  }
+  sceneSig = sig;
+
+  /* 탭을 닫았다 다시 열었을 뿐이면 재생 위치를 유지한다.
+     종전에는 탭 재진입마다 update() 가 불려 재생이 멈추고 시점이 처음으로 돌아갔다. */
+  if(!same){
+    animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0; playing=false;
+    if($('btnPlay')) $('btnPlay').textContent='▶';
+    if($('seek')) $('seek').value=0;
+    for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+    if($('doneCnt')) $('doneCnt').textContent='0';          // 종전: 이전 실행의 값이 남아 있었다
+    selected=null;                                           // 이전 실행 기준의 설비 정보 패널을 닫는다
+    if($('infoPanel')) $('infoPanel').classList.remove('on');
+  }
   if($('simInfo')) $('simInfo').textContent =
       `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일)`
     + ` · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
     + (srcLabel ? ` · ${srcLabel}` : '')
     + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed}` : '');
   buildStat(); updateStat(); refreshVisual();
+  if(!same && $('simClock')) $('simClock').textContent = fmtT(SIM.t0);
 }
 
 const _oc={};
@@ -4118,21 +4249,31 @@ function buildStat(){
     <div class="sb"><div class="sf" id="v3_sf_${s.id}"></div><span class="sv" id="v3_sv_${s.id}">0%</span></div>
     <span class="sc">×${s.cap}</span></div>`).join('');
 }
+const RB_NODES3 = new Set(['RB','RBEF','RBRT','PACKRB']);
 function updateStat(){
   if(!SIM) return;
   const useOverall = animT<=SIM.t0+1;
   const win=Math.max(3600, Math.min(86400*3, animT-SIM.t0));
+  /* ── 2D(ui.js) 와 **완전히 같은 공식**을 쓴다. 종전에는
+       · 호기별로 나누지 않고 전부 더한 뒤 대수로 나눠 (평균) → 병목이 실제보다 낮게 보였고
+       · 전환시간(e.co) 을 빼먹었으며
+       · R/B 라인도 본류 캘린더(SIM.cal)로 나눠
+     같은 시각에 2D 는 확관 100%, 3D 는 64% 로 서로 다른 값을 보여줬다. (2026-08-14 전수 감사) */
   const busy={};
+  const add=(n,u,v)=>{ (busy[n]||(busy[n]={}))[u]=(busy[n][u]||0)+v; };
   if(!useOverall){ const ev=SIM.events;
     let lo=0,hi=ev.length-1,st=ev.length;
     while(lo<=hi){const m=(lo+hi)>>1; if(ev[m].e>=animT-win){st=m;hi=m-1;} else lo=m+1;}
     for(let i=Math.max(0,st-2000);i<ev.length&&ev[i].s<=animT;i++){
       const e=ev[i], a=Math.max(e.s,animT-win), b=Math.min(e.e,animT);
-      if(b>a) busy[e.n]=(busy[e.n]||0)+(b-a); } }
+      if(b>a) add(e.n, e.u, b-a);
+      if(e.co>0){ const ca=Math.max(e.s-e.co,animT-win), cb=Math.min(e.s,animT); if(cb>ca) add(e.n, e.u, cb-ca); } } }
   for(const s of SIM.stats){
     const el=$('sf_'+s.id); if(!el) continue;
-    const u = useOverall ? Math.min(100,s.util)
-      : Math.min(100,(busy[s.id]||0)/(win*s.cap*(SIM.cal.dayCap/86400))*100);
+    const dayCap = ((RB_NODES3.has(s.id) ? SIM.calRB : SIM.cal) || SIM.cal).dayCap;
+    const per = busy[s.id] || {};
+    const top = Object.keys(per).length ? Math.max(...Object.values(per)) : 0;
+    const u = useOverall ? Math.min(100,s.util) : Math.min(100, top/(win*(dayCap/86400))*100);
     el.style.width=u.toFixed(0)+'%';
     el.style.background = u>=85?'#f05252':u>=60?'#e3b341':'#2ea043';
     $('sv_'+s.id).textContent=u.toFixed(0)+'%';
@@ -4153,7 +4294,9 @@ function showInfo(){
   const p=$('infoPanel');
   if(!selected){ p.classList.remove('on'); return; }
   const n=selected, st=SIM&&SIM.stats.find(x=>x.id===n.id), s=nodeState[n.id]||{q:0,done:0,active:[]};
-  let html=`<h4>${n.label.replace('\n',' ')}<button id="infoX">✕</button></h4>`;
+  /* 닫기 버튼 id 에도 v3_ 접두어. 없으면 아래 $('infoX') 가 null 이라
+     **설비를 클릭하는 순간 TypeError 로 터진다.** (sf_/sv_ 와 같은 종류의 누락) */
+  let html=`<h4>${n.label.replace('\n',' ')}<button id="v3_infoX">✕</button></h4>`;
   if(n.sub) html+=`<div class="isub">${n.sub}</div>`;
   if(st){
     html+=`<div class="ir"><span>설비 대수</span><b>${st.cap}대</b></div>
@@ -4170,10 +4313,23 @@ function showInfo(){
         <span>12.8~14m → #1호기 전용 · 14m 초과 → #1·#2 동시 가동(소요=max)</span></div>`;
     }
     if(n.st){
-      const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,rtType:'450kV'};
-      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2') : STD[n.st](A,'12M',1);
+      /* rtType 은 **노드마다 다르다** (관단 R/T = 'End-RT'). 시뮬레이터는 n.rtType 을 쓰는데
+         여기서는 450kV 로 고정돼 있어 관단 R/T 산출식이 실제의 2.5배로 표시됐다. */
+      const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,
+               rtType: n.rtType || '450kV'};
+      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2', CFG) : STD[n.st](A,'12M',1,1);
       html+=`<div class="ifx"><b>표준시간 산출식</b><br>${r.expr}<br><span>기준 OD914×t9.3×12.8m → ${r.sec.toFixed(1)}s</span></div>`;
     }
+  } else if(n.kind==='proc' && n.st){
+    /* SIM.stats 는 이번 실행에서 처리량이 0 인 설비를 빼기 때문에(flow.js),
+       R/B 처럼 안 돌린 설비가 「측정 대상 외」로 잘못 표시됐다. 산출식은 있으므로 보여준다. */
+    const A={od:914,t:9.3,L:12802,qty:70,grade:'normal',api5l:true,markSpec:2,markEnd:2,defects:0,holdSec:60,
+             rtType: n.rtType || '450kV'};
+    try {
+      const r = n.st==='Expander' ? STD.Expander(A, n.machine||'M2', CFG) : STD[n.st](A,'12M',1,1);
+      html+=`<div class="ifx"><b>이번 실행에서는 가동되지 않았습니다</b><br>${r.expr}
+        <br><span>기준 OD914×t9.3×12.8m → ${r.sec.toFixed(1)}s</span></div>`;
+    } catch(e){ html+=`<div class="ifx">이번 실행에서는 가동되지 않았습니다</div>`; }
   } else if(n.kind==='dec') html+=`<div class="ifx">분기 조건 (Decision Node)</div>`;
   else if(n.kind==='buf') html+=`<div class="ifx">버퍼 · 최대 4,000톤 적재</div>`;
   else html+=`<div class="ifx">표준시간 측정 대상 외 공정</div>`;
@@ -4205,11 +4361,19 @@ function resize(){
   renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix();
 }
 let last=null;
+/* 3D 탭이 화면에 없으면 그리지 않는다.
+   종전에는 탭을 한 번 열면 숨어 있어도 매 프레임 렌더 + 뱃지 DOM 갱신을 계속해
+   **CPU 코어 하나를 통째로 먹었다** (6초 동안 스크립트 6.1초). (2026-08-14 전수 감사) */
+function visible3d(){
+  const el = document.getElementById('p3D');
+  return !!el && el.classList.contains('on');
+}
 function loop(ts){
+  requestAnimationFrame(loop);
+  if(!visible3d()){ last=null; return; }
   if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
   if(playing) step(Math.min(dt,0.1)); else if(SIM) updateBadges();
   renderer.render(scene,camera);
-  requestAnimationFrame(loop);
 }
 let mounted = false;
 /** 3D 탭을 처음 열 때 한 번만 호출된다. WebGL 이 없으면 false 를 돌려준다. */
@@ -5080,7 +5244,7 @@ function readImport(file){
       $('ruleDesc').textContent=DISPATCH_RULES.IMPORT.desc;
       renderImport(); runSim();
     }catch(err){
-      $('impInfo').innerHTML=`<div class="warn"><b>읽지 못했습니다</b><br>${String(err.message||err)}</div>`;
+      $('impInfo').innerHTML=`<div class="warn"><b>읽지 못했습니다</b><br>${esc(String(err.message||err))}</div>`;
     }
   };
   if(isJson) fr.readAsText(file); else fr.readAsArrayBuffer(file);
@@ -5100,11 +5264,11 @@ function renderImport(){
       <div class="kpi"><b>${matched} / ${P.nOrders}</b><span>현재 오더셋과 매칭</span></div>
       <div class="kpi"><b>${P.count.M1}/${P.count.M2}/${P.count.RB}/${P.count.BOTH}</b><span>#1 / #2 / RB / 동시</span></div>
       ${P.spanH?`<div class="kpi"><b>${(P.spanH/24).toFixed(1)}일</b><span>CP-SAT Makespan (${P.unit==='sec'?'초':'분'} 단위 해석)</span></div>`:''}
-      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?IMP_SRC:'배분 규칙을 「외부 최적화 스케줄」 로 바꾸세요'}</span></div>
+      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?esc(IMP_SRC):'배분 규칙을 「외부 최적화 스케줄」 로 바꾸세요'}</span></div>
     </div>
     ${matched===0?`<div class="warn"><b>매칭된 오더가 0건입니다.</b> 파일의 OrderNo(판매오더)와 시뮬레이터 오더번호 체계가 다릅니다.
       계획서 탭에서 같은 조관계획서를 먼저 불러오면 매칭됩니다.</div>`:''}
-    ${P.warn.length?`<div class="warn"><b>경고 ${P.warn.length}건</b><br>${P.warn.slice(0,8).join('<br>')}${P.warn.length>8?'<br>…':''}</div>`:''}`;
+    ${P.warn.length?`<div class="warn"><b>경고 ${P.warn.length}건</b><br>${P.warn.slice(0,8).map(esc).join('<br>')}${P.warn.length>8?'<br>…':''}</div>`:''}`;
   if(seqEl){
     const byM={};
     P.detail.forEach(d=>{ (byM[d.m]=byM[d.m]||[]).push(d); });
@@ -5665,15 +5829,23 @@ function renderCalibSum(){
 
 function renderLog(){
   if(!$('lgWC')) return;
+  /* 로그를 해제하거나 읽기에 실패해도 아래 표·요약이 **이전 파일의 것으로 남아 있었다.**
+     어떤 경로로 나가든 먼저 비운다. (2026-08-14 전수 감사) */
+  const clearLogPanels = () => {
+    for (const id of ['lgKpi','lgWC','lgVerify','lgOrders','lgCalibSum'])
+      if ($(id)) $(id).innerHTML = '';
+  };
   if(!PLOG){
-    $('lgKpi').innerHTML=''; $('lgErr').innerHTML='';
-    $('lgWC').innerHTML='<tr><td colspan="7" style="color:#6e7681">실적 로그 CSV 를 올려 주세요.</td></tr>';
-    $('lgVerify').innerHTML='<tr><td colspan="8" style="color:#6e7681">—</td></tr>';
+    clearLogPanels(); $('lgErr').innerHTML='';
+    $('lgWC').innerHTML='<tr><td colspan="10" style="color:#6e7681">실적 로그 CSV 를 올려 주세요.</td></tr>';
+    $('lgVerify').innerHTML='<tr><td colspan="10" style="color:#6e7681">—</td></tr>';
     $('lgOrders').innerHTML='<tr><td colspan="9" style="color:#6e7681">—</td></tr>';
     return;
   }
   if(PLOG.error){
-    $('lgErr').innerHTML=`<div class="note" style="color:#ff7b72">읽지 못했습니다 — ${esc(PLOG.error)}</div>`;
+    clearLogPanels();
+    $('lgErr').innerHTML=`<div class="note" style="color:#ff7b72">읽지 못했습니다 — ${esc(PLOG.error)}
+      <br><span style="color:#8b949e">이전에 올린 로그의 표는 지웠습니다.</span></div>`;
     return;
   }
   $('lgErr').innerHTML='';
@@ -5725,7 +5897,9 @@ function renderLog(){
     <td class="num">${o.packQty||'—'}</td><td class="num">${o.maxQty}</td>
     <td>${o.heat?'<span style="color:#d29922">C2 · 열처리</span>':'—'}</td>
     <td style="font-size:11px">${o.wcs.length}개</td></tr>`).join('')
-    + (L.badSpec.length ? `<tr><td colspan="9" style="color:#ff7b72">규격 파싱 실패 WO — ${L.badSpec.join(', ')}</td></tr>` : '');
+    /* ★ 업로드한 CSV 의 WO 번호를 그대로 innerHTML 에 넣고 있었다 —
+       WO_NO 에 <img onerror=...> 를 넣은 CSV 로 스크립트가 실행됐다. 반드시 escape 한다. */
+    + (L.badSpec.length ? `<tr><td colspan="9" style="color:#ff7b72">규격 파싱 실패 WO — ${L.badSpec.map(esc).join(', ')}</td></tr>` : '');
 
   renderCalibSum();
 }
@@ -5779,19 +5953,60 @@ function boot(){
    · JSON 한 장으로 내보내고 불러온다 (메일로 주고받기 · 다음에 그대로 복원)
    ==================================================================== */
 let REF_EDIT = { std:{}, co:{}, cap:{} };   // 기본값과 다른 것만 담는다
+
+/* 표준시간 상수의 하한.
+   **분모로 쓰이는 값이 0 이 되면** 소요시간이 Infinity 가 되어 완료일이 146만 일로 튀고
+   병목 가동률이 Infinity% 로 표시된다. 음수 상수도 가동시간을 음수로 만든다.
+   → 분모·속도·주기류는 0 초과, 나머지는 0 이상만 허용한다. (2026-08-14 전수 감사) */
+const REF_POSITIVE_KEYS = /Div|Len$|segLen|extraEvery|shotLen|pitchDiv|perStroke|marginRB|marginM1/;
+function REF_STD_MIN(proc, key) {
+  return REF_POSITIVE_KEYS.test(key) ? 1e-6 : 0;
+}
 let REF_BASE = null;                        // 아무것도 안 고친 상태의 시뮬 결과 (영향 비교용)
 
-/** 편집값을 엔진에 밀어 넣고 다시 계산한다 */
-function refApply(rerender = true) {
+/** 편집값을 엔진에 밀어 넣고 다시 계산한다.
+    ★ 표를 **다시 그리지 않는다.**
+      종전에는 값 하나를 고칠 때마다 renderRef() 가 innerHTML 로 표 전체를 새로 만들었다.
+      그러면 사용자가 Tab 이나 클릭으로 옮겨 가려던 다음 칸이 그 순간 사라져
+      **두 번째 입력부터 조용히 버려졌다** (포커스가 body 로 날아감).
+      이제 갱신이 필요한 것만 제자리에서 고친다 — KPI · 미리보기 · 변경 표시. */
+function refApply(full = false) {
   setRefStd(REF_EDIT.std);
   setRefCo(REF_EDIT.co);
   setRefCap(REF_EDIT.cap);
-  invalidatePlan();          // 확관 최적화 결과는 상수가 바뀌면 무효
-  runSim(); calc();
-  if (rerender) renderRef();
-  else renderRefKpi();
+  /* 확관 최적화 해가 실제로 있을 때만 무효화한다.
+     종전에는 값 하나만 고쳐도 invalidatePlan() 이 배분 규칙을 OPT→EAT 로 되돌려 놓고,
+     그 때문에 생긴 makespan 변화가 마치 편집 때문인 것처럼 보였다. 그리고 runSim() 이 두 번 돌았다. */
+  const hadPlan = !!PLAN;
+  if (hadPlan) invalidatePlan(); else { runSim(); calc(); }
+  if (hadPlan) calc();
+  if (full) renderRef(); else { renderRefKpi(); renderRefPreviews(); refMarkDirty(); }
+  if (hadPlan && $('refPlanWarn'))
+    $('refPlanWarn').textContent = '※ 확관 최적화 해는 상수가 바뀌어 무효가 됐고, 배분 규칙이 EAT 로 되돌아갔습니다.';
 }
 
+/** 표준시간 상수 탭의 미리보기 줄만 다시 계산한다 (입력칸은 건드리지 않는다) */
+function renderRefPreviews() {
+  if (!$('refStdWrap')) return;
+  document.querySelectorAll('#refStdWrap .refgrp').forEach(g => {
+    const proc = g.dataset.proc, el = g.querySelector('.refprev');
+    if (!el || !REF_PREVIEW_FN[proc]) return;
+    try {
+      const r = REF_PREVIEW_FN[proc]();
+      el.innerHTML = `미리보기 <b>${r.sec.toFixed(1)}s</b> &nbsp;·&nbsp; ${esc(r.expr)}`;
+      el.style.color = '';
+    } catch (e) {
+      el.textContent = '미리보기 계산 오류: ' + (e.message || e); el.style.color = '#ff7b72';
+    }
+  });
+}
+
+function refMarkDirty() {
+  if (!$('refDirty')) return;
+  const n = refCount();
+  $('refDirty').textContent = n ? `변경 ${n}개 — 내보내기로 저장하십시오` : '변경 없음';
+  $('refDirty').style.color = n ? '#d29922' : '#6e7681';
+}
 function refCount() {
   let n = 0;
   for (const p in REF_EDIT.std) n += Object.keys(REF_EDIT.std[p]).length;
@@ -5800,39 +6015,74 @@ function refCount() {
   return n;
 }
 
-/** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다 */
+/** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다.
+    적용 결과가 유한하지 않으면(Infinity·NaN) 되돌리고 알린다 — 하한 규칙이 못 잡는 조합 대비. */
 function refSet(group, a, b, v) {
   const G = REF_EDIT[group];
+  const prev = G[a] ? G[a][b] : undefined;
   if (v === null) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
   else { (G[a] = G[a] || {})[b] = v; }
   refApply();
+  if (SIM && !isFinite(SIM.kpi.makespanH)) {
+    if (prev === undefined) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
+    else (G[a] = G[a] || {})[b] = prev;
+    refApply(true);
+    alert('그 값을 넣으면 계산 결과가 무한대가 되어 되돌렸습니다.');
+  }
 }
 function refSetCap(id, v) {
   if (v === null) delete REF_EDIT.cap[id]; else REF_EDIT.cap[id] = v;
   refApply();
 }
 
-/* ---- 편집 칸 하나 만들기 ---------------------------------------------- */
-function refInput(cur, def, onChange, width) {
+/* ---- 편집 칸 하나 만들기 ----------------------------------------------
+   opts.min / opts.max / opts.int 로 허용 범위를 준다. 범위를 벗어나면
+   **되돌리고 이유를 알려준다** — 종전에는 조용히 무시하면서 화면에는 입력값이 남아
+   "포장 25대" 로 보이는데 실제로는 1대로 계산되는 상태가 만들어졌다. */
+function refInput(cur, def, onChange, opts) {
+  opts = opts || {};
   const chg = Math.abs(cur - def) > 1e-9;
   const id = 'ri' + (refInput._n = (refInput._n || 0) + 1);
-  setTimeout(() => {
-    const el = $(id); if (!el) return;
+  const html = `<input id="${id}" class="refin${chg ? ' chg' : ''}" type="number" step="${opts.int ? 1 : 'any'}"
+            value="${cur}"${opts.width ? ` style="width:${opts.width}px"` : ''} title="기본값 ${def}">
+          <button id="${id}u" class="undo${chg ? ' on' : ''}" title="기본값 ${def} 로 되돌리기">↺</button>`;
+  /* 화면에 붙은 직후 바인딩한다 (표를 다시 그리지 않으므로 한 번만 걸린다) */
+  refInput._pending.push(() => {
+    const el = $(id), u = $(id + 'u'); if (!el) return;
+    const paint = (v) => {
+      const c = Math.abs(v - def) > 1e-9;
+      el.classList.toggle('chg', c); if (u) u.classList.toggle('on', c);
+    };
     el.onchange = () => {
-      const v = parseFloat(el.value);
-      if (!isFinite(v)) { el.value = cur; return; }
+      let v = parseFloat(el.value);
+      if (!isFinite(v)) { el.value = el.dataset.last || cur; return; }
+      if (opts.int) v = Math.round(v);
+      if ((opts.min != null && v < opts.min) || (opts.max != null && v > opts.max)) {
+        alert(`${opts.min ?? '-∞'} ~ ${opts.max ?? '∞'} 범위의 값만 넣을 수 있습니다.`);
+        el.value = el.dataset.last || cur; return;
+      }
+      el.value = v; el.dataset.last = v; paint(v);
       onChange(Math.abs(v - def) < 1e-9 ? null : v);
     };
-    const u = $(id + 'u'); if (u) u.onclick = () => onChange(null);
-  }, 0);
-  return `<input id="${id}" class="refin${chg ? ' chg' : ''}" type="number" step="any" value="${cur}"
-            ${width ? `style="width:${width}px"` : ''} title="기본값 ${def}">
-          <button id="${id}u" class="undo${chg ? ' on' : ''}" title="기본값 ${def} 로 되돌리기">↺</button>`;
+    if (u) u.onclick = () => { el.value = def; el.dataset.last = def; paint(def); onChange(null); };
+    el.dataset.last = cur;
+  });
+  return html;
 }
+refInput._pending = [];
+/** refInput 이 만든 칸들을 화면에 붙인 뒤 한 번에 바인딩한다 */
+function refBind() { const q = refInput._pending; refInput._pending = []; q.forEach(f => f()); }
 
 /* ---- KPI 줄 ----------------------------------------------------------- */
+/** 변경이 하나도 없을 때의 결과를 기준선으로 계속 갱신한다.
+    종전에는 부팅 때 한 번만 잡아 둬서, 교대·계획서를 바꾼 뒤 기준정보를 고치면
+    「+18.9일 악화」처럼 **부호까지 반대로** 표시됐다. (2026-08-14 전수 감사) */
+function refRebase() {
+  if (SIM && refCount() === 0) REF_BASE = { days: SIM.kpi.makespanH / 24, top: SIM.stats[0] && SIM.stats[0].label };
+}
 function renderRefKpi() {
   if (!$('refKpi') || !SIM) return;
+  refRebase();
   const n = refCount();
   const d = (SIM.kpi.makespanH / 24);
   const b = SIM.stats[0];
@@ -5860,7 +6110,7 @@ function renderRefCap() {
     const fixed = n.id === 'EXP';
     const cell = fixed
       ? `<span style="color:#6e7681">${def} (설정 탭에서 지정)</span>`
-      : refInput(cur, def, v => refSetCap(n.id, v), 60);
+      : refInput(cur, def, v => refSetCap(n.id, v), { width: 60, int: true, min: 1, max: 20 });
     const util = s ? s.util : 0;
     const col = util > 90 ? '#ff7b72' : util > 70 ? '#e3b341' : '#6e7681';
     return `<tr${util > 90 ? ' class="bnrow"' : ''}>
@@ -5870,17 +6120,19 @@ function renderRefCap() {
       <td style="color:#6e7681;font-size:11px">${util > 90 ? '병목 — 1대 늘리면 효과 큼' : util > 70 ? '여유 적음' : ''}</td>
       <td></td></tr>`;
   }).join('');
+  refBind();
 }
 
 /* ---- ② 전환시간 ------------------------------------------------------- */
 function renderRefCo() {
   $('refCoBody').innerHTML = Object.keys(REF_CO_DEFAULT).map(k => {
     const D = REF_CO_DEFAULT[k], C = CHANGEOVER[k];
-    const cell = (f) => refInput(C[f], D[f], v => refSet('co', k, f, v), 70);
+    const cell = (f) => refInput(C[f], D[f], v => refSet('co', k, f, v), { width: 70, min: 0, max: 86400 });
     return `<tr><td><b>${esc(D._l)}</b></td>
       <td class="num">${cell('od')}</td><td class="num">${cell('t')}</td><td class="num">${cell('L')}</td>
       <td style="color:#6e7681;font-size:11px">${esc(D._n || '')}</td><td></td></tr>`;
   }).join('');
+  refBind();
 }
 
 /* ---- ③ 표준시간 상수 -------------------------------------------------- */
@@ -5908,16 +6160,17 @@ function renderRefStd() {
     const G = REF.std[proc], D = REF_STD_DEFAULT[proc];
     const rows = Object.keys(G).filter(k => k[0] !== '_').map(k =>
       `<div class="refrow"><span title="${esc(G[k].l)}">${esc(G[k].l)}</span>
-         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v))}
+         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v), { min: REF_STD_MIN(proc, k) })}
          <i>${esc(G[k].u || '')}</i></div>`).join('');
     let prev = '';
     try {
       const r = REF_PREVIEW_FN[proc] ? REF_PREVIEW_FN[proc]() : null;
       if (r) prev = `<div class="refprev">미리보기 <b>${r.sec.toFixed(1)}s</b> &nbsp;·&nbsp; ${esc(r.expr)}</div>`;
     } catch (e) { prev = `<div class="refprev" style="color:#ff7b72">미리보기 계산 오류: ${esc(String(e.message || e))}</div>`; }
-    return `<div class="refgrp"><h4>${esc(G._label)} <small>엑셀 ${esc(G._src)}</small></h4>
+    return `<div class="refgrp" data-proc="${esc(proc)}"><h4>${esc(G._label)} <small>엑셀 ${esc(G._src)}</small></h4>
       <div class="refgrid">${rows}</div>${prev}</div>`;
   }).join('');
+  refBind();
 }
 
 /* ---- ④ 룩업 표 (보기 전용) ------------------------------------------- */
@@ -5962,15 +6215,86 @@ function refExport() {
   a.download = `JCOE_기준정보_${new Date().toISOString().slice(0,10)}.json`;
   a.click(); URL.revokeObjectURL(a.href);
 }
+/** 불러온 JSON 을 **검증해서** REF_EDIT 모양으로 바꾼다. 못 쓰는 항목은 사유와 함께 걸러낸다. */
+function refSanitize(d) {
+  const bad = [];
+  const plain = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  /* `__proto__` · `constructor` 같은 키를 그대로 인덱싱하면 Object.prototype 이 오염된다.
+     자기 소유 키만 받아들인다. (2026-08-14 전수 감사) */
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const RISKY = new Set(['__proto__', 'constructor', 'prototype']);
+  const num = (v) => typeof v === 'number' && isFinite(v);
+  const out = { std:{}, co:{}, cap:{} };
+
+  const cap = d.설비대수 ?? d.cap;
+  if (cap != null) {
+    if (!plain(cap)) bad.push('설비대수 형식이 올바르지 않습니다');
+    else for (const id in cap) {
+      if (!own(cap, id) || RISKY.has(id)) { bad.push(`설비대수: 쓸 수 없는 키 ${id}`); continue; }
+      const v = Math.round(+cap[id]);
+      if (id === 'EXP') bad.push('설비대수: 확관(EXP) 은 「설정」 탭의 #3호기 사용 여부로 정합니다');
+      else if (!NODE[id] || NODE[id].kind !== 'proc') bad.push(`설비대수: 없는 설비 ${id}`);
+      else if (!isFinite(v) || v < 1 || v > 20) bad.push(`설비대수 ${id}: 1~20 범위 밖 (${cap[id]})`);
+      else out.cap[id] = v;
+    }
+  }
+  const co = d.전환시간 ?? d.co;
+  if (co != null) {
+    if (!plain(co)) bad.push('전환시간 형식이 올바르지 않습니다');
+    else for (const st in co) {
+      if (!own(co, st) || RISKY.has(st)) { bad.push(`전환시간: 쓸 수 없는 키 ${st}`); continue; }
+      if (!plain(co[st])) { bad.push(`전환시간: ${st} 형식 오류`); continue; }
+      if (!own(REF_CO_DEFAULT, st)) { bad.push(`전환시간: 없는 공정 ${st}`); continue; }
+      for (const k of ['od','t','L']) {
+        if (co[st][k] === undefined) continue;
+        const v = +co[st][k];
+        if (!num(v) || v < 0) bad.push(`전환시간 ${st}.${k}: 0 이상 숫자만 (${co[st][k]})`);
+        else (out.co[st] = out.co[st] || {})[k] = v;
+      }
+    }
+  }
+  const std = d.표준시간상수 ?? d.std;
+  if (std != null) {
+    if (!plain(std)) bad.push('표준시간상수 형식이 올바르지 않습니다');
+    else for (const proc in std) {
+      if (!own(std, proc) || RISKY.has(proc)) { bad.push(`표준시간상수: 쓸 수 없는 키 ${proc}`); continue; }
+      if (!plain(std[proc])) { bad.push(`표준시간상수: ${proc} 형식 오류`); continue; }
+      if (!own(REF_STD_DEFAULT, proc)) { bad.push(`표준시간상수: 없는 공정 ${proc}`); continue; }
+      for (const k in std[proc]) {
+        if (!own(std[proc], k) || RISKY.has(k)) { bad.push(`표준시간상수 ${proc}.${k}: 쓸 수 없는 키`); continue; }
+        if (!own(REF_STD_DEFAULT[proc], k)) { bad.push(`표준시간상수 ${proc}.${k}: 없는 항목`); continue; }
+        const v = +std[proc][k];
+        if (!num(v) || v < REF_STD_MIN(proc, k)) bad.push(`표준시간상수 ${proc}.${k}: 값 오류 (${std[proc][k]})`);
+        else (out.std[proc] = out.std[proc] || {})[k] = v;
+      }
+    }
+  }
+  return { out, bad };
+}
 function refImportFile(file) {
   const rd = new FileReader();
   rd.onload = () => {
+    /* ★ **원자적으로** 적용한다.
+       종전에는 REF_EDIT 를 먼저 덮어쓰고 엔진에 밀어 넣는 도중 예외가 나면
+       표준시간은 이미 바뀐 채로 전환시간·설비대수는 안 바뀐 **반쯤 적용된 상태**가 됐고,
+       그 뒤로는 편집도 되돌리기도 전부 예외를 던져 새로고침 말고는 방법이 없었다. */
+    const prev = JSON.parse(JSON.stringify(REF_EDIT));
+    let d;
+    try { d = JSON.parse(rd.result); }
+    catch (e) { alert('JSON 을 읽지 못했습니다: ' + (e.message || e)); return; }
+    const { out, bad } = refSanitize(d);
     try {
-      const d = JSON.parse(rd.result);
-      REF_EDIT = { std: d.표준시간상수 || d.std || {}, co: d.전환시간 || d.co || {}, cap: d.설비대수 || d.cap || {} };
-      refApply();
-      alert(`기준정보를 불러왔습니다 — 변경 ${refCount()}개 항목이 적용됐습니다.`);
-    } catch (e) { alert('기준정보 파일을 읽지 못했습니다: ' + (e.message || e)); }
+      REF_EDIT = out;
+      refApply(true);
+    } catch (e) {
+      REF_EDIT = prev; refApply(true);
+      alert('기준정보를 적용하지 못해 이전 상태로 되돌렸습니다: ' + (e.message || e));
+      return;
+    }
+    const n = refCount();
+    alert(`기준정보를 불러왔습니다 — ${n}개 항목 적용.`
+      + (bad.length ? `\n\n걸러낸 항목 ${bad.length}개:\n· ` + bad.slice(0, 10).join('\n· ')
+          + (bad.length > 10 ? `\n… 외 ${bad.length - 10}개` : '') : ''));
   };
   rd.readAsText(file);
 }
