@@ -100,6 +100,7 @@ function runSim() {
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  buildVfOrders(); if($('vfBody')) renderVerify();
   renderKpiBar();
   if($('refKpi')) renderRefKpi();
   /* 3D 탭이 이미 떠 있으면 같은 결과로 갱신 — 두 화면이 어긋나지 않게 한다 */
@@ -1000,14 +1001,125 @@ function renderGantt(){
     const late = (dl && v.e>dl) || (v.tardyH!=null && v.tardyH>0);
     const tt = esc(`${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`)
       + (v.due?`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`:'');
-    return `<div class="gr">
+    return `<div class="gr" data-vf="${esc(no)}" title="클릭 → 산식 검증">
       <div class="gl"><b>${esc(no)}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
         <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
+      <div class="gvbtn">산식 검증 ▸</div>
       <div class="gt">${marks}
         <div class="gb${late?' late':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
           title="${tt}"></div>
       </div></div>`;}).join('');
-  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
+  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gvbtn">검증</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
+  $('gantt').querySelectorAll('.gr[data-vf]').forEach(el =>
+    el.addEventListener('click', () => openVerify(el.getAttribute('data-vf'))));
+}
+
+/* ================= 산식 검증 =================
+   "어떤 식에 어떤 파라미터가 들어가 이 값이 나왔는가" 를 공정별로 전부 펼친다.
+   오더 간트에서 행을 클릭하면 이 탭이 그 오더로 열린다. */
+function vfOrderList(){
+  const seen = new Set(); const out = [];
+  for (const o of ORDERS) { const no = String(o.no); if (seen.has(no)) continue; seen.add(no); out.push(o); }
+  return out;
+}
+function buildVfOrders(keep){
+  const sel = $('vfOrder'); if(!sel) return;
+  const cur = keep != null ? String(keep) : sel.value;
+  sel.innerHTML = vfOrderList().map(o =>
+    `<option value="${esc(o.no)}">${esc(o.no)} — OD${Math.trunc(o.od)} × t${o.t} × ${(o.L/1000).toFixed(2)}m · ${o.qty}본</option>`).join('');
+  if (cur && sel.querySelector(`option[value="${CSS.escape(cur)}"]`)) sel.value = cur;
+}
+/* 시뮬레이션이 이 오더를 실제로 어느 확관 호기에 넣었는지 / 전환시간은 얼마였는지 */
+function vfActual(no){
+  if (!SIM || !SIM.events) return { machine:null, co:null, evSec:null };
+  const ev = SIM.events.filter(e => String(e.o) === String(no));
+  if (!ev.length) return { machine:null, co:null, evSec:null };
+  const expEv = ev.find(e => e.n === 'EXP' || e.n === 'RB');
+  const co = {}, sum = {}, cnt = {};
+  for (const e of ev) {
+    co[e.n] = (co[e.n] || 0) + e.co;
+    sum[e.n] = (sum[e.n] || 0) + e.d; cnt[e.n] = (cnt[e.n] || 0) + 1;
+  }
+  const evSec = {}; for (const k in sum) evSec[k] = sum[k] / cnt[k];
+  return { machine: expEv ? expEv.mach : null, co, evSec, pipes: ev.length };
+}
+function openVerify(no){
+  buildVfOrders(no);
+  if ($('vfOrder')) $('vfOrder').value = String(no);
+  goTab('pVf');
+  renderVerify();
+}
+function renderVerify(){
+  const box = $('vfBody'); if(!box) return;
+  if (!CFG) { box.innerHTML = '<div class="note">먼저 「계획 실행」에서 시뮬레이션을 한 번 돌려 주세요.</div>'; return; }
+  const sel = $('vfOrder');
+  if (sel && !sel.options.length) buildVfOrders();
+  const no = sel ? sel.value : null;
+  if (!no) { box.innerHTML = '<div class="note">오더가 없습니다.</div>'; return; }
+  const act = vfActual(no);
+  const mSel = $('vfMach') ? $('vfMach').value : '';
+  const V = verifyOrder(no, CFG, {
+    k: +($('vfK') ? $('vfK').value : 1) || 1,
+    seqGlobal: +($('vfSeq') ? $('vfSeq').value : 1) || 1,
+    machine: mSel || act.machine || null,
+    co: act.co,
+  });
+  if (!V) { box.innerHTML = '<div class="note">해당 오더를 찾을 수 없습니다.</div>'; return; }
+  if ($('vfK')) $('vfK').max = V.qty;
+
+  /* 요약 KPI */
+  const kk=(v,l,cls)=>`<div class="kpi ${cls||''}"><b>${v}</b><span>${esc(l)}</span></div>`;
+  const machLbl = {M1:'#1호기', M2:'#2호기', M3:'#3호기', BOTH:'#1·#2 동시', RB:'R/B 라인'}[V.machine] || V.machine || '—';
+  $('vfSum').innerHTML =
+      kk(`<span style="font-size:15px">OD${V.spec.od} × t${V.spec.t}</span>`, `${(V.spec.L/1000).toFixed(3)}m · ${V.qty}본 · ${V.line} 라인`)
+    + kk(`${(V.totalSec/60).toFixed(1)}분`, `1본 총 표준시간 (${Math.round(V.totalSec).toLocaleString()}초)`)
+    + kk(`<span style="font-size:15px">${esc(V.bottleneck ? V.bottleneck.label.replace(/\n/g,' ') : '—')}</span>`, `최장 공정 ${V.bottleneck?(V.bottleneck.sec/60).toFixed(1):'—'}분`, 'bn')
+    + kk(`<span style="font-size:15px">${esc(machLbl)}</span>`, '확관 배정' + (mSel ? ' (수동 지정)' : act.machine ? ' (시뮬레이션 결과)' : ''))
+    + kk(`${V.steps.length}개`, '통과 공정');
+
+  const rowsHtml = V.steps.map((st, i) => {
+    const params = st.vars.length
+      ? `<table class="vfp">${st.vars.map(v =>
+          `<tr><td>${esc(v[0])}</td><td class="v">${esc(typeof v[1]==='number'?(Number.isInteger(v[1])?v[1].toLocaleString():v[1]):v[1])}</td><td class="src">${esc(v[2]||'')}</td></tr>`).join('')}</table>`
+      : '<div class="vfform">파라미터 없음 (고정 시간)</div>';
+    const calibNote = st.calib ? `<div class="vfwarn">⚠ 실적 보정 계수 ×${st.calib.toFixed(3)} 적용 → ${Math.round(st.sec)} s</div>` : '';
+    const coNote = (st.co ? `<div class="vfwarn" style="color:var(--dim)">이 오더의 설비 전환시간 합계 ${(st.co/60).toFixed(1)}분 (표준시간과 별도로 스케줄에 더해짐)</div>` : '');
+    return `<div class="vfstep">
+      <div class="vfhd"><div class="vfno">${i+1}</div>
+        <div><b>${esc(st.label.replace(/\n/g,' '))}</b>${st.sub?` <span class="vfsub">${esc(st.sub)}</span>`:''}${st.machine?` <span class="vfsub">· ${esc(machLbl)}</span>`:''}</div>
+        <div class="vfsec">${Math.round(st.sec).toLocaleString()} s <span style="font-size:10px;color:var(--dim)">(${(st.sec/60).toFixed(1)}분)</span></div></div>
+      <div class="vfbody">
+        <div class="vfcap">적용 산식</div>
+        <div class="vfform">${esc(st.tpl)}</div>
+        <div class="vfgrid">
+          <div><div class="vfcap">파라미터 값 (이 제품)</div>${params}</div>
+          <div><div class="vfcap">산식 계산</div><div class="vfform res">${esc(st.subst)}</div>
+            ${st.terms && st.terms.length ? `<div class="vfcap" style="margin-top:9px">항목별 분해</div><table class="vfp">${st.terms.map(t=>`<tr><td>${esc(t[0])}</td><td class="v">${typeof t[1]==='number'?Math.round(t[1]).toLocaleString():esc(t[1])} s</td></tr>`).join('')}</table>` : ''}
+            ${calibNote}${coNote}</div>
+        </div>
+      </div></div>`;
+  }).join('');
+
+  /* 시뮬레이션 실측과 대사 */
+  let recon = '';
+  if (act.evSec) {
+    const rows = V.steps.map(st => {
+      const a = act.evSec[st.nid];
+      if (a == null) return '';
+      const d = (a - st.sec) / (st.sec || 1) * 100;
+      return `<tr><td>${esc(st.label.replace(/\n/g,' '))}</td><td class="v">${Math.round(st.sec).toLocaleString()}</td><td class="v">${Math.round(a).toLocaleString()}</td><td class="v" style="color:${Math.abs(d)<0.5?'var(--dim)':'#f0a252'}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
+    }).join('');
+    recon = `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
+        <span class="vfsub">이 오더 ${act.pipes}개 공정 이벤트의 평균 소요 vs 위 산식 결과</span></div>
+      <div class="vfbody"><table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 평균(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>
+      <div class="vfwarn" style="color:var(--dim)">차이가 0% 가 아니면 변동성(로그정규 CV) 또는 실적 보정이 켜져 있다는 뜻입니다. 둘 다 끄면 정확히 일치합니다.</div>
+      </div></div>`;
+  }
+
+  box.innerHTML = `<div class="note" style="margin:0 0 12px">
+      <b>${esc(V.no)}</b> · 오더 내 <b>${V.k}번째 본</b> (전역 누적 ${V.seqGlobal}본째) 기준입니다.
+      표준시간은 <b>가동률을 고려하지 않은 Net Time</b>이며, 설비 전환시간·대기시간은 여기에 포함되지 않습니다.
+    </div>${rowsHtml}${recon}`;
 }
 
 /* ================= 병목 분석 ================= */
@@ -1563,6 +1675,7 @@ function boot(){
   }
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
+  ['vfOrder','vfK','vfSeq','vfMach'].forEach(id=>{ if($(id)) $(id).addEventListener('change', renderVerify); });
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
   /* ── 공정 흐름 화면 끌어서 이동 · 휠로 확대 (2026-08-14) ── */
   let dragV = null;

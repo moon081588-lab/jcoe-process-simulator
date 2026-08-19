@@ -101,6 +101,33 @@ tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
 .gr:hover{background:#ffffff08}
 .gb{position:absolute;top:5px;height:20px;border-radius:4px;opacity:.9}
 .gb:hover{opacity:1;outline:1px solid #fff}
+.gr{cursor:pointer}
+.gr .gvbtn{flex-shrink:0;width:74px;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:var(--acc);border-right:1px solid var(--ln)}
+.gr:hover .gvbtn{color:#fff;background:#1f6feb}
+.ghdr .gvbtn{color:var(--dim)}
+/* ---------- 산식 검증 ---------- */
+#vfBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:14px}
+#vfBar .f{display:flex;flex-direction:column;gap:4px}
+#vfBar label{font-size:10px;color:var(--dim)}
+#vfBar select,#vfBar input{background:#0d1117;color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:5px 8px;font-size:12px}
+.vfstep{background:var(--pnl);border:1px solid var(--ln);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.vfhd{display:flex;align-items:center;gap:10px;padding:9px 14px;background:#0f141a;border-bottom:1px solid var(--ln)}
+.vfhd b{font-size:12.5px;color:#fff}
+.vfhd .vfno{width:22px;height:22px;border-radius:50%;background:#1f6feb;color:#fff;font-size:10.5px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.vfhd .vfsec{margin-left:auto;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums}
+.vfhd .vfsub{font-size:10px;color:var(--dim)}
+.vfbody{padding:12px 14px}
+.vfcap{font-size:10.5px;color:var(--dim);font-weight:600;margin:0 0 5px}
+.vfform{background:#0d1117;border:1px solid var(--ln);border-radius:7px;padding:9px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.6;color:#d2e3f7;word-break:break-all;white-space:pre-wrap}
+.vfform.res{color:#7ee787;border-color:#2ea04355}
+.vfgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+@media (max-width:1100px){ .vfgrid{grid-template-columns:1fr} }
+table.vfp{width:100%;border-collapse:collapse;font-size:11.5px}
+table.vfp td{padding:4px 8px;border-bottom:1px solid #21262d}
+table.vfp td:first-child{color:var(--dim);width:44%}
+table.vfp td.v{text-align:right;font-variant-numeric:tabular-nums;color:#fff;font-weight:600;width:22%}
+table.vfp td.src{font-size:10px;color:var(--dim)}
+.vfwarn{font-size:10.5px;color:#f0a252;margin-top:7px}
 #bnUnits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
 /* ---------- 설정 ---------- */
 #cfgBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:15px}
@@ -297,6 +324,7 @@ details.note .notebody b{color:var(--tx)}
         <div class="tab" data-p="pOpt">확관 최적화</div>
         <div class="tab" data-p="pIO">In · Out</div>
         <div class="tab" data-p="pCalc">표준시간 계산기</div>
+        <div class="tab" data-p="pVf">산식 검증</div>
         <div class="tab" data-p="pMC">반복 실행</div>
         <div class="tab" data-p="pLog">실적 검증</div>
       </div>
@@ -551,7 +579,24 @@ details.note .notebody b{color:var(--tx)}
 
   <!-- ========== 간트 ========== -->
   <section class="pane" id="pGantt"><div class="inner">
-    <h3>오더별 생산 스케줄</h3><div id="gantt"></div>
+    <h3>오더별 생산 스케줄</h3>
+    <div class="hint" style="font-size:10.5px;color:var(--dim);margin:-4px 0 8px">행을 클릭하면 그 오더가 <b>어떤 산식에 어떤 값이 들어가 이 시간이 나왔는지</b>를 「산식 검증」에서 봅니다.</div>
+    <div id="gantt"></div>
+  </div></section>
+
+  <!-- ========== 산식 검증 ========== -->
+  <section class="pane" id="pVf"><div class="inner">
+    <div id="vfBar">
+      <div class="f"><label>오더</label><select id="vfOrder" style="min-width:300px"></select></div>
+      <div class="f"><label>오더 내 본 번호</label><input type="number" id="vfK" value="1" min="1" step="1" style="width:90px"></div>
+      <div class="f"><label>전역 누적 본 번호 <span title="포장의 「10본마다 추가 검사」 판정에 쓰입니다">ⓘ</span></label><input type="number" id="vfSeq" value="1" min="1" step="1" style="width:110px"></div>
+      <div class="f"><label>확관 호기</label><select id="vfMach" style="min-width:190px">
+        <option value="">시뮬레이션 배정 그대로</option>
+        <option value="M1">#1호기</option><option value="M2">#2호기</option>
+        <option value="BOTH">#1·#2 동시</option><option value="RB">R/B 라인</option></select></div>
+    </div>
+    <div class="kpis" id="vfSum"></div>
+    <div id="vfBody"></div>
   </div></section>
 
   <!-- ========== 병목 ========== -->
@@ -1558,6 +1603,34 @@ function refDiff() {
 const RSTD = new Proxy({}, { get: (_, proc) =>
   new Proxy({}, { get: (__, key) => (REF.std[proc] && REF.std[proc][key]) ? REF.std[proc][key].v : undefined }) });
 
+/* ====================================================================
+   산식 검증용 부가 정보
+   --------------------------------------------------------------------
+   「어떤 식에 어떤 값이 들어가 이 숫자가 나왔는가」를 화면에서 그대로 펼쳐 보이기 위해
+   각 STD 함수가 아래 세 가지를 함께 돌려준다.
+
+     tpl   적용 산식 — 기호 형태 (예: 348s − (123/고속값) + (전진거리/215.6) + …)
+     vars  이 제품에 실제로 들어간 파라미터 [[이름, 값, 출처], …]
+     subst 숫자를 대입한 식 (예: 348 − 123/5 + 15250/215.6 + … = 527 s)
+
+   sec / expr / terms 는 그대로 두므로 기존 화면·검사에는 영향이 없다. (2026-08-14)
+   ==================================================================== */
+const nf = (v) => {
+  if (v == null || v === '') return '—';
+  if (typeof v !== 'number') return String(v);
+  if (Number.isInteger(v)) return v.toLocaleString();
+  return (Math.round(v * 1000) / 1000).toString();
+};
+/** 산식 검증 정보를 결과 객체에 붙인다 */
+function withCalc(res, tpl, vars, subst) {
+  res.tpl = tpl;
+  res.vars = vars;
+  res.subst = `${subst} = ${res.sec.toFixed(0)} s`;
+  return res;
+}
+
+const gradeLabel = (g) => g === 'hiMn' ? '고망간' : g === 'high' ? 'X65 이상(고강도)' : '일반';
+
 const STD = {};
 
 /* 1~2. Edge Miller (면취) */
@@ -1572,16 +1645,28 @@ STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
   if (s.grade === 'hiMn') {
     const b = line === '18M' ? E.hiMn18 : E.hiMn12;
     const sec = b + L * E.lenA + feed / E.feedDiv + first;
-    return { sec, expr: `${b} + L×${E.lenA} + feed/${E.feedDiv}  (고망간)${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
+    return withCalc({ sec, expr: `${b} + L×${E.lenA} + feed/${E.feedDiv}  (고망간)${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
       terms: [['기본(고망간)', b], [`길이항 L×${E.lenA}`, L * E.lenA], [`피딩기 feed/${E.feedDiv}`, feed / E.feedDiv]]
-        .concat(first ? [['첫 본 생산 가산', first]] : []) };
+        .concat(first ? [['첫 본 생산 가산', first]] : []) },
+      `${b}s + 길이×${E.lenA} + (전진거리/${E.feedDiv})${first ? ` + ${E.firstPiece}s(첫 본)` : ''}   [${line} 고망간]`,
+      [['길이(mm)', L, '계획서'], ['두께(mm)', s.t, '계획서'], ['재질 등급', gradeLabel(s.grade), '계획서'],
+       ['판재 이송거리(mm)', feed, '엑셀 emFeed 표 (길이 구간)'],
+       ['오더 내 본 번호', seqInOrder, '시뮬레이터'] ],
+      `${b} + ${nf(L)}×${E.lenA} + ${nf(feed)}/${E.feedDiv}${first ? ` + ${first}` : ''}`);
   }
   const row = T.emSpeed.find(r => s.t >= r.tmin && s.t <= r.tmax) || T.emSpeed[1];
   const v = s.grade === 'high' ? row.high : row.normal;   // 고속 Setting [m/min]
   const sec = base - E.vNum / v + feed / E.feedDiv + L * (E.lenA / v - E.lenB) + first;
-  return { sec, expr: `${base} − ${E.vNum}/v + feed/${E.feedDiv} + L×(${E.lenA}/v − ${E.lenB}), v=${v}m/min, feed=${feed}mm${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
+  return withCalc({ sec, expr: `${base} − ${E.vNum}/v + feed/${E.feedDiv} + L×(${E.lenA}/v − ${E.lenB}), v=${v}m/min, feed=${feed}mm${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
     terms: [['기본', base], [`−${E.vNum}/v`, -E.vNum / v], [`피딩기 feed/${E.feedDiv}`, feed / E.feedDiv],
-            ['길이항', L * (E.lenA / v - E.lenB)]].concat(first ? [['첫 본 생산 가산', first]] : []) };
+            ['길이항', L * (E.lenA / v - E.lenB)]].concat(first ? [['첫 본 생산 가산', first]] : []) },
+    `${base}s − (${E.vNum}/고속값) + (전진거리/${E.feedDiv}) + 길이×(${E.lenA}/고속값 − ${E.lenB})`
+      + `${first ? ` + ${E.firstPiece}s(첫 본)` : ''}   [${line} ${gradeLabel(s.grade)}]`,
+    [['길이(mm)', L, '계획서'], ['두께(mm)', s.t, '계획서'], ['재질 등급', gradeLabel(s.grade), '계획서'],
+     ['밀링 고속값(m/min)', v, `엑셀 emSpeed 표 (두께 ${row.tmin}~${row.tmax})`],
+     ['판재 이송거리(mm)', feed, '엑셀 emFeed 표 (길이 구간)'],
+     ['오더 내 본 번호', seqInOrder, '시뮬레이터 — 1이면 첫 본 가산']],
+    `${base} − ${E.vNum}/${nf(v)} + ${nf(feed)}/${E.feedDiv} + ${nf(L)}×(${E.lenA}/${nf(v)}−${E.lenB})${first ? ` + ${first}` : ''}`);
 };
 
 /* 3~4. Pre Bender */
@@ -1591,8 +1676,13 @@ STD.PreBender = (s, line) => {
   const base = line === '18M' ? P.base18 : P.base12;
   const n = ceil((s.L - P.lead) / pitch);
   const sec = base + (pitch / P.pitchDiv + P.perStroke) * n;
-  return { sec, expr: `${base} + (pitch/${P.pitchDiv} + ${P.perStroke}) × ceil((L−${P.lead})/pitch), pitch=${pitch}mm, n=${n}`,
-    terms: [['기본', base], [`성형 ${n}회`, (pitch / P.pitchDiv + P.perStroke) * n]] };
+  return withCalc({ sec, expr: `${base} + (pitch/${P.pitchDiv} + ${P.perStroke}) × ceil((L−${P.lead})/pitch), pitch=${pitch}mm, n=${n}`,
+    terms: [['기본', base], [`성형 ${n}회`, (pitch / P.pitchDiv + P.perStroke) * n]] },
+    `${base}s + (피치/${P.pitchDiv} + ${P.perStroke}s) × 올림((길이−${P.lead})/피치)   [${line}]`,
+    [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
+     ['성형 피치(mm)', pitch, '엑셀 preBenderPitch 표 (두께별)'],
+     ['성형 횟수 n(회)', n, `올림((${nf(s.L)}−${P.lead})/${nf(pitch)})`]],
+    `${base} + (${nf(pitch)}/${P.pitchDiv} + ${P.perStroke}) × ${n}`);
 };
 
 /* 5~6. Press Bender */
@@ -1603,9 +1693,14 @@ STD.PressBender = (s, line) => {
   const base = line === '18M' ? P.base18 : P.base12;
   const k = line === '18M' ? P.k18 : P.k12;
   const sec = base + (s.L / 1000) / P.lenDiv - s.od / P.odDiv + x1 * k;
-  return { sec, expr: `${base} + L[m]/${P.lenDiv} − OD/${P.odDiv} + X1×${k}, X1=${x1}회(${inch}")`,
+  return withCalc({ sec, expr: `${base} + L[m]/${P.lenDiv} − OD/${P.odDiv} + X1×${k}, X1=${x1}회(${inch}")`,
     terms: [['기본', base], [`길이항 L/${P.lenDiv}`, (s.L / 1000) / P.lenDiv], [`외경 보정 −OD/${P.odDiv}`, -s.od / P.odDiv],
-            [`X1 Side Press ${x1}회`, x1 * k]] };
+            [`X1 Side Press ${x1}회`, x1 * k]] },
+    `${base}s + (길이[m]/${P.lenDiv}) − (외경/${P.odDiv}) + X1횟수×${k}s   [${line}]`,
+    [['길이(m)', s.L / 1000, '계획서'], ['외경(mm)', s.od, '계획서'],
+     ['공칭 인치(")', inch, `외경 ${nf(s.od)}mm ÷ 25.4 → 짝수 인치 반올림`],
+     ['X1 Side Press 횟수', x1, `엑셀 pressX1 표 (${inch}")`]],
+    `${base} + ${nf(s.L / 1000)}/${P.lenDiv} − ${nf(s.od)}/${P.odDiv} + ${x1}×${k}`);
 };
 
 /* 7. Gap Press  (두께 25T 초과 시에만 투입) */
@@ -1624,8 +1719,15 @@ STD.GapPress = (s) => {
   const hi = s.grade === 'high';          // X70 이상 → 대괄호 밖 ×2
   const bracket = seg * P.per * P.mult * (hi ? P.x70 : 1);
   const sec = P.base - Lm / P.lenDiv + bracket;
-  return { sec, expr: `${P.base} − L[m]/${P.lenDiv} + [ceil(L/${P.segLen})×${P.per}×${P.mult}]${hi ? `×${P.x70}(X70↑)` : ''}, ceil(L/${P.segLen})=${seg}`,
-    terms: [['기본', P.base], [`길이 보정 −L/${P.lenDiv}`, -Lm / P.lenDiv], [`프레스 ${seg}구간`, bracket]] };
+  return withCalc({ sec, expr: `${P.base} − L[m]/${P.lenDiv} + [ceil(L/${P.segLen})×${P.per}×${P.mult}]${hi ? `×${P.x70}(X70↑)` : ''}, ceil(L/${P.segLen})=${seg}`,
+    terms: [['기본', P.base], [`길이 보정 −L/${P.lenDiv}`, -Lm / P.lenDiv], [`프레스 ${seg}구간`, bracket]] },
+    `${P.base}s − (길이[m]/${P.lenDiv}) + [올림(길이/${P.segLen}m)×${P.per}s×${P.mult}]`
+      + `${hi ? ` ×${P.x70}  ← X70 이상` : '   (X70 미만이라 대괄호 밖 ×${P.x70} 미적용)'}`,
+    [['길이(m)', Lm, '계획서'], ['두께(mm)', s.t, '계획서 — t>25 일 때만 투입'],
+     ['재질 등급', gradeLabel(s.grade), '계획서'],
+     ['프레스 구간 수', seg, `올림(${nf(Lm)}/${P.segLen})`],
+     ['X70 이상 배수', hi ? P.x70 : 1, hi ? '적용' : '미적용']],
+    `${P.base} − ${nf(Lm)}/${P.lenDiv} + ${seg}×${P.per}×${P.mult}${hi ? `×${P.x70}` : ''}`);
 };
 
 /* 8. Tack Welder (태그 웰딩) */
@@ -1633,8 +1735,12 @@ STD.TackWelder = (s, line) => {
   const v = pickRange(T.tackWeld, s.t);          // mm/s
   const base = line === '18M' ? RSTD.TackWelder.base18 : RSTD.TackWelder.base12;
   const sec = base + s.L / v;
-  return { sec, expr: `${base} + L / v,  v=${v.toFixed(1)}mm/s (WPS t=${s.t})`,
-    terms: [['이송·Gap조정', base], ['용접 L/v', s.L / v]] };
+  return withCalc({ sec, expr: `${base} + L / v,  v=${v.toFixed(1)}mm/s (WPS t=${s.t})`,
+    terms: [['이송·Gap조정', base], ['용접 L/v', s.L / v]] },
+    `${base}s + (길이 / 용접속도)   [${line}]`,
+    [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
+     ['용접속도(mm/s)', v, `엑셀 tackWeld 표 (WPS 두께 ${nf(s.t)})`]],
+    `${base} + ${nf(s.L)}/${nf(v)}`);
 };
 
 /* 9. Inside Welder (내면 SAW) */
@@ -1643,8 +1749,13 @@ STD.InsideWelder = (s, line) => {
   const p = pickRange(T.insideWeld, s.t, 3);
   const base = line === '18M' ? RSTD.InsideWelder.base18 : RSTD.InsideWelder.base12;
   const sec = base + s.L / v;
-  return { sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
-    terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] };
+  return withCalc({ sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
+    terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] },
+    `${base}s + (길이 / 용접속도)   [${line} · 내면 SAW]`,
+    [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
+     ['용접속도(mm/s)', v, `엑셀 insideWeld 표 (WPS 두께 ${nf(s.t)})`],
+     ['용접 패스 수', p, '엑셀 insideWeld 표 — 속도에 이미 반영됨']],
+    `${base} + ${nf(s.L)}/${nf(v)}`);
 };
 
 /* 10. Outside Welder (외면 SAW) */
@@ -1653,8 +1764,13 @@ STD.OutsideWelder = (s, line) => {
   const p = pickRange(T.outsideWeld, s.t, 3);
   const base = line === '18M' ? RSTD.OutsideWelder.base18 : RSTD.OutsideWelder.base12;
   const sec = base + s.L / v;
-  return { sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
-    terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] };
+  return withCalc({ sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
+    terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] },
+    `${base}s + (길이 / 용접속도)   [${line} · 외면 SAW]`,
+    [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
+     ['용접속도(mm/s)', v, `엑셀 outsideWeld 표 (WPS 두께 ${nf(s.t)})`],
+     ['용접 패스 수', p, '엑셀 outsideWeld 표 — 속도에 이미 반영됨']],
+    `${base} + ${nf(s.L)}/${nf(v)}`);
 };
 
 /* 11. 1st-UT (관단탭 절단 포함) */
@@ -1662,8 +1778,12 @@ STD.FirstUT = (s) => {
   const P = RSTD.FirstUT;
   const cv = pickRange(T.utCut, s.t);
   const sec = P.base + s.L / P.feedDiv + (P.cutLen / cv) * P.cutTimes;
-  return { sec, expr: `${P.base} + L/${P.feedDiv} + (${P.cutLen}/절단속도)×${P.cutTimes}, 절단속도=${cv}`,
-    terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv], [`탭 절단 ×${P.cutTimes}`, (P.cutLen / cv) * P.cutTimes]] };
+  return withCalc({ sec, expr: `${P.base} + L/${P.feedDiv} + (${P.cutLen}/절단속도)×${P.cutTimes}, 절단속도=${cv}`,
+    terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv], [`탭 절단 ×${P.cutTimes}`, (P.cutLen / cv) * P.cutTimes]] },
+    `${P.base}s + (길이/${P.feedDiv}) + (${P.cutLen}/절단속도)×${P.cutTimes}회`,
+    [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
+     ['관단탭 절단속도', cv, `엑셀 utCut 표 (두께 ${nf(s.t)})`]],
+    `${P.base} + ${nf(s.L)}/${P.feedDiv} + (${P.cutLen}/${nf(cv)})×${P.cutTimes}`);
 };
 
 /* ====================================================================
@@ -1862,9 +1982,19 @@ STD.Expander = (s, machine, cfg) => {
     const E = RSTD.Expander;
     const n1 = expanderN(s, 'M1'), n2 = expanderN(s, 'M2');
     const a = E.m1Base + n1 * E.m1Per + (s.L + E.m1FeedAdd) / E.m1FeedDiv, b = E.m2Base + n2 * E.m2Per;
-    return { sec: Math.max(a, b),
+    const d1 = expanderStep(s, 'M1'), d2 = expanderStep(s, 'M2');
+    return withCalc({ sec: Math.max(a, b),
       expr: `#1·#2호기 동시 가동: max(#1 ${a.toFixed(0)}s, #2 ${b.toFixed(0)}s) ${tag}`,
-      terms: [['#1호기 소요', a], ['#2호기 소요', b], ['동시 가동 → max 적용', Math.max(a, b)]] };
+      terms: [['#1호기 소요', a], ['#2호기 소요', b], ['동시 가동 → max 적용', Math.max(a, b)]] },
+      `max( #1호기: ${E.m1Base}s + N₁×${E.m1Per}s + (길이+${E.m1FeedAdd})/${E.m1FeedDiv} ,  #2호기: ${E.m2Base}s + N₂×${E.m2Per}s )`
+        + `   [길이 14.021m 초과 → 두 호기 동시 가동]`,
+      [['길이(mm)', s.L, '계획서'], ['외경(mm)', s.od, '계획서'], ['두께(mm)', s.t, '계획서'],
+       ['#1호기 다이(mm)', d1.step, '다이표 (specs.py)'], ['#1호기 Step(mm)', d1.recipe, `다이 ${nf(d1.step)} − 여유 ${nf(d1.margin)}`],
+       ['#1호기 확관 횟수 N₁', n1, EXP_NMODE === 'excel' ? '엑셀 N식' : '운영모델 N식'],
+       ['#2호기 다이(mm)', d2.step, '다이표 (specs.py)'], ['#2호기 Step(mm)', d2.recipe, `다이 ${nf(d2.step)} − 여유 ${nf(d2.margin)}`],
+       ['#2호기 확관 횟수 N₂', n2, EXP_NMODE === 'excel' ? '엑셀 N식' : '운영모델 N식']],
+      `max( ${E.m1Base}+${n1}×${E.m1Per}+(${nf(s.L)}+${E.m1FeedAdd})/${E.m1FeedDiv} , `
+        + `${E.m2Base}+${n2}×${E.m2Per} )   [#1호기 ${a.toFixed(0)}s · #2호기 ${b.toFixed(0)}s]`);
   }
   const d = expanderStep(s, machine), n = expanderN(s, machine);
   if (machine === 'RB') {
@@ -1887,22 +2017,47 @@ STD.Expander = (s, machine, cfg) => {
     const heat = !!s.heat && (!cfg || cfg.rbHeatRule !== 'none');
     const add = heat ? 0 : Math.max(n - E.rbOffset, 0) * E.rbPer;
     const sec = E.rbBase + add;
-    return { sec,
+    return withCalc({ sec,
       expr: heat
         ? `R/B: ${E.rbBase} 고정 (옥외 열처리 → 「15초 제외」),  참고 N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−${E.marginRB})`
         : `R/B: ${E.rbBase} + (ROUNDUP(L/StepSize)−${E.rbOffset})×${E.rbPer},  N=${n}회, StepSize=${d.recipe}mm (다이 ${d.step}−${E.marginRB})`,
-      terms: [['기본', E.rbBase]].concat(heat ? [] : [[`확관 ${n}회 (−${E.rbOffset})×${E.rbPer}s`, add]]) };
+      terms: [['기본', E.rbBase]].concat(heat ? [] : [[`확관 ${n}회 (−${E.rbOffset})×${E.rbPer}s`, add]]) },
+      heat ? `${E.rbBase}s 고정   [R/B · 옥외 열처리 제품 → (N−${E.rbOffset})×${E.rbPer}s 항 제외]`
+           : `${E.rbBase}s + (확관횟수 N − ${E.rbOffset})×${E.rbPer}s   [R/B]`,
+      [['길이(mm)', s.L, '계획서'], ['외경(mm)', s.od, '계획서'], ['두께(mm)', s.t, '계획서'],
+       ['다이 크기(mm)', d.step, `다이표 — ${d.dieT}${d.fallback ? ' (엑셀 표 폴백)' : ''}`],
+       ['Step 여유(mm)', d.margin, d.step <= RSTD.Expander.marginM1 && machine !== 'RB'
+          ? '소형 다이 → −100' : (machine === 'RB' ? 'R/B → −90' : '통상 −150')],
+       ['확관 Step(mm)', d.recipe, `다이 ${nf(d.step)} − 여유 ${nf(d.margin)} = HMI 입력값`],
+       ['확관 횟수 N(회)', n, EXP_NMODE === 'excel' ? '엑셀 N식' : '운영모델 specs.py N식']].concat([['옥외 열처리', heat ? '예 (자재기호 C2 / 병목 HT102)' : '아니오', '계획서·자재내역']]),
+      heat ? `${E.rbBase}` : `${E.rbBase} + (${n}−${E.rbOffset})×${E.rbPer}`);
   }
   const E = RSTD.Expander;
   if (machine === 'M1') {
     const sec = E.m1Base + n * E.m1Per + (s.L + E.m1FeedAdd) / E.m1FeedDiv;
-    return { sec, expr: `#1호기: ${E.m1Base} + N×${E.m1Per} + (L+${E.m1FeedAdd})/${E.m1FeedDiv},  N=${n}회, 다이 ${d.step}mm → StepSize ${d.recipe}mm ${tag}`,
+    return withCalc({ sec, expr: `#1호기: ${E.m1Base} + N×${E.m1Per} + (L+${E.m1FeedAdd})/${E.m1FeedDiv},  N=${n}회, 다이 ${d.step}mm → StepSize ${d.recipe}mm ${tag}`,
       terms: [['기본', E.m1Base], [`확관 ${n}회 ×${E.m1Per}s`, n * E.m1Per],
-              [`이송 (L+${E.m1FeedAdd})/${E.m1FeedDiv}`, (s.L + E.m1FeedAdd) / E.m1FeedDiv]] };
+              [`이송 (L+${E.m1FeedAdd})/${E.m1FeedDiv}`, (s.L + E.m1FeedAdd) / E.m1FeedDiv]] },
+      `${E.m1Base}s + 확관횟수 N × ${E.m1Per}s + (길이+${E.m1FeedAdd})/${E.m1FeedDiv}   [확관 #1호기]`,
+      [['길이(mm)', s.L, '계획서'], ['외경(mm)', s.od, '계획서'], ['두께(mm)', s.t, '계획서'],
+       ['다이 크기(mm)', d.step, `다이표 — ${d.dieT}${d.fallback ? ' (엑셀 표 폴백)' : ''}`],
+       ['Step 여유(mm)', d.margin, d.step <= RSTD.Expander.marginM1 && machine !== 'RB'
+          ? '소형 다이 → −100' : (machine === 'RB' ? 'R/B → −90' : '통상 −150')],
+       ['확관 Step(mm)', d.recipe, `다이 ${nf(d.step)} − 여유 ${nf(d.margin)} = HMI 입력값`],
+       ['확관 횟수 N(회)', n, EXP_NMODE === 'excel' ? '엑셀 N식' : '운영모델 specs.py N식']],
+      `${E.m1Base} + ${n}×${E.m1Per} + (${nf(s.L)}+${E.m1FeedAdd})/${E.m1FeedDiv}`);
   }
   const sec = E.m2Base + n * E.m2Per;
-  return { sec, expr: `#2호기: ${E.m2Base} + N×${E.m2Per},  N=${n}회, 다이 ${d.step}mm (${d.dieT}) ${tag}`,
-    terms: [['기본', E.m2Base], [`확관 ${n}회 ×${E.m2Per}s`, n * E.m2Per]] };
+  return withCalc({ sec, expr: `#2호기: ${E.m2Base} + N×${E.m2Per},  N=${n}회, 다이 ${d.step}mm (${d.dieT}) ${tag}`,
+    terms: [['기본', E.m2Base], [`확관 ${n}회 ×${E.m2Per}s`, n * E.m2Per]] },
+    `${E.m2Base}s + 확관횟수 N × ${E.m2Per}s   [확관 #2호기]`,
+      [['길이(mm)', s.L, '계획서'], ['외경(mm)', s.od, '계획서'], ['두께(mm)', s.t, '계획서'],
+       ['다이 크기(mm)', d.step, `다이표 — ${d.dieT}${d.fallback ? ' (엑셀 표 폴백)' : ''}`],
+       ['Step 여유(mm)', d.margin, d.step <= RSTD.Expander.marginM1 && machine !== 'RB'
+          ? '소형 다이 → −100' : (machine === 'RB' ? 'R/B → −90' : '통상 −150')],
+       ['확관 Step(mm)', d.recipe, `다이 ${nf(d.step)} − 여유 ${nf(d.margin)} = HMI 입력값`],
+       ['확관 횟수 N(회)', n, EXP_NMODE === 'excel' ? '엑셀 N식' : '운영모델 specs.py N식']],
+    `${E.m2Base} + ${n}×${E.m2Per}`);
 };
 
 /* 14. End-Facing (면취기) */
@@ -1921,15 +2076,23 @@ STD.EndFacing = (s) => {
   if (!best) best = T.endFacing[T.endFacing.length - 1];
   const B = RSTD.EndFacing.base;
   const sec = B + best[3];
-  return { sec, expr: `${B} + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = ${B} + ${best[3]}s`,
-    terms: [['기본', B], ['저속 절삭(안전계수 K=1.5)', best[3]]] };
+  return withCalc({ sec, expr: `${B} + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = ${B} + ${best[3]}s`,
+    terms: [['기본', B], ['저속 절삭(안전계수 K=1.5)', best[3]]] },
+    `${B}s + 저속 절삭시간(표 조회)`,
+    [['외경(mm)', s.od, '계획서'], ['두께(mm)', s.t, '계획서'],
+     ['공칭 인치(")', inch, `외경 ${nf(s.od)}mm ÷ 25.4 → 짝수 인치`],
+     ['저속 절삭시간(s)', best[3], `엑셀 endFacing 표 (${best[0]}" · t${best[1]}~${best[2]}, 안전계수 K=1.5)`]],
+    `${B} + ${nf(best[3])}`);
 };
 
 /* 15. Outer bead removal (슬러그/비드 제거) */
 STD.OuterBead = (s) => {
   const P = RSTD.OuterBead;
-  return { sec: P.base + s.L / P.feedDiv, expr: `${P.base} + L/${P.feedDiv}  (컨베이어 1.2m/min)`,
-    terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv]] };
+  return withCalc({ sec: P.base + s.L / P.feedDiv, expr: `${P.base} + L/${P.feedDiv}  (컨베이어 1.2m/min)`,
+    terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv]] },
+    `${P.base}s + (길이/${P.feedDiv})   [컨베이어 1.2m/min]`,
+    [['길이(mm)', s.L, '계획서']],
+    `${P.base} + ${nf(s.L)}/${P.feedDiv}`);
 };
 
 /* 16. Hydraulic Tester (수압) */
@@ -1946,16 +2109,29 @@ STD.HydroTest = (s) => {
   const av = big ? T.hydroConst.airVent_36up : T.hydroConst.airVent;
   const hold = s.holdSec != null ? s.holdSec : 60;        // MES 제작시방서 조회값
   const sec = P.base + fill + P.riseSec + hold + de + av;
-  return { sec, expr: `${P.base} + 충수(${fill}s) + 압력상승(${P.riseSec}s) + 유지(${hold}s) + 2차압빼기(${de}s) + 에어벤트(${av}s)`,
+  return withCalc({ sec, expr: `${P.base} + 충수(${fill}s) + 압력상승(${P.riseSec}s) + 유지(${hold}s) + 2차압빼기(${de}s) + 에어벤트(${av}s)`,
     terms: [['기본', P.base], [`충수 ${inch}"`, fill], ['압력 상승', P.riseSec], ['압력 유지(MES)', hold],
-            ['2차 압빼기', de], ['에어 벤트', av]] };
+            ['2차 압빼기', de], ['에어 벤트', av]] },
+    `${P.base}s + 충수시간 + ${P.riseSec}s(압력상승) + 압력유지 + 2차압빼기 + 에어벤트`
+      + `   [${big ? `36" 이상` : `36" 미만`}${s.L / 1000 >= P.longThresholdM ? `, 18m 이상 +${P.longAdd}s` : ''}]`,
+    [['외경(mm)', s.od, '계획서'], ['공칭 인치(")', Math.round(odInch(s.od)), `외경/25.4 반올림 — ${P.bigInch}" 이상이면 대구경 상수`],
+     ['길이(mm)', s.L, '계획서'],
+     ['충수 시간(s)', fill, `엑셀 hydroFill 표 (${inch}")${s.L / 1000 >= P.longThresholdM ? ` + 18m 가산 ${P.longAdd}` : ''}`],
+     ['압력 상승(s)', P.riseSec, '기준정보'],
+     ['압력 유지(s)', hold, s.holdSec != null ? 'MES 제작시방서 조회값' : '기본값 60s (시방서 미조회)'],
+     ['2차 압빼기(s)', de, big ? '엑셀 hydroConst.deflate2nd_36up' : '엑셀 hydroConst.deflate2nd'],
+     ['에어 벤트(s)', av, big ? '엑셀 hydroConst.airVent_36up' : '엑셀 hydroConst.airVent']],
+    `${P.base} + ${nf(fill)} + ${P.riseSec} + ${nf(hold)} + ${nf(de)} + ${nf(av)}`);
 };
 
 /* 17. Final-UT */
 STD.FinalUT = (s) => {
   const P = RSTD.FinalUT;
-  return { sec: P.base + s.L / P.scanDiv, expr: `${P.base} + L/${P.scanDiv}`,
-    terms: [['기본', P.base], [`스캔 L/${P.scanDiv}`, s.L / P.scanDiv]] };
+  return withCalc({ sec: P.base + s.L / P.scanDiv, expr: `${P.base} + L/${P.scanDiv}`,
+    terms: [['기본', P.base], [`스캔 L/${P.scanDiv}`, s.L / P.scanDiv]] },
+    `${P.base}s + (길이/${P.scanDiv})   [스캔 속도 환산]`,
+    [['길이(mm)', s.L, '계획서'], ['스캔 환산계수', P.scanDiv, '기준정보 — 엑셀 row 27']],
+    `${P.base} + ${nf(s.L)}/${P.scanDiv}`);
 };
 
 /* 18. RT (X-ray) */
@@ -1964,15 +2140,29 @@ STD.RT = (s) => {
   const df = s.defects || 0;
   if (s.rtType === 'End-RT') {
     const sec = P.endBase + (s.L - P.endLead) / P.endDivA + s.L / P.endDivB + df * P.endDefectSec;
-    return { sec, expr: `End-RT: ${P.endBase} + (L−${P.endLead})/${P.endDivA} + L/${P.endDivB} + 불량×${P.endDefectSec}`,
+    return withCalc({ sec, expr: `End-RT: ${P.endBase} + (L−${P.endLead})/${P.endDivA} + L/${P.endDivB} + 불량×${P.endDefectSec}`,
       terms: [['기본', P.endBase], [`(L−${P.endLead})/${P.endDivA}`, (s.L - P.endLead) / P.endDivA],
-              [`L/${P.endDivB}`, s.L / P.endDivB], [`불량 ${df}개소`, df * P.endDefectSec]] };
+              [`L/${P.endDivB}`, s.L / P.endDivB], [`불량 ${df}개소`, df * P.endDefectSec]] },
+      `${P.endBase}s + (길이−${P.endLead})/${P.endDivA} + 길이/${P.endDivB} + 불량개소×${P.endDefectSec}s   [End-RT]`,
+      [['길이(mm)', s.L, '계획서'], ['촬영 방식', 'End-RT', '계획서 — 관단부만 촬영'],
+       ['도입 길이(mm)', P.endLead, '기준정보'],
+       ['불량 개소(개)', df, s.defects != null ? '계획서/실적' : '기본값 0 (불량 미입력)'],
+       ['불량 1개소 재촬영(s)', P.endDefectSec, '기준정보']],
+      `${P.endBase} + (${nf(s.L)}−${P.endLead})/${P.endDivA} + ${nf(s.L)}/${P.endDivB} + ${df}×${P.endDefectSec}`);
   }
   const base = s.rtType === '320kV' ? P.base320 : P.base450;
   const shots = ceil(s.L / P.shotLen);
   const sec = base + shots * P.shotSec + df * P.defectSec;
-  return { sec, expr: `${base} + ceil(L/${P.shotLen})×${P.shotSec} + 불량×${P.defectSec},  ${shots}회 촬영`,
-    terms: [['기본', base], [`촬영 ${shots}회`, shots * P.shotSec], [`불량 ${df}개소`, df * P.defectSec]] };
+  return withCalc({ sec, expr: `${base} + ceil(L/${P.shotLen})×${P.shotSec} + 불량×${P.defectSec},  ${shots}회 촬영`,
+    terms: [['기본', base], [`촬영 ${shots}회`, shots * P.shotSec], [`불량 ${df}개소`, df * P.defectSec]] },
+    `${base}s + ceil(길이/${P.shotLen})×${P.shotSec}s + 불량개소×${P.defectSec}s   [전장 RT ${s.rtType === '320kV' ? '320kV' : '450kV'}]`,
+    [['길이(mm)', s.L, '계획서'], ['촬영 방식', s.rtType === '320kV' ? '320kV' : '450kV', '계획서'],
+     ['1회 촬영 길이(mm)', P.shotLen, '기준정보'],
+     ['촬영 횟수(회)', shots, `ceil(${nf(s.L)}/${P.shotLen})`],
+     ['1회 촬영시간(s)', P.shotSec, '기준정보'],
+     ['불량 개소(개)', df, s.defects != null ? '계획서/실적' : '기본값 0 (불량 미입력)'],
+     ['불량 1개소 재촬영(s)', P.defectSec, '기준정보']],
+    `${base} + ${shots}×${P.shotSec} + ${df}×${P.defectSec}`);
 };
 
 /* 19. 포장 */
@@ -1981,9 +2171,17 @@ STD.Packing = (s, _l, seq) => {
   const mk = P.markSec * (s.markSpec || 2) * (s.markEnd || 2);
   const extra = (seq && P.extraEvery > 0 && seq % P.extraEvery === 0) ? P.extraSec : 0;  // n본마다 추가 검사
   const sec = P.base + (P.refLen - s.L) / P.feedDiv + mk + extra;
-  return { sec, expr: `${P.base} + (${P.refLen}−L)/${P.feedDiv} + ${P.markSec}×마킹사양(${s.markSpec || 2})×관단(${s.markEnd || 2})${extra ? ` + ${P.extraSec}(${P.extraEvery}본째)` : ''}`,
+  return withCalc({ sec, expr: `${P.base} + (${P.refLen}−L)/${P.feedDiv} + ${P.markSec}×마킹사양(${s.markSpec || 2})×관단(${s.markEnd || 2})${extra ? ` + ${P.extraSec}(${P.extraEvery}본째)` : ''}`,
     terms: [['기본', P.base], [`이송 (${P.refLen}−L)/${P.feedDiv}`, (P.refLen - s.L) / P.feedDiv], ['마킹', mk]]
-      .concat(extra ? [[`${P.extraEvery}본째 추가검사`, extra]] : []) };
+      .concat(extra ? [[`${P.extraEvery}본째 추가검사`, extra]] : []) },
+    `${P.base}s + (${P.refLen}−길이)/${P.feedDiv} + ${P.markSec}s×마킹사양수×관단수${extra ? ` + ${P.extraSec}s(${P.extraEvery}본마다 추가검사)` : ''}`,
+    [['길이(mm)', s.L, '계획서'], ['기준 길이(mm)', P.refLen, '기준정보 — 이 길이에서 이송 가산 0'],
+     ['마킹 사양 수(종)', s.markSpec || 2, s.markSpec != null ? '계획서' : '기본값 2종'],
+     ['관단 수(개)', s.markEnd || 2, s.markEnd != null ? '계획서' : '기본값 2개(양단)'],
+     ['마킹 1건 시간(s)', P.markSec, '기준정보'],
+     ['누적 본 번호', seq == null ? '—' : seq, `${P.extraEvery}본마다 추가검사 ${P.extraSec}s`],
+     ['추가검사 적용', extra ? '적용' : '미적용', extra ? `${seq} % ${P.extraEvery} = 0` : '해당 없음']],
+    `${P.base} + (${P.refLen}−${nf(s.L)})/${P.feedDiv} + ${P.markSec}×${s.markSpec || 2}×${s.markEnd || 2}${extra ? ` + ${extra}` : ''}`);
 };
 
 /* --------------------------------------------------------------------
@@ -2807,6 +3005,68 @@ function specOf(o, cfg) {
     api5l: o.api5l != null ? o.api5l : ((cfg.api5lProxy !== false) && o.qty >= 50),
     markSpec:2, markEnd:2, defects:0, holdSec:cfg.holdSec, rtType:'450kV'
   };
+}
+
+/* ====================================================================
+   산식 검증 — "어떤 식에 어떤 값이 들어가 이 숫자가 나왔는가"
+   ====================================================================
+   시뮬레이터가 쓴 것과 **똑같은 경로·똑같은 인자**로 STD 를 다시 호출해
+   ① 적용 산식(tpl) ② 파라미터 값(vars) ③ 숫자를 대입한 계산(subst) 을 모아 준다.
+   시뮬레이션 결과(SIM.events)를 opts 로 넘기면 실제 배정 호기·전환시간까지 맞춘다. */
+function verifyOrder(no, cfg, opts) {
+  opts = opts || {};
+  const rows = (typeof ORDERS !== 'undefined' ? ORDERS : []).filter(o => String(o.no) === String(no));
+  if (!rows.length) return null;
+  const o = rows[0];
+  const spec = specOf(o, cfg);
+  const { route, line } = routeOf(spec, cfg);
+  const qty = rows.reduce((a, x) => a + x.qty, 0);
+  const k = Math.max(1, Math.min(qty, Math.round(opts.k || 1)));          // 오더 내 본 번호
+  const seqGlobal = opts.seqGlobal != null ? opts.seqGlobal : k;          // 전역 순번(포장 10본마다)
+  /* 확관 호기 — 시뮬레이션이 실제로 배정한 호기를 그대로 쓴다 */
+  let machine = opts.machine || null;
+  if (!machine) {
+    const em = expanderMode(spec, cfg);
+    machine = em.mode === 'BOTH' ? 'BOTH' : (em.list && em.list[0]) || 'M2';
+    if (useRBLine(spec, cfg)) machine = 'RB';
+  }
+  const freeSecOf = (nid) => nid === 'RP' ? STOCH_DEFAULT.repairSec : nid === 'RW' ? STOCH_DEFAULT.reweldSec
+                           : nid === 'EP' ? STOCH_DEFAULT.expIssueSec : (cfg.freeStationSec || 0);
+  const steps = [];
+  for (const nid of route) {
+    const n = NODE[nid];
+    if (!n || n.kind === 'buf' || n.kind === 'dec') continue;
+    const nspec = n.rtType ? Object.assign({}, spec, { rtType: n.rtType }) : spec;
+    const mach = n.st === 'Expander' ? (n.machine || machine) : null;
+    let res;
+    if (n.free || !n.st) {
+      res = { sec: freeSecOf(nid), tpl: '고정 시간 (표준시간 측정 대상 외)',
+              vars: [['적용 시간(s)', freeSecOf(nid), '설정 — 고정 스테이션 시간']],
+              subst: `${freeSecOf(nid)} = ${freeSecOf(nid)} s`, terms: [] };
+    } else if (n.st === 'Expander') {
+      res = STD.Expander(nspec, mach === 'M3' ? 'M2' : mach, cfg);
+    } else {
+      res = STD[n.st](nspec, line, seqGlobal, k);
+    }
+    const calib = (cfg.stdCalib && n.st && cfg.stdCalib[n.st] > 0) ? cfg.stdCalib[n.st] : null;
+    steps.push({
+      nid, label: n.label, sub: n.sub || '', st: n.st || null, machine: mach,
+      free: !!n.free || !n.st,
+      stdSec: res.sec,
+      sec: calib ? res.sec * calib : res.sec,
+      calib,
+      tpl: res.tpl || res.expr || '—',
+      vars: res.vars || [],
+      subst: res.subst || `= ${Math.round(res.sec)} s`,
+      expr: res.expr || '',
+      terms: res.terms || [],
+      co: opts.co && opts.co[nid] != null ? opts.co[nid] : null,
+    });
+  }
+  const totalStd = steps.reduce((a, x) => a + x.stdSec, 0);
+  const totalSec = steps.reduce((a, x) => a + x.sec, 0);
+  return { no: o.no, spec, line, route, qty, k, seqGlobal, machine, steps, totalStd, totalSec,
+           bottleneck: steps.reduce((a, x) => (!a || x.sec > a.sec ? x : a), null) };
 }
 
 /* ====================================================================
@@ -4633,6 +4893,7 @@ function runSim() {
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  buildVfOrders(); if($('vfBody')) renderVerify();
   renderKpiBar();
   if($('refKpi')) renderRefKpi();
   /* 3D 탭이 이미 떠 있으면 같은 결과로 갱신 — 두 화면이 어긋나지 않게 한다 */
@@ -5533,14 +5794,125 @@ function renderGantt(){
     const late = (dl && v.e>dl) || (v.tardyH!=null && v.tardyH>0);
     const tt = esc(`${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`)
       + (v.due?`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`:'');
-    return `<div class="gr">
+    return `<div class="gr" data-vf="${esc(no)}" title="클릭 → 산식 검증">
       <div class="gl"><b>${esc(no)}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
         <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
+      <div class="gvbtn">산식 검증 ▸</div>
       <div class="gt">${marks}
         <div class="gb${late?' late':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
           title="${tt}"></div>
       </div></div>`;}).join('');
-  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
+  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gvbtn">검증</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
+  $('gantt').querySelectorAll('.gr[data-vf]').forEach(el =>
+    el.addEventListener('click', () => openVerify(el.getAttribute('data-vf'))));
+}
+
+/* ================= 산식 검증 =================
+   "어떤 식에 어떤 파라미터가 들어가 이 값이 나왔는가" 를 공정별로 전부 펼친다.
+   오더 간트에서 행을 클릭하면 이 탭이 그 오더로 열린다. */
+function vfOrderList(){
+  const seen = new Set(); const out = [];
+  for (const o of ORDERS) { const no = String(o.no); if (seen.has(no)) continue; seen.add(no); out.push(o); }
+  return out;
+}
+function buildVfOrders(keep){
+  const sel = $('vfOrder'); if(!sel) return;
+  const cur = keep != null ? String(keep) : sel.value;
+  sel.innerHTML = vfOrderList().map(o =>
+    `<option value="${esc(o.no)}">${esc(o.no)} — OD${Math.trunc(o.od)} × t${o.t} × ${(o.L/1000).toFixed(2)}m · ${o.qty}본</option>`).join('');
+  if (cur && sel.querySelector(`option[value="${CSS.escape(cur)}"]`)) sel.value = cur;
+}
+/* 시뮬레이션이 이 오더를 실제로 어느 확관 호기에 넣었는지 / 전환시간은 얼마였는지 */
+function vfActual(no){
+  if (!SIM || !SIM.events) return { machine:null, co:null, evSec:null };
+  const ev = SIM.events.filter(e => String(e.o) === String(no));
+  if (!ev.length) return { machine:null, co:null, evSec:null };
+  const expEv = ev.find(e => e.n === 'EXP' || e.n === 'RB');
+  const co = {}, sum = {}, cnt = {};
+  for (const e of ev) {
+    co[e.n] = (co[e.n] || 0) + e.co;
+    sum[e.n] = (sum[e.n] || 0) + e.d; cnt[e.n] = (cnt[e.n] || 0) + 1;
+  }
+  const evSec = {}; for (const k in sum) evSec[k] = sum[k] / cnt[k];
+  return { machine: expEv ? expEv.mach : null, co, evSec, pipes: ev.length };
+}
+function openVerify(no){
+  buildVfOrders(no);
+  if ($('vfOrder')) $('vfOrder').value = String(no);
+  goTab('pVf');
+  renderVerify();
+}
+function renderVerify(){
+  const box = $('vfBody'); if(!box) return;
+  if (!CFG) { box.innerHTML = '<div class="note">먼저 「계획 실행」에서 시뮬레이션을 한 번 돌려 주세요.</div>'; return; }
+  const sel = $('vfOrder');
+  if (sel && !sel.options.length) buildVfOrders();
+  const no = sel ? sel.value : null;
+  if (!no) { box.innerHTML = '<div class="note">오더가 없습니다.</div>'; return; }
+  const act = vfActual(no);
+  const mSel = $('vfMach') ? $('vfMach').value : '';
+  const V = verifyOrder(no, CFG, {
+    k: +($('vfK') ? $('vfK').value : 1) || 1,
+    seqGlobal: +($('vfSeq') ? $('vfSeq').value : 1) || 1,
+    machine: mSel || act.machine || null,
+    co: act.co,
+  });
+  if (!V) { box.innerHTML = '<div class="note">해당 오더를 찾을 수 없습니다.</div>'; return; }
+  if ($('vfK')) $('vfK').max = V.qty;
+
+  /* 요약 KPI */
+  const kk=(v,l,cls)=>`<div class="kpi ${cls||''}"><b>${v}</b><span>${esc(l)}</span></div>`;
+  const machLbl = {M1:'#1호기', M2:'#2호기', M3:'#3호기', BOTH:'#1·#2 동시', RB:'R/B 라인'}[V.machine] || V.machine || '—';
+  $('vfSum').innerHTML =
+      kk(`<span style="font-size:15px">OD${V.spec.od} × t${V.spec.t}</span>`, `${(V.spec.L/1000).toFixed(3)}m · ${V.qty}본 · ${V.line} 라인`)
+    + kk(`${(V.totalSec/60).toFixed(1)}분`, `1본 총 표준시간 (${Math.round(V.totalSec).toLocaleString()}초)`)
+    + kk(`<span style="font-size:15px">${esc(V.bottleneck ? V.bottleneck.label.replace(/\n/g,' ') : '—')}</span>`, `최장 공정 ${V.bottleneck?(V.bottleneck.sec/60).toFixed(1):'—'}분`, 'bn')
+    + kk(`<span style="font-size:15px">${esc(machLbl)}</span>`, '확관 배정' + (mSel ? ' (수동 지정)' : act.machine ? ' (시뮬레이션 결과)' : ''))
+    + kk(`${V.steps.length}개`, '통과 공정');
+
+  const rowsHtml = V.steps.map((st, i) => {
+    const params = st.vars.length
+      ? `<table class="vfp">${st.vars.map(v =>
+          `<tr><td>${esc(v[0])}</td><td class="v">${esc(typeof v[1]==='number'?(Number.isInteger(v[1])?v[1].toLocaleString():v[1]):v[1])}</td><td class="src">${esc(v[2]||'')}</td></tr>`).join('')}</table>`
+      : '<div class="vfform">파라미터 없음 (고정 시간)</div>';
+    const calibNote = st.calib ? `<div class="vfwarn">⚠ 실적 보정 계수 ×${st.calib.toFixed(3)} 적용 → ${Math.round(st.sec)} s</div>` : '';
+    const coNote = (st.co ? `<div class="vfwarn" style="color:var(--dim)">이 오더의 설비 전환시간 합계 ${(st.co/60).toFixed(1)}분 (표준시간과 별도로 스케줄에 더해짐)</div>` : '');
+    return `<div class="vfstep">
+      <div class="vfhd"><div class="vfno">${i+1}</div>
+        <div><b>${esc(st.label.replace(/\n/g,' '))}</b>${st.sub?` <span class="vfsub">${esc(st.sub)}</span>`:''}${st.machine?` <span class="vfsub">· ${esc(machLbl)}</span>`:''}</div>
+        <div class="vfsec">${Math.round(st.sec).toLocaleString()} s <span style="font-size:10px;color:var(--dim)">(${(st.sec/60).toFixed(1)}분)</span></div></div>
+      <div class="vfbody">
+        <div class="vfcap">적용 산식</div>
+        <div class="vfform">${esc(st.tpl)}</div>
+        <div class="vfgrid">
+          <div><div class="vfcap">파라미터 값 (이 제품)</div>${params}</div>
+          <div><div class="vfcap">산식 계산</div><div class="vfform res">${esc(st.subst)}</div>
+            ${st.terms && st.terms.length ? `<div class="vfcap" style="margin-top:9px">항목별 분해</div><table class="vfp">${st.terms.map(t=>`<tr><td>${esc(t[0])}</td><td class="v">${typeof t[1]==='number'?Math.round(t[1]).toLocaleString():esc(t[1])} s</td></tr>`).join('')}</table>` : ''}
+            ${calibNote}${coNote}</div>
+        </div>
+      </div></div>`;
+  }).join('');
+
+  /* 시뮬레이션 실측과 대사 */
+  let recon = '';
+  if (act.evSec) {
+    const rows = V.steps.map(st => {
+      const a = act.evSec[st.nid];
+      if (a == null) return '';
+      const d = (a - st.sec) / (st.sec || 1) * 100;
+      return `<tr><td>${esc(st.label.replace(/\n/g,' '))}</td><td class="v">${Math.round(st.sec).toLocaleString()}</td><td class="v">${Math.round(a).toLocaleString()}</td><td class="v" style="color:${Math.abs(d)<0.5?'var(--dim)':'#f0a252'}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
+    }).join('');
+    recon = `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
+        <span class="vfsub">이 오더 ${act.pipes}개 공정 이벤트의 평균 소요 vs 위 산식 결과</span></div>
+      <div class="vfbody"><table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 평균(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>
+      <div class="vfwarn" style="color:var(--dim)">차이가 0% 가 아니면 변동성(로그정규 CV) 또는 실적 보정이 켜져 있다는 뜻입니다. 둘 다 끄면 정확히 일치합니다.</div>
+      </div></div>`;
+  }
+
+  box.innerHTML = `<div class="note" style="margin:0 0 12px">
+      <b>${esc(V.no)}</b> · 오더 내 <b>${V.k}번째 본</b> (전역 누적 ${V.seqGlobal}본째) 기준입니다.
+      표준시간은 <b>가동률을 고려하지 않은 Net Time</b>이며, 설비 전환시간·대기시간은 여기에 포함되지 않습니다.
+    </div>${rowsHtml}${recon}`;
 }
 
 /* ================= 병목 분석 ================= */
@@ -6096,6 +6468,7 @@ function boot(){
   }
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
+  ['vfOrder','vfK','vfSeq','vfMach'].forEach(id=>{ if($(id)) $(id).addEventListener('change', renderVerify); });
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
   /* ── 공정 흐름 화면 끌어서 이동 · 휠로 확대 (2026-08-14) ── */
   let dragV = null;

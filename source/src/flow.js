@@ -731,6 +731,68 @@ function specOf(o, cfg) {
 }
 
 /* ====================================================================
+   산식 검증 — "어떤 식에 어떤 값이 들어가 이 숫자가 나왔는가"
+   ====================================================================
+   시뮬레이터가 쓴 것과 **똑같은 경로·똑같은 인자**로 STD 를 다시 호출해
+   ① 적용 산식(tpl) ② 파라미터 값(vars) ③ 숫자를 대입한 계산(subst) 을 모아 준다.
+   시뮬레이션 결과(SIM.events)를 opts 로 넘기면 실제 배정 호기·전환시간까지 맞춘다. */
+function verifyOrder(no, cfg, opts) {
+  opts = opts || {};
+  const rows = (typeof ORDERS !== 'undefined' ? ORDERS : []).filter(o => String(o.no) === String(no));
+  if (!rows.length) return null;
+  const o = rows[0];
+  const spec = specOf(o, cfg);
+  const { route, line } = routeOf(spec, cfg);
+  const qty = rows.reduce((a, x) => a + x.qty, 0);
+  const k = Math.max(1, Math.min(qty, Math.round(opts.k || 1)));          // 오더 내 본 번호
+  const seqGlobal = opts.seqGlobal != null ? opts.seqGlobal : k;          // 전역 순번(포장 10본마다)
+  /* 확관 호기 — 시뮬레이션이 실제로 배정한 호기를 그대로 쓴다 */
+  let machine = opts.machine || null;
+  if (!machine) {
+    const em = expanderMode(spec, cfg);
+    machine = em.mode === 'BOTH' ? 'BOTH' : (em.list && em.list[0]) || 'M2';
+    if (useRBLine(spec, cfg)) machine = 'RB';
+  }
+  const freeSecOf = (nid) => nid === 'RP' ? STOCH_DEFAULT.repairSec : nid === 'RW' ? STOCH_DEFAULT.reweldSec
+                           : nid === 'EP' ? STOCH_DEFAULT.expIssueSec : (cfg.freeStationSec || 0);
+  const steps = [];
+  for (const nid of route) {
+    const n = NODE[nid];
+    if (!n || n.kind === 'buf' || n.kind === 'dec') continue;
+    const nspec = n.rtType ? Object.assign({}, spec, { rtType: n.rtType }) : spec;
+    const mach = n.st === 'Expander' ? (n.machine || machine) : null;
+    let res;
+    if (n.free || !n.st) {
+      res = { sec: freeSecOf(nid), tpl: '고정 시간 (표준시간 측정 대상 외)',
+              vars: [['적용 시간(s)', freeSecOf(nid), '설정 — 고정 스테이션 시간']],
+              subst: `${freeSecOf(nid)} = ${freeSecOf(nid)} s`, terms: [] };
+    } else if (n.st === 'Expander') {
+      res = STD.Expander(nspec, mach === 'M3' ? 'M2' : mach, cfg);
+    } else {
+      res = STD[n.st](nspec, line, seqGlobal, k);
+    }
+    const calib = (cfg.stdCalib && n.st && cfg.stdCalib[n.st] > 0) ? cfg.stdCalib[n.st] : null;
+    steps.push({
+      nid, label: n.label, sub: n.sub || '', st: n.st || null, machine: mach,
+      free: !!n.free || !n.st,
+      stdSec: res.sec,
+      sec: calib ? res.sec * calib : res.sec,
+      calib,
+      tpl: res.tpl || res.expr || '—',
+      vars: res.vars || [],
+      subst: res.subst || `= ${Math.round(res.sec)} s`,
+      expr: res.expr || '',
+      terms: res.terms || [],
+      co: opts.co && opts.co[nid] != null ? opts.co[nid] : null,
+    });
+  }
+  const totalStd = steps.reduce((a, x) => a + x.stdSec, 0);
+  const totalSec = steps.reduce((a, x) => a + x.sec, 0);
+  return { no: o.no, spec, line, route, qty, k, seqGlobal, machine, steps, totalStd, totalSec,
+           bottleneck: steps.reduce((a, x) => (!a || x.sec > a.sec ? x : a), null) };
+}
+
+/* ====================================================================
    확률 변동 (Stochastic) — 매 실행마다 다른 결과
    기본값은 모두 0 이므로 변동성을 끄면 결정론 결과와 완전히 동일하다.
    ==================================================================== */

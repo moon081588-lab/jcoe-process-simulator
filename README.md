@@ -28,10 +28,11 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | 분석 ▾ | 하는 일 |
 |---|---|
 | 병목 분석 | 가공·전환·제약 병목을 나눠서 진단 |
-| 오더 간트 | 오더별 착수~완료 구간 |
+| 오더 간트 | 오더별 착수~완료 구간 · **행을 누르면 산식 검증으로** |
 | 확관 최적화 | 배분 규칙 비교 · 최적화 실행 · 외부 CP-SAT 스케줄 가져오기 |
 | In · Out | 설비별 투입·산출 시각표 |
 | 표준시간 계산기 | 규격을 넣으면 20개 공정 산출식을 항별로 전개 |
+| **산식 검증** | 오더 간트에서 행을 클릭 → 그 오더가 지나는 **모든 공정**의 「적용 산식 → 파라미터 값(출처 포함) → 숫자를 대입한 계산」 |
 | 반복 실행 | 확률 변동을 켜고 여러 번 돌려 분포 확인 |
 | 실적 검증 | MES 실적 로그를 올려 표준시간과 대조 |
 
@@ -534,12 +535,13 @@ python3 source/build.py       # → ./JCOE_Simulator.html  (2D + 3D 한 파일)
 
 WebGL 을 쓸 수 없는 PC 에서는 **3D 탭에만 안내가 뜨고 나머지 기능은 전부 정상 동작**합니다.
 
-### 검증 — 5종
+### 검증 — 6종
 
 ```bash
 node source/tools/verify_formulas.js   # 산출식 20개를 엑셀 원문으로 독립 재계산 (node 만 있으면 됨)
 node source/tools/verify_audit.js      # 전수 감사 회귀 방지 72항목
 node source/tools/verify_prodlog.js    # 실적 로그 파서·추정치
+node source/tools/verify_calc.js       # 「산식 검증」 화면에 찍히는 식을 실제로 계산해 엔진 값과 대조 (288건)
 npm i playwright
 node source/tools/verify_static.js     # 모든 탭을 실제로 열어 id 중복·미존재 참조·콘솔 오류 점검
 node source/tools/verify_ui.js         # 2D·3D 브라우저 통합 (두 화면 결과 일치까지 확인)
@@ -547,6 +549,9 @@ node source/tools/verify_ui.js         # 2D·3D 브라우저 통합 (두 화면 
 
 `verify_formulas.js` 는 **엔진과 독립적으로** 엑셀 산출식을 다시 구현해 대조합니다.
 기준정보에서 값을 안 건드리면 언제나 엑셀과 완전히 같은 값이 나오는지 여기서 보장됩니다.
+
+`verify_calc.js` 는 2026-08-19 에 신설했습니다 — 화면에 찍힌 「산식 계산」 문자열을 **문자 그대로 계산해서**
+엔진이 쓴 값과 같은지 봅니다. 설명과 실제가 따로 노는 것을 원리적으로 막습니다.
 
 `verify_static.js` 는 2026-08-14 에 신설했습니다 — 「3D 가동률이 전부 0%」와
 「설비를 클릭하면 TypeError」가 둘 다 **런타임에 생성된 id 중복** 때문이었는데 눈으로는 안 보였기 때문입니다.
@@ -601,6 +606,7 @@ source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기
 │   ├── verify_formulas.js      산출식 20개를 엑셀 원문으로 독립 재계산 (node)
 │   ├── verify_audit.js         전수 감사 회귀 방지 72항목 (node)
 │   ├── verify_prodlog.js       실적 로그 파서·추정치 (node)
+│   ├── verify_calc.js          「산식 검증」 표기식 ↔ 엔진 값 대조 288건 (node)
 │   ├── verify_static.js        id 중복·미존재 참조·콘솔 오류 (playwright)
 │   ├── verify_ui.js            2D·3D 브라우저 통합 · 두 화면 결과 일치 (playwright)
 │   ├── runsim.js               Node 에서 시뮬레이터를 불러오는 헬퍼

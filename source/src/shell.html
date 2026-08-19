@@ -101,6 +101,33 @@ tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
 .gr:hover{background:#ffffff08}
 .gb{position:absolute;top:5px;height:20px;border-radius:4px;opacity:.9}
 .gb:hover{opacity:1;outline:1px solid #fff}
+.gr{cursor:pointer}
+.gr .gvbtn{flex-shrink:0;width:74px;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:var(--acc);border-right:1px solid var(--ln)}
+.gr:hover .gvbtn{color:#fff;background:#1f6feb}
+.ghdr .gvbtn{color:var(--dim)}
+/* ---------- 산식 검증 ---------- */
+#vfBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:14px}
+#vfBar .f{display:flex;flex-direction:column;gap:4px}
+#vfBar label{font-size:10px;color:var(--dim)}
+#vfBar select,#vfBar input{background:#0d1117;color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:5px 8px;font-size:12px}
+.vfstep{background:var(--pnl);border:1px solid var(--ln);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.vfhd{display:flex;align-items:center;gap:10px;padding:9px 14px;background:#0f141a;border-bottom:1px solid var(--ln)}
+.vfhd b{font-size:12.5px;color:#fff}
+.vfhd .vfno{width:22px;height:22px;border-radius:50%;background:#1f6feb;color:#fff;font-size:10.5px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.vfhd .vfsec{margin-left:auto;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums}
+.vfhd .vfsub{font-size:10px;color:var(--dim)}
+.vfbody{padding:12px 14px}
+.vfcap{font-size:10.5px;color:var(--dim);font-weight:600;margin:0 0 5px}
+.vfform{background:#0d1117;border:1px solid var(--ln);border-radius:7px;padding:9px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.6;color:#d2e3f7;word-break:break-all;white-space:pre-wrap}
+.vfform.res{color:#7ee787;border-color:#2ea04355}
+.vfgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+@media (max-width:1100px){ .vfgrid{grid-template-columns:1fr} }
+table.vfp{width:100%;border-collapse:collapse;font-size:11.5px}
+table.vfp td{padding:4px 8px;border-bottom:1px solid #21262d}
+table.vfp td:first-child{color:var(--dim);width:44%}
+table.vfp td.v{text-align:right;font-variant-numeric:tabular-nums;color:#fff;font-weight:600;width:22%}
+table.vfp td.src{font-size:10px;color:var(--dim)}
+.vfwarn{font-size:10.5px;color:#f0a252;margin-top:7px}
 #bnUnits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
 /* ---------- 설정 ---------- */
 #cfgBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:15px}
@@ -297,6 +324,7 @@ details.note .notebody b{color:var(--tx)}
         <div class="tab" data-p="pOpt">확관 최적화</div>
         <div class="tab" data-p="pIO">In · Out</div>
         <div class="tab" data-p="pCalc">표준시간 계산기</div>
+        <div class="tab" data-p="pVf">산식 검증</div>
         <div class="tab" data-p="pMC">반복 실행</div>
         <div class="tab" data-p="pLog">실적 검증</div>
       </div>
@@ -551,7 +579,24 @@ details.note .notebody b{color:var(--tx)}
 
   <!-- ========== 간트 ========== -->
   <section class="pane" id="pGantt"><div class="inner">
-    <h3>오더별 생산 스케줄</h3><div id="gantt"></div>
+    <h3>오더별 생산 스케줄</h3>
+    <div class="hint" style="font-size:10.5px;color:var(--dim);margin:-4px 0 8px">행을 클릭하면 그 오더가 <b>어떤 산식에 어떤 값이 들어가 이 시간이 나왔는지</b>를 「산식 검증」에서 봅니다.</div>
+    <div id="gantt"></div>
+  </div></section>
+
+  <!-- ========== 산식 검증 ========== -->
+  <section class="pane" id="pVf"><div class="inner">
+    <div id="vfBar">
+      <div class="f"><label>오더</label><select id="vfOrder" style="min-width:300px"></select></div>
+      <div class="f"><label>오더 내 본 번호</label><input type="number" id="vfK" value="1" min="1" step="1" style="width:90px"></div>
+      <div class="f"><label>전역 누적 본 번호 <span title="포장의 「10본마다 추가 검사」 판정에 쓰입니다">ⓘ</span></label><input type="number" id="vfSeq" value="1" min="1" step="1" style="width:110px"></div>
+      <div class="f"><label>확관 호기</label><select id="vfMach" style="min-width:190px">
+        <option value="">시뮬레이션 배정 그대로</option>
+        <option value="M1">#1호기</option><option value="M2">#2호기</option>
+        <option value="BOTH">#1·#2 동시</option><option value="RB">R/B 라인</option></select></div>
+    </div>
+    <div class="kpis" id="vfSum"></div>
+    <div id="vfBody"></div>
   </div></section>
 
   <!-- ========== 병목 ========== -->
