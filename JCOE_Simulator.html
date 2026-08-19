@@ -33,7 +33,15 @@ main{flex:1;position:relative;overflow:hidden}
 .lgnd i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:3px}
 #flowbody{flex:1;display:grid;grid-template-columns:1fr 250px;grid-template-rows:1fr 128px;overflow:hidden;min-height:0}
 #cvwrap{position:relative;overflow:hidden;background:var(--bg)}
-#cv{display:block}
+#cv{display:block;cursor:grab;touch-action:none}
+#cvctl{position:absolute;right:12px;top:10px;display:flex;align-items:center;gap:7px;
+  background:#0a0e15c0;border:1px solid var(--ln);border-radius:7px;padding:4px 8px;font-size:11px;color:var(--dim)}
+#cvctl button{background:#21262d;border:1px solid var(--ln);color:var(--dim);border-radius:5px;
+  padding:2px 8px;font-size:11px;cursor:pointer}
+#cvctl button:hover{color:var(--tx);border-color:var(--acc)}
+#cvZoom{font-variant-numeric:tabular-nums;min-width:34px;text-align:right;color:var(--tx)}
+#cvhint{position:absolute;left:12px;bottom:10px;font-size:10.5px;color:#6e7a8c;
+  background:#0a0e15b0;padding:4px 9px;border-radius:6px;pointer-events:none}
 #side{background:var(--pnl);border-left:1px solid var(--ln);overflow-y:auto;padding:12px}
 #side h2{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:9px}
 .sr{display:flex;align-items:center;gap:5px;margin-bottom:5px}
@@ -134,7 +142,6 @@ h3 .sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:8px}
 /* ---- 계획 실행 위저드 ---- */
 .wizhero{display:flex;gap:18px;justify-content:space-between;align-items:center;flex-wrap:wrap;
   background:linear-gradient(90deg,#12233d,#101720);border:1px solid #1f3a5f;border-radius:12px;padding:15px 18px;margin-bottom:14px}
-.wizquote{font-size:11.5px;color:#9fb4cc;line-height:1.75}
 .wizrun{text-align:right;min-width:250px}
 .wizrun button{font-size:14px;padding:11px 22px}
 .wizrun .hint{padding:6px 0 0;max-width:280px;text-align:left;display:inline-block}
@@ -305,8 +312,6 @@ details.note .notebody b{color:var(--tx)}
     <div class="wizhero">
       <div>
         <h3 style="margin:0 0 6px">조관계획서 한 장으로 끝까지 — 업로드 → 최적화 → 시뮬레이션</h3>
-        <div class="wizquote">“최적화 엔진을 한 번 돌리고 거기서 나온 스케줄대로 시뮬레이션에 흘러가게끔 하면 되려나” — 문세희<br>
-          “다른 조관계획서 있으면 파일 업로드 하는 과정 추가해서 다른 계획서에도 흘러볼 수 있게” — 김명건</div>
       </div>
       <div class="wizrun">
         <button id="wizRunAll">▶ 전체 자동 실행</button>
@@ -364,7 +369,14 @@ details.note .notebody b{color:var(--tx)}
       <div id="simClock">--</div>
     </div>
     <div id="flowbody">
-      <div id="cvwrap"><canvas id="cv"></canvas></div>
+      <div id="cvwrap"><canvas id="cv"></canvas>
+        <!-- 화면 이동·확대 안내와 원위치 버튼 (2026-08-14) -->
+        <div id="cvctl">
+          <span id="cvZoom">100%</span>
+          <button id="cvReset" title="원래 배치로">원위치</button>
+        </div>
+        <div id="cvhint">끌기 = 이동 · 휠 = 확대/축소 · 더블클릭 = 원위치</div>
+      </div>
       <div id="side">
         <h2>공정별 가동률 (최근 3일)</h2><div id="statBars"></div>
         <div id="doneCnt">0</div><div id="doneLbl">포장 완료 (본)</div>
@@ -3586,26 +3598,70 @@ function applyCam(){
     cam.tz + cam.dist*cp*Math.sin(cam.yaw));
   camera.lookAt(cam.tx, cam.ty, cam.tz);
 }
+/** 화면 기준 좌우/앞뒤로 시점 이동 (바닥 평면) */
+function panBy(dx, dy){
+  const k = cam.dist * 0.0016 * 0.9;
+  cam.tx -= (dx*Math.sin(cam.yaw) - dy*Math.cos(cam.yaw)) * k;
+  cam.tz += (dx*Math.cos(cam.yaw) + dy*Math.sin(cam.yaw)) * k;
+  applyCam();
+}
+/** 시점 높이(수직) 이동 */
+function liftBy(dy){
+  cam.ty = Math.max(-40, Math.min(80, cam.ty + dy * cam.dist * 0.0016));
+  applyCam();
+}
+function zoomBy(f){
+  cam.dist = Math.max(18, Math.min(260, cam.dist * f)); applyCam();
+}
+
 function initControls(dom){
   let drag=null, px=0, py=0;
-  dom.addEventListener('pointerdown', e=>{ drag = (e.button===2||e.shiftKey)?'pan':'orbit'; px=e.clientX; py=e.clientY; dom.setPointerCapture(e.pointerId); });
-  dom.addEventListener('pointerup',   e=>{ drag=null; try{dom.releasePointerCapture(e.pointerId);}catch(_){} });
+  dom.addEventListener('pointerdown', e=>{
+    /* 이동 방법을 늘렸다. 종전에는 **우클릭 또는 Shift 드래그뿐**이라
+       화면이 고정된 것처럼 느껴졌다. (2026-08-14)
+         왼쪽  = 회전 · 가운데/오른쪽/Shift = 이동 · Ctrl = 높이 */
+    drag = (e.button===1 || e.button===2 || e.shiftKey) ? 'pan'
+         : (e.ctrlKey || e.altKey) ? 'lift' : 'orbit';
+    px=e.clientX; py=e.clientY;
+    dom.setPointerCapture(e.pointerId);
+    dom.style.cursor = drag==='orbit' ? 'grabbing' : 'move';
+  });
+  const end = e=>{ drag=null; dom.style.cursor='grab';
+    try{dom.releasePointerCapture(e.pointerId);}catch(_){} };
+  dom.addEventListener('pointerup', end);
+  dom.addEventListener('pointercancel', end);
   dom.addEventListener('pointermove', e=>{
     if(!drag) return;
     const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY;
     if(drag==='orbit'){
       cam.yaw += dx*0.006;
       cam.pitch = Math.max(0.08, Math.min(1.52, cam.pitch + dy*0.005));
-    } else {
-      const k=cam.dist*0.0016;
-      cam.tx -= (dx*Math.sin(cam.yaw) - dy*Math.cos(cam.yaw))*k*0.9;
-      cam.tz += (dx*Math.cos(cam.yaw) + dy*Math.sin(cam.yaw))*k*0.9;
-    }
-    applyCam();
+      applyCam();
+    } else if(drag==='lift'){ liftBy(-dy); }
+    else { panBy(dx, dy); }
   });
   dom.addEventListener('wheel', e=>{ e.preventDefault();
-    cam.dist = Math.max(18, Math.min(260, cam.dist * (1 + Math.sign(e.deltaY)*0.09))); applyCam(); }, {passive:false});
+    if(e.shiftKey){ liftBy(-e.deltaY*0.35); return; }      // Shift+휠 = 높이
+    zoomBy(1 + Math.sign(e.deltaY)*0.09);
+  }, {passive:false});
   dom.addEventListener('contextmenu', e=>e.preventDefault());
+  dom.style.cursor='grab';
+  dom.tabIndex = 0;                                        // 방향키를 받으려면 포커스가 필요
+
+  /* 방향키·WASD 로도 움직인다 — 마우스 조작을 모르는 사람도 화면을 옮길 수 있게 */
+  const KEY = { ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1],
+                a:[-1,0], d:[1,0], w:[0,-1], s:[0,1], A:[-1,0], D:[1,0], W:[0,-1], S:[0,1] };
+  dom.addEventListener('keydown', e=>{
+    if(e.key==='PageUp'){ liftBy(60); e.preventDefault(); return; }
+    if(e.key==='PageDown'){ liftBy(-60); e.preventDefault(); return; }
+    if(e.key==='+'||e.key==='='){ zoomBy(1/1.12); e.preventDefault(); return; }
+    if(e.key==='-'||e.key==='_'){ zoomBy(1.12); e.preventDefault(); return; }
+    if(e.key==='0'||e.key==='Home'){ goView('all'); e.preventDefault(); return; }
+    const k = KEY[e.key]; if(!k) return;
+    e.preventDefault();
+    const step = e.shiftKey ? 120 : 45;
+    if(e.ctrlKey) liftBy(-k[1]*step); else panBy(-k[0]*step, -k[1]*step);
+  });
 }
 const VIEWS = {
   all:   {tx:-2,  ty:2, tz:-5,  dist:122, yaw:Math.PI/2, pitch:0.62},
@@ -4436,6 +4492,9 @@ let mounted = false;
 function mount(){
   if(mounted) return true;
   if(!$('gl') || !$('c3d')) return false;
+  if($('hintbar')) $('hintbar').innerHTML =
+    '좌 드래그 <b>회전</b> · 가운데/우 드래그(또는 Shift) <b>이동</b> · Ctrl 드래그 <b>높이</b> · '
+  + '휠 <b>확대</b> · 방향키/WASD <b>이동</b> · 0 <b>원위치</b> · 설비 클릭 <b>상세</b>';
   try {
     buildScene(); buildLogicalCurves(); initBadges(); initControls(renderer.domElement);
   } catch(e){
@@ -4588,13 +4647,45 @@ function runSim() {
 /* ================= 캔버스 ================= */
 const cvs = $('cv'), ctx = cvs.getContext('2d');
 let VW = 1600, VH = 900, scale = 1, offX = 0, offY = 0;
+/* ── 화면 이동·확대 ────────────────────────────────────────────────
+   종전에는 draw() 가 매 프레임 fit() 을 불러 scale·offX·offY 를 다시 계산했기 때문에
+   **끌어도 즉시 원위치로 돌아가** 시점이 완전히 고정돼 있었다.
+   기본 배치(baseScale/baseX/baseY)와 사용자 조작(VIEW)을 나눠서 둘 다 살린다. (2026-08-14) */
+let baseScale = 1, baseX = 0, baseY = 0;
+const VIEW = { z: 1, dx: 0, dy: 0 };
+const VIEW_ZMIN = 0.5, VIEW_ZMAX = 6;
+
+function applyView() {
+  scale = baseScale * VIEW.z;
+  offX = baseX - (VW * (scale - baseScale)) / 2 + VIEW.dx;
+  offY = baseY - (VH * (scale - baseScale)) / 2 + VIEW.dy;
+}
 function fit() {
   const w = cvs.parentElement.clientWidth, h = cvs.parentElement.clientHeight;
-  cvs.width = w * devicePixelRatio; cvs.height = h * devicePixelRatio;
-  cvs.style.width = w + 'px'; cvs.style.height = h + 'px';
-  scale = Math.min(w / VW, h / VH) * 0.97;
-  offX = (w - VW * scale) / 2; offY = (h - VH * scale) / 2;
+  if (cvs.width !== Math.round(w * devicePixelRatio) || cvs.height !== Math.round(h * devicePixelRatio)) {
+    cvs.width = w * devicePixelRatio; cvs.height = h * devicePixelRatio;
+    cvs.style.width = w + 'px'; cvs.style.height = h + 'px';
+  }
+  baseScale = Math.min(w / VW, h / VH) * 0.97;
+  baseX = (w - VW * baseScale) / 2; baseY = (h - VH * baseScale) / 2;
+  applyView();
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+/** 커서 위치를 고정한 채 확대/축소 */
+function viewZoomAt(mx, my, factor) {
+  const z = Math.max(VIEW_ZMIN, Math.min(VIEW_ZMAX, VIEW.z * factor));
+  if (z === VIEW.z) return;
+  const wx = (mx - offX) / scale, wy = (my - offY) / scale;   // 커서 아래 도면 좌표
+  const ns = baseScale * z;
+  VIEW.dx = (mx - wx * ns) - baseX + (VW * (ns - baseScale)) / 2;
+  VIEW.dy = (my - wy * ns) - baseY + (VH * (ns - baseScale)) / 2;
+  VIEW.z = z; applyView(); updateViewHint();
+}
+function viewReset() { VIEW.z = 1; VIEW.dx = 0; VIEW.dy = 0; applyView(); updateViewHint(); }
+function updateViewHint() {
+  const el = $('cvZoom'); if (!el) return;
+  el.textContent = Math.round(VIEW.z * 100) + '%';
+  const r = $('cvReset'); if (r) r.style.opacity = (VIEW.z === 1 && !VIEW.dx && !VIEW.dy) ? .35 : 1;
 }
 const BW = 118, BH = 46, DW = 104, DH = 70;
 function box(n) {
@@ -6006,10 +6097,34 @@ function boot(){
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
+  /* ── 공정 흐름 화면 끌어서 이동 · 휠로 확대 (2026-08-14) ── */
+  let dragV = null;
+  cvs.addEventListener('pointerdown', e=>{
+    if (e.button !== 0 && e.button !== 1) return;
+    dragV = { x:e.clientX, y:e.clientY, moved:false };
+    cvs.setPointerCapture(e.pointerId); cvs.style.cursor='grabbing';
+  });
+  const endDrag = e=>{ if(!dragV) return; dragV=null;
+    try{ cvs.releasePointerCapture(e.pointerId); }catch(_){}
+    cvs.style.cursor = hover?'pointer':'grab'; };
+  cvs.addEventListener('pointerup', endDrag);
+  cvs.addEventListener('pointercancel', endDrag);
   cvs.onmousemove = e=>{ const r=cvs.getBoundingClientRect();
+    if (dragV) {
+      VIEW.dx += e.clientX - dragV.x; VIEW.dy += e.clientY - dragV.y;
+      dragV.x = e.clientX; dragV.y = e.clientY; dragV.moved = true;
+      applyView(); updateViewHint(); return;
+    }
     hover = hitTest(e.clientX-r.left, e.clientY-r.top);
-    cvs.style.cursor = hover?'pointer':'default'; };
+    cvs.style.cursor = hover?'pointer':'grab'; };
   cvs.onmouseleave = ()=>{ hover=null; };
+  cvs.addEventListener('wheel', e=>{ e.preventDefault();
+    const r = cvs.getBoundingClientRect();
+    viewZoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY < 0 ? 1.18 : 1/1.18);
+  }, { passive:false });
+  cvs.addEventListener('dblclick', viewReset);
+  if ($('cvReset')) $('cvReset').onclick = viewReset;
+  updateViewHint();
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); if(window.JCOE3D) JCOE3D.resize(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
   fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod(); initWizard(); initLogTab();

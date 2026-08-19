@@ -72,26 +72,70 @@ function applyCam(){
     cam.tz + cam.dist*cp*Math.sin(cam.yaw));
   camera.lookAt(cam.tx, cam.ty, cam.tz);
 }
+/** 화면 기준 좌우/앞뒤로 시점 이동 (바닥 평면) */
+function panBy(dx, dy){
+  const k = cam.dist * 0.0016 * 0.9;
+  cam.tx -= (dx*Math.sin(cam.yaw) - dy*Math.cos(cam.yaw)) * k;
+  cam.tz += (dx*Math.cos(cam.yaw) + dy*Math.sin(cam.yaw)) * k;
+  applyCam();
+}
+/** 시점 높이(수직) 이동 */
+function liftBy(dy){
+  cam.ty = Math.max(-40, Math.min(80, cam.ty + dy * cam.dist * 0.0016));
+  applyCam();
+}
+function zoomBy(f){
+  cam.dist = Math.max(18, Math.min(260, cam.dist * f)); applyCam();
+}
+
 function initControls(dom){
   let drag=null, px=0, py=0;
-  dom.addEventListener('pointerdown', e=>{ drag = (e.button===2||e.shiftKey)?'pan':'orbit'; px=e.clientX; py=e.clientY; dom.setPointerCapture(e.pointerId); });
-  dom.addEventListener('pointerup',   e=>{ drag=null; try{dom.releasePointerCapture(e.pointerId);}catch(_){} });
+  dom.addEventListener('pointerdown', e=>{
+    /* 이동 방법을 늘렸다. 종전에는 **우클릭 또는 Shift 드래그뿐**이라
+       화면이 고정된 것처럼 느껴졌다. (2026-08-14)
+         왼쪽  = 회전 · 가운데/오른쪽/Shift = 이동 · Ctrl = 높이 */
+    drag = (e.button===1 || e.button===2 || e.shiftKey) ? 'pan'
+         : (e.ctrlKey || e.altKey) ? 'lift' : 'orbit';
+    px=e.clientX; py=e.clientY;
+    dom.setPointerCapture(e.pointerId);
+    dom.style.cursor = drag==='orbit' ? 'grabbing' : 'move';
+  });
+  const end = e=>{ drag=null; dom.style.cursor='grab';
+    try{dom.releasePointerCapture(e.pointerId);}catch(_){} };
+  dom.addEventListener('pointerup', end);
+  dom.addEventListener('pointercancel', end);
   dom.addEventListener('pointermove', e=>{
     if(!drag) return;
     const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY;
     if(drag==='orbit'){
       cam.yaw += dx*0.006;
       cam.pitch = Math.max(0.08, Math.min(1.52, cam.pitch + dy*0.005));
-    } else {
-      const k=cam.dist*0.0016;
-      cam.tx -= (dx*Math.sin(cam.yaw) - dy*Math.cos(cam.yaw))*k*0.9;
-      cam.tz += (dx*Math.cos(cam.yaw) + dy*Math.sin(cam.yaw))*k*0.9;
-    }
-    applyCam();
+      applyCam();
+    } else if(drag==='lift'){ liftBy(-dy); }
+    else { panBy(dx, dy); }
   });
   dom.addEventListener('wheel', e=>{ e.preventDefault();
-    cam.dist = Math.max(18, Math.min(260, cam.dist * (1 + Math.sign(e.deltaY)*0.09))); applyCam(); }, {passive:false});
+    if(e.shiftKey){ liftBy(-e.deltaY*0.35); return; }      // Shift+휠 = 높이
+    zoomBy(1 + Math.sign(e.deltaY)*0.09);
+  }, {passive:false});
   dom.addEventListener('contextmenu', e=>e.preventDefault());
+  dom.style.cursor='grab';
+  dom.tabIndex = 0;                                        // 방향키를 받으려면 포커스가 필요
+
+  /* 방향키·WASD 로도 움직인다 — 마우스 조작을 모르는 사람도 화면을 옮길 수 있게 */
+  const KEY = { ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1],
+                a:[-1,0], d:[1,0], w:[0,-1], s:[0,1], A:[-1,0], D:[1,0], W:[0,-1], S:[0,1] };
+  dom.addEventListener('keydown', e=>{
+    if(e.key==='PageUp'){ liftBy(60); e.preventDefault(); return; }
+    if(e.key==='PageDown'){ liftBy(-60); e.preventDefault(); return; }
+    if(e.key==='+'||e.key==='='){ zoomBy(1/1.12); e.preventDefault(); return; }
+    if(e.key==='-'||e.key==='_'){ zoomBy(1.12); e.preventDefault(); return; }
+    if(e.key==='0'||e.key==='Home'){ goView('all'); e.preventDefault(); return; }
+    const k = KEY[e.key]; if(!k) return;
+    e.preventDefault();
+    const step = e.shiftKey ? 120 : 45;
+    if(e.ctrlKey) liftBy(-k[1]*step); else panBy(-k[0]*step, -k[1]*step);
+  });
 }
 const VIEWS = {
   all:   {tx:-2,  ty:2, tz:-5,  dist:122, yaw:Math.PI/2, pitch:0.62},
@@ -922,6 +966,9 @@ let mounted = false;
 function mount(){
   if(mounted) return true;
   if(!$('gl') || !$('c3d')) return false;
+  if($('hintbar')) $('hintbar').innerHTML =
+    '좌 드래그 <b>회전</b> · 가운데/우 드래그(또는 Shift) <b>이동</b> · Ctrl 드래그 <b>높이</b> · '
+  + '휠 <b>확대</b> · 방향키/WASD <b>이동</b> · 0 <b>원위치</b> · 설비 클릭 <b>상세</b>';
   try {
     buildScene(); buildLogicalCurves(); initBadges(); initControls(renderer.domElement);
   } catch(e){

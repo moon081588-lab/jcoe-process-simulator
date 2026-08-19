@@ -114,13 +114,45 @@ function runSim() {
 /* ================= 캔버스 ================= */
 const cvs = $('cv'), ctx = cvs.getContext('2d');
 let VW = 1600, VH = 900, scale = 1, offX = 0, offY = 0;
+/* ── 화면 이동·확대 ────────────────────────────────────────────────
+   종전에는 draw() 가 매 프레임 fit() 을 불러 scale·offX·offY 를 다시 계산했기 때문에
+   **끌어도 즉시 원위치로 돌아가** 시점이 완전히 고정돼 있었다.
+   기본 배치(baseScale/baseX/baseY)와 사용자 조작(VIEW)을 나눠서 둘 다 살린다. (2026-08-14) */
+let baseScale = 1, baseX = 0, baseY = 0;
+const VIEW = { z: 1, dx: 0, dy: 0 };
+const VIEW_ZMIN = 0.5, VIEW_ZMAX = 6;
+
+function applyView() {
+  scale = baseScale * VIEW.z;
+  offX = baseX - (VW * (scale - baseScale)) / 2 + VIEW.dx;
+  offY = baseY - (VH * (scale - baseScale)) / 2 + VIEW.dy;
+}
 function fit() {
   const w = cvs.parentElement.clientWidth, h = cvs.parentElement.clientHeight;
-  cvs.width = w * devicePixelRatio; cvs.height = h * devicePixelRatio;
-  cvs.style.width = w + 'px'; cvs.style.height = h + 'px';
-  scale = Math.min(w / VW, h / VH) * 0.97;
-  offX = (w - VW * scale) / 2; offY = (h - VH * scale) / 2;
+  if (cvs.width !== Math.round(w * devicePixelRatio) || cvs.height !== Math.round(h * devicePixelRatio)) {
+    cvs.width = w * devicePixelRatio; cvs.height = h * devicePixelRatio;
+    cvs.style.width = w + 'px'; cvs.style.height = h + 'px';
+  }
+  baseScale = Math.min(w / VW, h / VH) * 0.97;
+  baseX = (w - VW * baseScale) / 2; baseY = (h - VH * baseScale) / 2;
+  applyView();
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+/** 커서 위치를 고정한 채 확대/축소 */
+function viewZoomAt(mx, my, factor) {
+  const z = Math.max(VIEW_ZMIN, Math.min(VIEW_ZMAX, VIEW.z * factor));
+  if (z === VIEW.z) return;
+  const wx = (mx - offX) / scale, wy = (my - offY) / scale;   // 커서 아래 도면 좌표
+  const ns = baseScale * z;
+  VIEW.dx = (mx - wx * ns) - baseX + (VW * (ns - baseScale)) / 2;
+  VIEW.dy = (my - wy * ns) - baseY + (VH * (ns - baseScale)) / 2;
+  VIEW.z = z; applyView(); updateViewHint();
+}
+function viewReset() { VIEW.z = 1; VIEW.dx = 0; VIEW.dy = 0; applyView(); updateViewHint(); }
+function updateViewHint() {
+  const el = $('cvZoom'); if (!el) return;
+  el.textContent = Math.round(VIEW.z * 100) + '%';
+  const r = $('cvReset'); if (r) r.style.opacity = (VIEW.z === 1 && !VIEW.dx && !VIEW.dy) ? .35 : 1;
 }
 const BW = 118, BH = 46, DW = 104, DH = 70;
 function box(n) {
@@ -1532,10 +1564,34 @@ function boot(){
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
+  /* ── 공정 흐름 화면 끌어서 이동 · 휠로 확대 (2026-08-14) ── */
+  let dragV = null;
+  cvs.addEventListener('pointerdown', e=>{
+    if (e.button !== 0 && e.button !== 1) return;
+    dragV = { x:e.clientX, y:e.clientY, moved:false };
+    cvs.setPointerCapture(e.pointerId); cvs.style.cursor='grabbing';
+  });
+  const endDrag = e=>{ if(!dragV) return; dragV=null;
+    try{ cvs.releasePointerCapture(e.pointerId); }catch(_){}
+    cvs.style.cursor = hover?'pointer':'grab'; };
+  cvs.addEventListener('pointerup', endDrag);
+  cvs.addEventListener('pointercancel', endDrag);
   cvs.onmousemove = e=>{ const r=cvs.getBoundingClientRect();
+    if (dragV) {
+      VIEW.dx += e.clientX - dragV.x; VIEW.dy += e.clientY - dragV.y;
+      dragV.x = e.clientX; dragV.y = e.clientY; dragV.moved = true;
+      applyView(); updateViewHint(); return;
+    }
     hover = hitTest(e.clientX-r.left, e.clientY-r.top);
-    cvs.style.cursor = hover?'pointer':'default'; };
+    cvs.style.cursor = hover?'pointer':'grab'; };
   cvs.onmouseleave = ()=>{ hover=null; };
+  cvs.addEventListener('wheel', e=>{ e.preventDefault();
+    const r = cvs.getBoundingClientRect();
+    viewZoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY < 0 ? 1.18 : 1/1.18);
+  }, { passive:false });
+  cvs.addEventListener('dblclick', viewReset);
+  if ($('cvReset')) $('cvReset').onclick = viewReset;
+  updateViewHint();
   window.onresize=()=>{ fit(); if(SIM) renderGantt(); if(window.JCOE3D) JCOE3D.resize(); };
   for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
   fit(); buildEdgeCache(); initOptTab(); initPlanLoader(); initMCTab(); initPeriod(); initWizard(); initLogTab();

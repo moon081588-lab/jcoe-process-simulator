@@ -58,6 +58,26 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
       n:document.getElementById('cfgExpN').value})));
   console.log('2D errors:', e2.slice(0,6)); if(e2.length) fail++;
   await p.evaluate(() => goTab('pFlow')); await p.waitForTimeout(400);
+  /* 화면 이동·확대 — 2026-08-14 이전에는 draw() 가 매 프레임 fit() 을 불러
+     끌어도 즉시 원위치라 시점이 완전히 고정돼 있었다. */
+  await p.evaluate(() => goTab('pFlow')); await p.waitForTimeout(400);
+  const cvb = await p.$eval('#cv', e => { const r = e.getBoundingClientRect();
+    return { x:r.x, y:r.y, w:r.width, h:r.height }; });
+  await p.mouse.move(cvb.x + cvb.w*0.4, cvb.y + cvb.h*0.4); await p.mouse.down();
+  await p.mouse.move(cvb.x + cvb.w*0.6, cvb.y + cvb.h*0.6, { steps:6 }); await p.mouse.up();
+  await p.waitForTimeout(250);
+  const panned = await p.evaluate(() => ({ dx: Math.round(VIEW.dx), dy: Math.round(VIEW.dy) }));
+  console.log('2D 끌어서 이동:', JSON.stringify(panned));
+  if (!(panned.dx > 20 && panned.dy > 20)) { console.log('  FAIL: 2D 화면이 끌리지 않는다'); fail++; }
+  await p.mouse.move(cvb.x + cvb.w*0.4, cvb.y + cvb.h*0.4);
+  await p.mouse.wheel(0, -400); await p.waitForTimeout(250);
+  const zoomed = await p.evaluate(() => +VIEW.z.toFixed(2));
+  console.log('2D 휠 확대:', zoomed);
+  if (!(zoomed > 1.05)) { console.log('  FAIL: 2D 휠 확대가 안 된다'); fail++; }
+  await p.evaluate(() => viewReset());
+  const reset = await p.evaluate(() => VIEW.z === 1 && !VIEW.dx && !VIEW.dy);
+  if (!reset) { console.log('  FAIL: 2D 원위치가 안 된다'); fail++; }
+
   await p.screenshot({path:'/tmp/v_2d.png'});
   await p.close();
   // ---- 3D 공장 탭 (2026-08-14 부터 같은 파일 안에 있다) ----
