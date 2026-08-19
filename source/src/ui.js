@@ -798,7 +798,7 @@ function renderRuleDiff(){
   if($('eligOk')) $('eligOk').innerHTML = cur === 'ortools'
     ? `<b>확관 최적화 운영 모델(specs.py) 기준 — 정본</b>을 적용 중입니다. #2호기 상한 ${R.L2}m, #1호기 상한 ${R.L1}m,
        외경 48"↑/22"↓ 는 #2호기 전용(hard), RB 는 다이표 외경(24"~48") · 두께 9~25.4mm.<br>
-       <b>12.802m 제품은 #1·#2호기 모두 투입 가능</b>합니다 — 세아제강 실제 생산 로그에서 Expander #2호기 작업 이력이 확인되었습니다(2026-08-06 김명건님).`
+       <b>12.802m 제품은 #1·#2호기 모두 투입 가능</b>합니다 — 세아제강 실제 생산 로그에서 Expander #2호기 작업 이력이 확인되었습니다 (2026-08-06 세아제강 확인).`
     : `<b>구버전(PPT 공정 다이어그램 · 제약표) 기준</b>으로 보고 있습니다 — 대조용입니다.
        이 기준에서는 <b>${R.L2}m 초과 ~ ${R.L1}m 제품이 #1호기 전용</b>("Only #1 Expander 가동")이 되는데,
        실제 로그에서는 12.802m 제품이 #2호기에서 생산된 이력이 있어 <b>현장과 맞지 않습니다.</b>`;
@@ -806,9 +806,9 @@ function renderRuleDiff(){
   const row=(lbl,ka)=>`<tr><td>${lbl}</td><td class="num">${a[ka].toLocaleString()}</td><td class="num">${b[ka].toLocaleString()}</td></tr>`;
   el.innerHTML=`<div class="${cur==='ortools'?'ok':'warn'}" style="margin-bottom:10px">
     <b>확관 제약 — 정본 확정 (2026-08-06 세아제강 피드백)</b>
-    <div style="margin-top:6px">문세희님 — “PPT 자료와 ortools 안의 <code>specs.py</code> 사이에 간극이 있다면 <b>specs.py 가 맞습니다.</b>
-      PPT 제작 이후에 계속 수정사항이 있었고, PPT 에는 생략된 내용도 있습니다.”<br>
-      김명건님 — “12.802m → 1·2호기. 실제 로그를 확인해보니 <b>Expander 2호기에서 만든 로그가 있어</b> ortools 파일 기준으로 보시면 됩니다.”</div>
+    <div style="margin-top:6px">PPT 자료와 운영 모델(ortools) 안의 <code>specs.py</code> 가 다르면 <b>specs.py 가 정본</b>입니다
+      (PPT 제작 이후 계속 수정됐고, PPT 에는 생략된 내용도 있습니다).<br>
+      12.802m 제품은 <b>#1·#2호기 모두 투입 가능</b>합니다 — 실제 생산 로그에 Expander #2호기 이력이 있습니다.</div>
     <table style="margin-top:8px"><thead><tr><th>항목</th><th>PPT 다이어그램·제약표 (구버전)</th><th>운영 모델 specs.py (정본)</th></tr></thead><tbody>
       <tr><td>#2호기 길이 상한</td><td>12.8m 이상 불가</td><td class="hi2">12.8384m 초과 불가</td></tr>
       <tr><td>#1호기 길이 상한</td><td>14m 이상 불가</td><td>14.021m 초과 불가</td></tr>

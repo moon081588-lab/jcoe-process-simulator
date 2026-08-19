@@ -51,7 +51,7 @@ const NODES = [
      2026-08-06 : 설비 화면상 R/B 라인에는 수압·2차 U.T 설비가 없어 건너뛰도록 두었다.
      2026-08-14 : 세아제강 회신 — "R/B 라인도 원래의 방식 그대로 수압 Test 와 2차 U.T 를
                   통과한다고 진행" → **본류 설비(HY106·UT110)를 공유**하도록 기본값을 바꾼다.
-                  (설비 실사 결과는 세희 님 복귀 후 재확인 예정 → cfg.rbPost='dedicated' 로 구 동작 복원) */
+                  (설비 실사 결과는 세아제강 재확인 예정 → cfg.rbPost='dedicated' 로 구 동작 복원) */
   { id:'RBEF',  label:'R/B 면취', sub:'FC112', st:'EndFacing', kind:'proc', x:912, y:600, cap:1 },
   { id:'RBRT',  label:'R/B RT',  sub:'RT104', st:'RT', rtType:'450kV', kind:'proc', x:912, y:700, cap:1 },
   { id:'PACKRB',label:'배척 포장', sub:'PK112', st:'Packing', kind:'proc', x:912, y:800, cap:1 },
@@ -277,11 +277,10 @@ const EXP_MACHINES = [
 /* --------------------------------------------------------------------
    확관 제약 기준 (RULESET)
 
-   ★ 2026-08-06 확정 (세아제강 피드백)
-     · 문세희 — "PPT 자료랑 ortools 안의 specs.py 사이에 간극이 있다면 specs.py 가 맞습니다.
-                 PPT 제작 이후에 계속 수정사항이 있었고, PPT 에는 생략된 내용도 있습니다."
-     · 김명건 — "12.802m → 1·2호기, 실제 로그 확인해보니 Expander 2호기에서 만든 로그가 있어
-                 ortools 파일 기준으로 보시면 됩니다."
+   ★ 2026-08-06 세아제강 확정
+     · PPT 자료와 운영 모델(ortools) 안의 specs.py 가 다르면 specs.py 가 정본이다.
+       (PPT 제작 이후 계속 수정됐고, PPT 에는 생략된 내용도 있음)
+     · 12.802m 제품은 #1·#2호기 모두 투입 가능 — 실제 생산 로그에 Expander #2호기 이력이 있다.
    ⇒ 정본은 'ortools'(운영 모델). 'ppt' 는 대조용으로만 남긴다.
 
      'ortools' : 확관 공정 최적화 운영 모델 (specs.py / optimizer_grouped.py) — 기본값
