@@ -49,9 +49,10 @@ function literalIds(file, prefix = '') {
   await p.waitForTimeout(3000);
 
   /* 모든 탭을 한 번씩 열어 패널을 전부 그린다 */
-  const tabs = await p.$$eval('.tab', ts => ts.map(t => t.dataset.p));
+  const tabs = await p.$$eval('.tab[data-p]', ts => ts.map(t => t.dataset.p));
   for (const t of tabs) {
-    await p.click(`.tab[data-p="${t}"]`);
+    /* 「분석 ▾」 드롭다운 안의 탭은 숨어 있으므로 goTab() 으로 연다 */
+    await p.evaluate(id => goTab(id), t);
     await p.waitForTimeout(t === 'p3D' ? 3500 : 500);
   }
   /* 실적 로그도 올려서 그 탭의 표까지 그린다 */
@@ -89,6 +90,21 @@ function literalIds(file, prefix = '') {
   const missing = [...want].filter(id => !have.has(id) && !dynamic.test(id));
   ok('② 소스가 참조하는 id 가 모두 존재한다', missing.length === 0,
      missing.length ? missing.join(', ') : `${want.size}개 참조 확인`);
+
+  /* ---- ④ 화면 밀도 (2026-08-14 UI 정리) ------------------------------ */
+  const dens = await p.evaluate(() => ({
+    보이는탭: [...document.querySelectorAll('.tabs > .tab, .tabs > .tabmore > .tab')].length,
+    설명박스: document.querySelectorAll('details.note').length,
+    펼쳐진설명: document.querySelectorAll('details.note[open]').length,
+    kpi: (document.getElementById('kpibar') || {}).children ?
+         document.getElementById('kpibar').children.length : 0,
+    kpi첫값: (document.querySelector('#kpibar .k b') || {}).textContent || '',
+  }));
+  ok('④ 탭 바에 보이는 항목이 6개 이하', dens.보이는탭 <= 6, `${dens.보이는탭}개`);
+  ok('④ 설명 박스가 기본 접힘', dens.펼쳐진설명 === 0,
+     `${dens.설명박스}개 중 펼쳐짐 ${dens.펼쳐진설명}개`);
+  ok('④ 결과 요약바가 채워져 있다', dens.kpi >= 4 && /\d/.test(dens.kpi첫값),
+     `${dens.kpi}칸 · 첫 값 "${dens.kpi첫값}"`);
 
   /* ---- ③ 콘솔 오류 --------------------------------------------------- */
   ok('③ 콘솔 오류·미처리 예외 없음', errs.length === 0, errs.slice(0, 5).join(' | '));

@@ -87,11 +87,11 @@ function runSim() {
   SIM = simulate(ORDERS, CFG);
   SIM.events.sort((a,b)=>a.s-b.s);
   SIM.byR = SIM.events.slice().sort((a,b)=>a.r-b.r);
+  /* 핵심 수치는 헤더 아래 요약바(renderKpiBar)가 크게 보여준다.
+     여기는 기간·계산시간 같은 부가 정보만 남긴다. (2026-08-14) */
   $('simInfo').textContent =
-    `${ORDERS.length}오더 / ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본 · `
-    + `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} (${(SIM.horizonH/24).toFixed(1)}일) · ${(performance.now()-t).toFixed(0)}ms`
-    + (PLAN_SRC ? ` · ${PLAN_SRC}` : '')
-    + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed} · 재작업 ${SIM.kpi.rework}본` : '')
+    `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} · ${(performance.now()-t).toFixed(0)}ms`
+    + (SIM.kpi.stochOn ? ` · 재작업 ${SIM.kpi.rework}본` : '')
     + (SIM.kpi.deadline ? ` · 마감 ${CFG.deadline} 달성률 ${pct(SIM.kpi.doneInPeriod, SIM.kpi.doneInPeriod+SIM.kpi.overflow)}` : '')
     + (CALIB ? ` · 실적 보정 ON` : '')
     /* 라우트 상한에 걸려 완주하지 못한 본수 — 종전에는 조용히 사라졌다 */
@@ -100,6 +100,7 @@ function runSim() {
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
+  renderKpiBar();
   if($('refKpi')) renderRefKpi();
   /* 3D 탭이 이미 떠 있으면 같은 결과로 갱신 — 두 화면이 어긋나지 않게 한다 */
   if (window.JCOE3D && JCOE3D.isMounted()) JCOE3D.update(SIM, CFG, PLAN_SRC);
@@ -992,10 +993,10 @@ function renderBottleneck(){
     const ty = bnType(x);
     return `<tr class="${x.util>=80?'hi':x.util>=55?'mid':''}">
       <td>${x.label.replace('\n',' ')}</td>
-      <td class="num">${x.cap}</td><td class="num">${x.jobs.toLocaleString()}</td>
-      <td class="num">${x.busyH.toFixed(1)}</td>
-      <td class="num ${x.setupH>10?'hi2':''}">${x.setupH.toFixed(1)}</td>
-      <td class="num ${x.setupShare>=15?'hi2':''}">${x.setupShare.toFixed(1)}%</td>
+      <td class="num">${x.cap}</td><td class="num adv">${x.jobs.toLocaleString()}</td>
+      <td class="num adv">${x.busyH.toFixed(1)}</td>
+      <td class="num adv ${x.setupH>10?'hi2':''}">${x.setupH.toFixed(1)}</td>
+      <td class="num adv ${x.setupShare>=15?'hi2':''}">${x.setupShare.toFixed(1)}%</td>
       <td class="bar"><div style="width:${Math.min(100,x.util/max*100)}%;background:${x.util>=80?C.bneck:x.util>=55?C.setup:C.done}"></div></td>
       <td class="num"><b>${x.util.toFixed(1)}%</b>${x.cap>1?`<br><span style="color:#6e7681;font-size:9.5px">${x.unitUtil.map(v=>v.toFixed(0)+'%').join(' / ')}</span>`:''}</td>
       <td><span class="tag" style="background:${ty.c};color:#fff">${ty.t}</span></td></tr>`;
@@ -1011,8 +1012,7 @@ function renderBottleneck(){
     <div class="kpi bn"><b>${top.label.replace('\n',' ')}</b><span>가공 병목 · 대당 가동률 ${top.util.toFixed(1)}%</span></div>
     ${setupTop?`<div class="kpi" style="border-color:#d2992266;background:#d2992214"><b style="color:#e3b341">${setupTop.label.replace('\n',' ')}</b><span>전환 병목 · ${setupTop.setupH.toFixed(1)}h (전체 전환의 ${pct(setupTop.setupH, totSetup)})</span></div>`:''}
     ${eligTop?`<div class="kpi" style="border-color:#8957e566;background:#8957e514"><b style="color:#a77bff">${eligTop.label.replace('\n',' ')}</b><span>제약 병목 · 호기 편차 ${eligTop.imbalance.toFixed(0)}%p</span></div>`:'<div class="kpi"><b>없음</b><span>제약 병목 — 호기 편중이 유의하지 않습니다</span></div>'}
-    <div class="kpi"><b>${totSetup.toFixed(0)} h</b><span>총 설비 전환 시간</span></div>
-    <div class="kpi"><b>${(SIM.horizonH/24).toFixed(1)} 일</b><span>전체 계획 소요</span></div>`;
+    <div class="kpi"><b>${totSetup.toFixed(0)} h</b><span>총 설비 전환 시간</span></div>`;
 
   /* 대표 규격 1본 유효 CT 를 실제 산출식으로 다시 계산해 보여준다 (고정 문구 금지) */
   const ctSample = () => {
@@ -1042,8 +1042,11 @@ function renderBottleneck(){
     }
     return tot ? `현재 제약 기준에서 단일 호기 전용 물량은 <b>${fixedQ.toLocaleString()}본 (확관 통과분의 ${(fixedQ/tot*100).toFixed(0)}%)</b> 입니다.` : '';
   };
-  $('bnWhy').innerHTML = `<div class="note">
-    <b>병목이 확관 한 곳이 아닌 이유</b> — 성격이 다른 세 가지 병목이 동시에 존재합니다.<br><br>
+  /* 종전에는 이 해설이 항상 펼쳐져 병목 분석 탭 상단 1/3 을 먹었다.
+     한 줄 결론만 보이고 근거는 접는다. (2026-08-14) */
+  $('bnWhy').innerHTML = `<details class="note">
+    <summary>병목은 세 종류 — 가공(${esc(top.label.replace('\n',' '))}) · 전환(${setupTop?esc(setupTop.label.replace('\n',' ')):'—'}) · 제약(호기 편차 ${exp.imbalance.toFixed(0)}%p)<span class="more">왜 그런가요?</span></summary>
+    <div class="notebody">
     <b style="color:#ff7b72">① 가공 병목</b> — <b>${top.label.replace('\n',' ')} ${top.util.toFixed(0)}%</b>.
     1본당 소요가 길고 설비가 ${top.cap}대뿐이라 물리적으로 가장 느립니다.
     ${ctSample()}<br><br>
@@ -1056,7 +1059,8 @@ function renderBottleneck(){
     대수 평균으로 보면 낮아 보이지만 <b>가장 바쁜 호기만 보면 상위권</b>입니다.<br><br>
     정리하면 <b>납기를 좌우하는 것은 포장·슬러그 제거 같은 가공 병목</b>이고,
     <b>확관은 전환·제약 병목</b>이라 개선 수단이 다릅니다. 앞은 설비 증설이나 사이클타임 단축,
-    뒤는 <b>오더 시퀀싱(같은 규격 묶기)과 호기 배분</b>으로 풉니다 — 「확관 최적화」 탭이 그 도구입니다.</div>`;
+    뒤는 <b>오더 시퀀싱(같은 규격 묶기)과 호기 배분</b>으로 풉니다 — 「확관 최적화」 탭이 그 도구입니다.
+    </div></details>`;
 
   $('bnUnits').innerHTML = s.filter(x=>x.cap>1).map(x=>`
     <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap} units)</h4>
@@ -1492,10 +1496,22 @@ function ruleKeys(){ return Object.keys(DISPATCH_RULES).filter(r => r!=='IMPORT'
 /* ================= 부트 ================= */
 const CO_BACKUP = JSON.stringify(CHANGEOVER);
 function boot(){
-  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  /* 「분석 ▾」 드롭다운 열고 닫기 */
+  if($('tabMoreBtn')) $('tabMoreBtn').onclick=(e)=>{ e.stopPropagation(); $('tabMore').classList.toggle('open'); };
+  document.addEventListener('click', e=>{
+    if($('tabMore') && !$('tabMore').contains(e.target)) $('tabMore').classList.remove('open');
+  });
+  document.querySelectorAll('.tab[data-p]').forEach(t=>t.onclick=()=>{
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
     document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));
     t.classList.add('on'); $(t.dataset.p).classList.add('on');
+    /* 드롭다운 안의 탭을 골랐으면 버튼에 그 이름을 띄워 어디 있는지 보이게 한다 */
+    if($('tabMore')){
+      const inMenu = t.closest('.tabmenu');
+      $('tabMoreBtn').textContent = inMenu ? t.textContent : '분석';
+      $('tabMoreBtn').classList.toggle('on', !!inMenu);
+      $('tabMore').classList.remove('open');
+    }
     if (t.dataset.p==='pFlow') fit();
     /* 3D 는 처음 열 때 한 번만 초기화하고(three.js 장면 구성 비용이 크다),
        그 뒤로는 2D 가 계산한 SIM 을 그대로 받아 그린다. */
@@ -1508,6 +1524,11 @@ function boot(){
     for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0}; };
   $('spd').oninput=e=>{ speed=[60,600,3600,18000,86400][+e.target.value]; $('spdL').textContent=
     ['1분/s','10분/s','1시간/s','5시간/s','1일/s'][+e.target.value]; };
+  /* 표의 「자세히」 토글 — 기본은 핵심 열만 (2026-08-14) */
+  if($('bnAdv')){
+    const sync=()=>$('bnTbl').classList.toggle('hideadv', !$('bnAdv').checked);
+    $('bnAdv').onchange=sync; sync();
+  }
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
@@ -1662,6 +1683,26 @@ function refBind() { const q = refInput._pending; refInput._pending = []; q.forE
 function refRebase() {
   if (SIM && refCount() === 0) REF_BASE = { days: SIM.kpi.makespanH / 24, top: SIM.stats[0] && SIM.stats[0].label };
 }
+/* ── 결과 요약바 — 어느 탭에 있든 헤더 아래에 항상 보인다 ──────────────
+   종전에는 완료일·병목이 우상단 11px 회색 글씨에만 있어서, 가장 중요한 숫자가
+   가장 안 보였다. (2026-08-14) */
+function renderKpiBar(){
+  const el=$('kpibar'); if(!el||!SIM) return;
+  const b=SIM.stats[0];
+  const days=SIM.kpi.makespanH/24;
+  const qty=ORDERS.reduce((a,o)=>a+o.qty,0);
+  const util=b?b.util:0;
+  const k=(v,l,cls)=>`<div class="k ${cls||''}"><b>${v}</b><span>${esc(l)}</span></div>`;
+  el.innerHTML =
+      k(days.toFixed(1)+'일', `완료까지 — ${fmtT(SIM.tEnd).slice(0,10)}`)
+    + k(`${esc(b?b.label:'—')} ${util.toFixed(0)}%`, '1위 병목', util>=90?'bn':util>=70?'warn':'')
+    + k(SIM.kpi.expSetupH.toFixed(1)+'h', '확관 전환 손실', SIM.kpi.expSetupH>60?'warn':'')
+    + k(qty.toLocaleString()+'본', `${ORDERS.length}오더`)
+    + (CALIB ? k('ON','실적 보정','warn') : '')
+    + (SIM.kpi.routeAborted ? k(SIM.kpi.routeAborted+'본','⚠ 미완주','bn') : '')
+    + `<div class="k note2">${PLAN_SRC?esc(PLAN_SRC)+' · ':''}${SIM.kpi.stochOn?`변동 seed ${SIM.kpi.seed} · `:''}${esc(DISPATCH_RULES[CFG.dispatchRule]?DISPATCH_RULES[CFG.dispatchRule].label.replace(/\s*\(.*\)/,''):'')}</div>`;
+}
+
 function renderRefKpi() {
   if (!$('refKpi') || !SIM) return;
   refRebase();

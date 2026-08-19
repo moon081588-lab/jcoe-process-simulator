@@ -9,10 +9,11 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   const e2=[]; p.on('pageerror',e=>e2.push(''+e)); p.on('console',m=>{if(m.type()==='error')e2.push(m.text());});
   await p.goto('file://'+path.join(ROOT,'JCOE_Simulator.html'),{waitUntil:'load'});
   await p.waitForTimeout(2200);
+  /* 「분석 ▾」 드롭다운 안의 탭은 숨어 있으므로 goTab() 으로 연다 (2026-08-14 탭 재구성) */
   for (const t of ['pWiz','pFlow','pCalc','pIO','pOpt','pGantt','pBn','pCfg']) {
-    await p.click(`.tab[data-p="${t}"]`); await p.waitForTimeout(350);
+    await p.evaluate(id => goTab(id), t); await p.waitForTimeout(350);
   }
-  await p.click('.tab[data-p="pOpt"]'); await p.waitForTimeout(400);
+  await p.evaluate(() => goTab('pOpt')); await p.waitForTimeout(400);
   console.log('제약 요약:', (await p.textContent('#eligWarn')).trim().replace(/\s+/g,' ').slice(0,150));
   // 확관 3호기 = R/B 라인으로 확정되어 별도 설비 토글은 제거됨 (2026-08-06)
   await p.selectOption('#optRbMode','capable'); await p.waitForTimeout(1200);
@@ -35,7 +36,7 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   const cmpRows = await p.evaluate(()=>document.querySelectorAll('#cmpBody tr').length);
   console.log('  비교표 행수', cmpRows);
   // IO 탭: 호기 필터
-  await p.click('.tab[data-p="pIO"]'); await p.waitForTimeout(400);
+  await p.evaluate(() => goTab('pIO')); await p.waitForTimeout(400);
   await p.selectOption('#ioStation','EXP|1'); await p.selectOption('#ioUnit','pipe'); await p.waitForTimeout(700);
   const ioRows = await p.evaluate(()=>({n:IO_ROWS.length, allM2:IO_ROWS.every(r=>r.u===1&&r.st==='EXP')}));
   console.log('  IO 확관#2호기 행수', ioRows.n, '필터정확', ioRows.allM2);
@@ -43,7 +44,7 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   const csvOk = await p.evaluate(()=>{ try{ ioCsv(); return true; }catch(e){ return String(e); } });
   console.log('  CSV', csvOk);
   // ---- 계획 실행 위저드 (원클릭) ----
-  await p.click('.tab[data-p="pWiz"]'); await p.waitForTimeout(500);
+  await p.evaluate(() => goTab('pWiz')); await p.waitForTimeout(500);
   console.log('  위저드 단계:', (await p.textContent('#wizSteps')).replace(/\s+/g,' ').trim().slice(0,200));
   await p.click('#wizRunAll'); await p.waitForTimeout(2500);
   console.log('  원클릭 후 규칙:', await p.evaluate(()=>({rule:document.getElementById('optRule').value, plan:!!PLAN,
@@ -56,7 +57,7 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   console.log('  기본 제약/N:', await p.evaluate(()=>({rs:document.getElementById('optRuleSet').value,
       n:document.getElementById('cfgExpN').value})));
   console.log('2D errors:', e2.slice(0,6)); if(e2.length) fail++;
-  await p.click('.tab[data-p="pFlow"]'); await p.waitForTimeout(400);
+  await p.evaluate(() => goTab('pFlow')); await p.waitForTimeout(400);
   await p.screenshot({path:'/tmp/v_2d.png'});
   await p.close();
   // ---- 3D 공장 탭 (2026-08-14 부터 같은 파일 안에 있다) ----
@@ -64,7 +65,7 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
   const e3=[]; q.on('pageerror',e=>e3.push(''+e)); q.on('console',m=>{if(m.type()==='error')e3.push(m.text());});
   await q.goto('file://'+path.join(ROOT,'JCOE_Simulator.html'),{waitUntil:'load'});
   await q.waitForTimeout(3000);
-  await q.click('.tab[data-p="p3D"]'); await q.waitForTimeout(4000);
+  await q.evaluate(() => goTab('p3D')); await q.waitForTimeout(4000);
   const mounted = await q.evaluate(()=>window.JCOE3D && JCOE3D.isMounted());
   console.log('3D mount:', mounted); if(!mounted) fail++;
   console.log('3D info:', (await q.textContent('#v3_simInfo')).trim());
@@ -79,11 +80,11 @@ const ROOT = path.resolve(__dirname, '..', '..');   // 저장소 루트 — HTML
 
   /* 2D 에서 조건을 바꾸면 3D 가 **같은 결과**를 받아야 한다.
      종전에는 3D 가 별도 파일에서 자체 시뮬을 돌려 두 화면이 어긋날 수 있었다. */
-  await q.click('.tab[data-p="pCfg"]'); await q.waitForTimeout(300);
+  await q.evaluate(() => goTab('pCfg')); await q.waitForTimeout(300);
   await q.selectOption('#cfgShifts','3');
   await q.click('#btnRun'); await q.waitForTimeout(2500);   // 설정 탭은 「시뮬레이션 실행」을 눌러야 반영된다
   const d2 = await q.evaluate(()=>+(SIM.kpi.makespanH/24).toFixed(2));
-  await q.click('.tab[data-p="p3D"]'); await q.waitForTimeout(1500);
+  await q.evaluate(() => goTab('p3D')); await q.waitForTimeout(1500);
   const t3 = (await q.textContent('#v3_simInfo')).trim();
   const d3 = parseFloat((t3.match(/\(([\d.]+)일\)/)||[])[1]);
   console.log(`3근 전환 — 2D ${d2}일 / 3D ${d3}일`);
