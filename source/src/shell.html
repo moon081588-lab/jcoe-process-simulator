@@ -128,6 +128,13 @@ table.vfp td:first-child{color:var(--dim);width:44%}
 table.vfp td.v{text-align:right;font-variant-numeric:tabular-nums;color:#fff;font-weight:600;width:22%}
 table.vfp td.src{font-size:10px;color:var(--dim)}
 .vfwarn{font-size:10.5px;color:#f0a252;margin-top:7px}
+.vfbtn{background:#21262d;border:1px solid var(--ln);color:var(--acc);border-radius:6px;padding:3px 10px;font-size:10.5px;cursor:pointer;margin-left:auto}
+.vfbtn:hover{background:#1f6feb;color:#fff;border-color:#1f6feb}
+.vfbtn.on{background:#1f6feb;color:#fff;border-color:#1f6feb}
+.vfhd .vfsec{margin-left:10px}
+.vfedbox{margin-top:12px;padding:11px 13px;background:#0d1117;border:1px solid var(--acc);border-radius:8px}
+.vfedbox .refrow i.vfsrc{width:auto;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#vfDirty .vfbtn{margin-left:6px}
 #bnUnits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
 /* ---------- 설정 ---------- */
 #cfgBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:15px}
@@ -714,8 +721,12 @@ details.note .notebody b{color:var(--tx)}
 
     <!-- 룩업 표 -->
     <div class="rpane" id="rTbl">
-      <details class="note"><summary>보기 전용<span class="more">자세히</span></summary><div class="notebody">엑셀에서 뽑아 온 구간 표입니다. 행 수가 많아 <b>보기 전용</b>으로 둡니다 —
-        고쳐야 하면 <code>source/data/tables.json</code> 을 바꾸고 <code>python3 source/build.py</code> 를 돌리십시오.</div></details>
+      <details class="note"><summary>표 값은 「산식 검증」 탭에서 그 자리에서 고칩니다<span class="more">자세히</span></summary><div class="notebody">
+        엑셀에서 뽑아 온 구간 표입니다. 행이 수백 개라 여기서 통째로 펼치면 무엇이 이 제품에 쓰였는지 알 수 없습니다.<br>
+        그래서 <b>「산식 검증」 탭에서 공정 카드의 <code>✎ 편집</code></b> 을 누르면, <b>그 제품이 실제로 짚은 칸</b>만 골라
+        그 자리에서 고칠 수 있게 했습니다 (예: 두께 9.3mm 가 짚은 내면 SAW 속도 한 칸). 고친 칸은 아래에 표시되고
+        <b>내보내기</b> JSON 의 <code>엑셀표재정의</code> 항목에 함께 저장됩니다.<br>
+        표 전체를 갈아 끼우려면 <code>source/data/tables.json</code> 을 바꾸고 <code>python3 source/build.py</code> 를 돌리십시오.</div></details>
 <div class="tblwrap"><table><thead><tr><th>표</th><th>내용</th><th style="text-align:right">행 수</th></tr></thead>
         <tbody id="refTblBody"></tbody></table></div>
     </div>

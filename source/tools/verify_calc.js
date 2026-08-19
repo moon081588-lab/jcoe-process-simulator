@@ -72,6 +72,35 @@ for (const s of SPECS) {
   }
 }
 
+/* ---- 엑셀 표 재정의(「산식 검증」 인라인 편집) 회귀 ---------------------- */
+{
+  const api = new Function('T', engine + '\nreturn { STD, setRefTbl, REF };')(T);
+  const s = SPECS[0];
+  const b = api.STD.PreBender(s, '12M');
+  const cell = b.vars.find(v => v[3] && v[3].key);
+  if (!cell) bad('표 재정의 — 편집 가능한 엑셀 표 칸이 vars 에 없다');
+  else {
+    n++;
+    api.setRefTbl({ [cell[3].key]: cell[3].def * 2 });
+    const c = api.STD.PreBender(s, '12M');
+    if (Math.abs(c.sec - b.sec) < 1e-9) bad(`표 재정의 — ${cell[3].key} 를 2배로 했는데 결과가 안 바뀐다`);
+    const cv = c.vars.find(v => v[0] === cell[0]);
+    if (!cv || Math.abs(cv[1] - cell[3].def * 2) > 1e-9) bad('표 재정의 — 파라미터 표에 새 값이 안 보인다');
+    const e = evalSubst(c.subst);
+    if (e.err || Math.abs(e.v - c.sec) > 1.5) bad(`표 재정의 — 고친 뒤 산식 계산이 엔진 값과 어긋난다 (${e.err || e.v})`);
+    api.setRefTbl({});
+    if (Math.abs(api.STD.PreBender(s, '12M').sec - b.sec) > 1e-9) bad('표 재정의 — 되돌렸는데 원래 값이 아니다');
+    /* 프로토타입 오염 방지 */
+    api.setRefTbl({ __proto__: 9, constructor: 9 });
+    if ({}.__proto__ !== Object.prototype || ({}).constructor !== Object) bad('표 재정의 — 프로토타입이 오염됐다');
+    api.setRefTbl({});
+    /* 숫자가 아닌 값은 무시 */
+    api.setRefTbl({ [cell[3].key]: 'abc' });
+    if (Math.abs(api.STD.PreBender(s, '12M').sec - b.sec) > 1e-9) bad('표 재정의 — 문자열이 값으로 먹혔다');
+    api.setRefTbl({});
+  }
+}
+
 console.log(`\n검사 ${n}건 / 불일치 ${fail}건`);
 console.log(fail ? `\n${fail}건 FAIL` : '\n전 항목 PASS');
 process.exit(fail ? 1 : 0);

@@ -100,7 +100,7 @@ function runSim() {
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
-  buildVfOrders(); if($('vfBody')) renderVerify();
+  buildVfOrders(); if($('vfBody')) renderVerify();   /* 편집 패널이 열려 있으면 숫자만 제자리 갱신된다 */
   renderKpiBar();
   if($('refKpi')) renderRefKpi();
   /* 3D 탭이 이미 떠 있으면 같은 결과로 갱신 — 두 화면이 어긋나지 않게 한다 */
@@ -1047,81 +1047,216 @@ function openVerify(no){
   buildVfOrders(no);
   if ($('vfOrder')) $('vfOrder').value = String(no);
   goTab('pVf');
-  renderVerify();
+  renderVerify(true);
 }
-function renderVerify(){
-  const box = $('vfBody'); if(!box) return;
-  if (!CFG) { box.innerHTML = '<div class="note">먼저 「계획 실행」에서 시뮬레이션을 한 번 돌려 주세요.</div>'; return; }
-  const sel = $('vfOrder');
-  if (sel && !sel.options.length) buildVfOrders();
-  const no = sel ? sel.value : null;
-  if (!no) { box.innerHTML = '<div class="note">오더가 없습니다.</div>'; return; }
-  const act = vfActual(no);
+
+/* 열려 있는 편집 패널 — 값을 고쳐 다시 계산될 때 **카드를 새로 만들지 않기 위해** 기억한다.
+   (기준정보 탭에서 겪은 것과 같은 문제: innerHTML 로 통째로 다시 그리면 방금 누른 입력칸이
+    사라져 두 번째 입력부터 조용히 버려진다. 2026-08-14 전수 감사 ①) */
+const VF_OPEN = new Set();
+let VF_LAST = null;                     // 마지막으로 계산한 verifyOrder 결과
+
+/** 지금 화면에 그려진 카드와 같은 조건으로 다시 계산한다 */
+function vfCompute(){
+  if (!CFG) return null;
+  const sel = $('vfOrder'); if (!sel || !sel.value) return null;
+  const act = vfActual(sel.value);
   const mSel = $('vfMach') ? $('vfMach').value : '';
-  const V = verifyOrder(no, CFG, {
+  const V = verifyOrder(sel.value, CFG, {
     k: +($('vfK') ? $('vfK').value : 1) || 1,
     seqGlobal: +($('vfSeq') ? $('vfSeq').value : 1) || 1,
     machine: mSel || act.machine || null,
     co: act.co,
   });
-  if (!V) { box.innerHTML = '<div class="note">해당 오더를 찾을 수 없습니다.</div>'; return; }
-  if ($('vfK')) $('vfK').max = V.qty;
+  if (V) { V._act = act; V._manualMach = !!mSel; }
+  return V;
+}
+const VF_MACH_LBL = {M1:'#1호기', M2:'#2호기', M3:'#3호기', BOTH:'#1·#2 동시', RB:'R/B 라인'};
 
-  /* 요약 KPI */
+/* ---- 조각 렌더러 — 전체 다시 그리기와 제자리 갱신이 **같은 함수**를 쓴다 ---- */
+function vfParamRows(st){
+  if (!st.vars.length) return '<tr><td colspan="3" style="color:var(--dim)">파라미터 없음 (고정 시간)</td></tr>';
+  return st.vars.map(v => {
+    const ed = v[3];
+    const num = typeof v[1] === 'number' ? (Number.isInteger(v[1]) ? v[1].toLocaleString() : v[1]) : v[1];
+    const chg = ed && ed.key && REF_EDIT.tbl[ed.key] != null;
+    return `<tr><td>${esc(v[0])}</td>
+      <td class="v"${chg ? ' style="color:#e3b341"' : ''}>${esc(num)}${chg ? ' *' : ''}</td>
+      <td class="src">${esc(v[2] || '')}</td></tr>`;
+  }).join('');
+}
+function vfTermRows(st){
+  if (!st.terms || !st.terms.length) return '';
+  return st.terms.map(t => `<tr><td>${esc(t[0])}</td><td class="v">${typeof t[1]==='number'?Math.round(t[1]).toLocaleString():esc(t[1])} s</td></tr>`).join('');
+}
+function vfSecHtml(st){
+  return `${Math.round(st.sec).toLocaleString()} s <span style="font-size:10px;color:var(--dim)">(${(st.sec/60).toFixed(1)}분)</span>`;
+}
+function vfNoteHtml(st){
+  return (st.calib ? `<div class="vfwarn">⚠ 실적 보정 계수 ×${st.calib.toFixed(3)} 적용 → ${Math.round(st.sec)} s</div>` : '')
+       + (st.co ? `<div class="vfwarn" style="color:var(--dim)">이 오더의 설비 전환시간 합계 ${(st.co/60).toFixed(1)}분 (표준시간과 별도로 스케줄에 더해짐)</div>` : '');
+}
+function vfSumHtml(V){
   const kk=(v,l,cls)=>`<div class="kpi ${cls||''}"><b>${v}</b><span>${esc(l)}</span></div>`;
-  const machLbl = {M1:'#1호기', M2:'#2호기', M3:'#3호기', BOTH:'#1·#2 동시', RB:'R/B 라인'}[V.machine] || V.machine || '—';
-  $('vfSum').innerHTML =
-      kk(`<span style="font-size:15px">OD${V.spec.od} × t${V.spec.t}</span>`, `${(V.spec.L/1000).toFixed(3)}m · ${V.qty}본 · ${V.line} 라인`)
+  const machLbl = VF_MACH_LBL[V.machine] || V.machine || '—';
+  return kk(`<span style="font-size:15px">OD${V.spec.od} × t${V.spec.t}</span>`, `${(V.spec.L/1000).toFixed(3)}m · ${V.qty}본 · ${V.line} 라인`)
     + kk(`${(V.totalSec/60).toFixed(1)}분`, `1본 총 표준시간 (${Math.round(V.totalSec).toLocaleString()}초)`)
     + kk(`<span style="font-size:15px">${esc(V.bottleneck ? V.bottleneck.label.replace(/\n/g,' ') : '—')}</span>`, `최장 공정 ${V.bottleneck?(V.bottleneck.sec/60).toFixed(1):'—'}분`, 'bn')
-    + kk(`<span style="font-size:15px">${esc(machLbl)}</span>`, '확관 배정' + (mSel ? ' (수동 지정)' : act.machine ? ' (시뮬레이션 결과)' : ''))
+    + kk(`<span style="font-size:15px">${esc(machLbl)}</span>`, '확관 배정' + (V._manualMach ? ' (수동 지정)' : V._act.machine ? ' (시뮬레이션 결과)' : ''))
     + kk(`${V.steps.length}개`, '통과 공정');
+}
+function vfReconHtml(V){
+  const act = V._act;
+  if (!act || !act.evSec) return '';
+  const rows = V.steps.map(st => {
+    const a = act.evSec[st.nid];
+    if (a == null) return '';
+    const d = (a - st.sec) / (st.sec || 1) * 100;
+    return `<tr><td>${esc(st.label.replace(/\n/g,' '))}</td><td class="v">${Math.round(st.sec).toLocaleString()}</td><td class="v">${Math.round(a).toLocaleString()}</td><td class="v" style="color:${Math.abs(d)<0.5?'var(--dim)':'#f0a252'}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
+  }).join('');
+  return `<table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 평균(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>`;
+}
 
-  const rowsHtml = V.steps.map((st, i) => {
-    const params = st.vars.length
-      ? `<table class="vfp">${st.vars.map(v =>
-          `<tr><td>${esc(v[0])}</td><td class="v">${esc(typeof v[1]==='number'?(Number.isInteger(v[1])?v[1].toLocaleString():v[1]):v[1])}</td><td class="src">${esc(v[2]||'')}</td></tr>`).join('')}</table>`
-      : '<div class="vfform">파라미터 없음 (고정 시간)</div>';
-    const calibNote = st.calib ? `<div class="vfwarn">⚠ 실적 보정 계수 ×${st.calib.toFixed(3)} 적용 → ${Math.round(st.sec)} s</div>` : '';
-    const coNote = (st.co ? `<div class="vfwarn" style="color:var(--dim)">이 오더의 설비 전환시간 합계 ${(st.co/60).toFixed(1)}분 (표준시간과 별도로 스케줄에 더해짐)</div>` : '');
-    return `<div class="vfstep">
+/** 값만 제자리에서 갱신한다 — 편집 패널·입력 포커스는 건드리지 않는다 */
+function vfPatch(){
+  const V = vfCompute(); if (!V) return;
+  VF_LAST = V;
+  const box = $('vfBody'); if (!box) return;
+  $('vfSum').innerHTML = vfSumHtml(V);
+  V.steps.forEach((st, i) => {
+    const card = box.querySelector(`.vfstep[data-i="${i}"]`); if (!card) return;
+    const set = (f, html) => { const el = card.querySelector(`[data-f="${f}"]`); if (el) el.innerHTML = html; };
+    set('sec', vfSecHtml(st));
+    set('tpl', esc(st.tpl));
+    set('vars', vfParamRows(st));
+    set('subst', esc(st.subst));
+    set('terms', vfTermRows(st));
+    set('note', vfNoteHtml(st));
+  });
+  const rc = box.querySelector('[data-f="recon"]');
+  if (rc) rc.innerHTML = vfReconHtml(V);
+  vfMarkEdited();
+}
+/** 상단에 「원래 값과 다름」 표시 */
+function vfMarkEdited(){
+  const el = $('vfDirty'); if (!el) return;
+  const n = refCount();
+  /* 버튼은 **항상 만들어 두고** 숨기기만 한다 — 있다 없다 하는 id 는 정적 검사(verify_static ②)에서
+     "존재하지 않는 참조" 로 잡히고, 무엇보다 클릭 핸들러를 매번 다시 걸어야 해서 사고가 난다. */
+  el.innerHTML = (n
+      ? `<b style="color:#e3b341">기준값 ${n}개를 고친 상태</b>입니다 — 시뮬레이션 결과도 이 값으로 다시 계산됐습니다.`
+      : '기준값을 고치지 않은 원래 상태입니다.')
+    + `<button id="vfResetAll" class="vfbtn"${n ? '' : ' style="display:none"'}>전부 원래대로</button>`
+    + `<button id="vfExport2" class="vfbtn"${n ? '' : ' style="display:none"'}>JSON 내보내기</button>`;
+  if ($('vfResetAll')) $('vfResetAll').onclick = () => {
+    if (!confirm('기준정보·엑셀 표 수정값을 전부 원래대로 되돌립니다. 진행할까요?')) return;
+    REF_EDIT = { std:{}, co:{}, cap:{}, tbl:{} };
+    refApply(true); renderVerify(true);
+  };
+  if ($('vfExport2')) $('vfExport2').onclick = refExport;
+}
+
+function renderVerify(force){
+  const box = $('vfBody'); if(!box) return;
+  /* 편집 패널이 열려 있으면 카드를 다시 만들지 않고 숫자만 갈아 끼운다 */
+  if (!force && VF_OPEN.size && box.querySelector('.vfstep')) return vfPatch();
+  if (!CFG) { box.innerHTML = '<div class="note">먼저 「계획 실행」에서 시뮬레이션을 한 번 돌려 주세요.</div>'; return; }
+  const sel = $('vfOrder');
+  if (sel && !sel.options.length) buildVfOrders();
+  if (!sel || !sel.value) { box.innerHTML = '<div class="note">오더가 없습니다.</div>'; return; }
+  const V = vfCompute();
+  if (!V) { box.innerHTML = '<div class="note">해당 오더를 찾을 수 없습니다.</div>'; return; }
+  VF_LAST = V; VF_OPEN.clear();
+  if ($('vfK')) $('vfK').max = V.qty;
+  $('vfSum').innerHTML = vfSumHtml(V);
+
+  const rowsHtml = V.steps.map((st, i) => `<div class="vfstep" data-i="${i}" data-st="${esc(st.st||'')}">
       <div class="vfhd"><div class="vfno">${i+1}</div>
-        <div><b>${esc(st.label.replace(/\n/g,' '))}</b>${st.sub?` <span class="vfsub">${esc(st.sub)}</span>`:''}${st.machine?` <span class="vfsub">· ${esc(machLbl)}</span>`:''}</div>
-        <div class="vfsec">${Math.round(st.sec).toLocaleString()} s <span style="font-size:10px;color:var(--dim)">(${(st.sec/60).toFixed(1)}분)</span></div></div>
+        <div><b>${esc(st.label.replace(/\n/g,' '))}</b>${st.sub?` <span class="vfsub">${esc(st.sub)}</span>`:''}${st.machine?` <span class="vfsub">· ${esc(VF_MACH_LBL[V.machine]||V.machine)}</span>`:''}</div>
+        <button class="vfbtn vfedit" data-i="${i}">✎ 편집</button>
+        <div class="vfsec" data-f="sec">${vfSecHtml(st)}</div></div>
       <div class="vfbody">
         <div class="vfcap">적용 산식</div>
-        <div class="vfform">${esc(st.tpl)}</div>
+        <div class="vfform" data-f="tpl">${esc(st.tpl)}</div>
         <div class="vfgrid">
-          <div><div class="vfcap">파라미터 값 (이 제품)</div>${params}</div>
-          <div><div class="vfcap">산식 계산</div><div class="vfform res">${esc(st.subst)}</div>
-            ${st.terms && st.terms.length ? `<div class="vfcap" style="margin-top:9px">항목별 분해</div><table class="vfp">${st.terms.map(t=>`<tr><td>${esc(t[0])}</td><td class="v">${typeof t[1]==='number'?Math.round(t[1]).toLocaleString():esc(t[1])} s</td></tr>`).join('')}</table>` : ''}
-            ${calibNote}${coNote}</div>
+          <div><div class="vfcap">파라미터 값 (이 제품)</div><table class="vfp" data-f="vars">${vfParamRows(st)}</table></div>
+          <div><div class="vfcap">산식 계산</div><div class="vfform res" data-f="subst">${esc(st.subst)}</div>
+            ${st.terms && st.terms.length ? `<div class="vfcap" style="margin-top:9px">항목별 분해</div><table class="vfp" data-f="terms">${vfTermRows(st)}</table>` : '<span data-f="terms"></span>'}
+            <div data-f="note">${vfNoteHtml(st)}</div></div>
         </div>
-      </div></div>`;
-  }).join('');
+        <div class="vfedbox" data-f="edit" hidden></div>
+      </div></div>`).join('');
 
-  /* 시뮬레이션 실측과 대사 */
-  let recon = '';
-  if (act.evSec) {
-    const rows = V.steps.map(st => {
-      const a = act.evSec[st.nid];
-      if (a == null) return '';
-      const d = (a - st.sec) / (st.sec || 1) * 100;
-      return `<tr><td>${esc(st.label.replace(/\n/g,' '))}</td><td class="v">${Math.round(st.sec).toLocaleString()}</td><td class="v">${Math.round(a).toLocaleString()}</td><td class="v" style="color:${Math.abs(d)<0.5?'var(--dim)':'#f0a252'}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
-    }).join('');
-    recon = `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
-        <span class="vfsub">이 오더 ${act.pipes}개 공정 이벤트의 평균 소요 vs 위 산식 결과</span></div>
-      <div class="vfbody"><table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 평균(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>
+  const recon = V._act && V._act.evSec ? `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
+        <span class="vfsub">이 오더 ${V._act.pipes}개 공정 이벤트의 평균 소요 vs 위 산식 결과</span></div>
+      <div class="vfbody"><div data-f="recon">${vfReconHtml(V)}</div>
       <div class="vfwarn" style="color:var(--dim)">차이가 0% 가 아니면 변동성(로그정규 CV) 또는 실적 보정이 켜져 있다는 뜻입니다. 둘 다 끄면 정확히 일치합니다.</div>
-      </div></div>`;
-  }
+      </div></div>` : '';
 
   box.innerHTML = `<div class="note" style="margin:0 0 12px">
       <b>${esc(V.no)}</b> · 오더 내 <b>${V.k}번째 본</b> (전역 누적 ${V.seqGlobal}본째) 기준입니다.
       표준시간은 <b>가동률을 고려하지 않은 Net Time</b>이며, 설비 전환시간·대기시간은 여기에 포함되지 않습니다.
+      <div id="vfDirty" style="margin-top:6px"></div>
     </div>${rowsHtml}${recon}`;
+  box.querySelectorAll('.vfedit').forEach(b => b.onclick = () => vfToggleEdit(+b.dataset.i));
+  vfMarkEdited();
 }
 
+/* ---- [편집] — 이 공정에 쓰인 값을 그 자리에서 고친다 --------------------
+   두 종류를 한곳에 모은다.
+     ① 기준정보 상수 — 산식에 그대로 박혀 있는 값 (348s, /215.6 …)  → REF.std
+     ② 엑셀 표에서 조회된 값 — 이 제품이 실제로 짚은 **그 칸 하나**    → REF.tbl
+   ②는 종전에 어디서도 고칠 수 없었다(「기준정보」 탭은 행 수만 보여 줬다).
+   계획서에서 온 값(길이·두께·외경)과 파생값은 여기서 고치지 않는다 — 계획서를 고쳐야 한다. */
+function vfToggleEdit(i){
+  const card = $('vfBody').querySelector(`.vfstep[data-i="${i}"]`); if (!card) return;
+  const box = card.querySelector('[data-f="edit"]');
+  const btn = card.querySelector('.vfedit');
+  if (!box.hidden) { box.hidden = true; VF_OPEN.delete(i); btn.textContent = '✎ 편집'; btn.classList.remove('on'); return; }
+  box.hidden = false; VF_OPEN.add(i); btn.textContent = '✕ 닫기'; btn.classList.add('on');
+  vfBuildEdit(i, box);
+}
+function vfBuildEdit(i, box){
+  const st = VF_LAST && VF_LAST.steps[i]; if (!st) return;
+  const proc = st.st;
+
+  /* ① 기준정보 상수 */
+  let stdHtml = '';
+  if (proc && REF.std[proc]) {
+    const G = REF.std[proc], D = REF_STD_DEFAULT[proc];
+    stdHtml = Object.keys(G).filter(k => k[0] !== '_').map(k =>
+      `<div class="refrow"><span title="${esc(G[k].l)}">${esc(G[k].l)}</span>
+        ${refInput(G[k].v, D[k].v, v => { refSet('std', proc, k, v); renderVerify(); }, { min: REF_STD_MIN(proc, k) })}
+        <i>${esc(G[k].u || '')}</i></div>`).join('');
+  }
+
+  /* ② 이 제품이 짚은 엑셀 표 칸 */
+  const cells = st.vars.filter(v => v[3] && v[3].key);
+  const tblHtml = cells.map(v => {
+    const ed = v[3];
+    const cur = REF_EDIT.tbl[ed.key] != null ? REF_EDIT.tbl[ed.key] : ed.def;
+    return `<div class="refrow"><span title="${esc(v[2])}">${esc(v[0])}</span>
+      ${refInput(cur, ed.def, nv => { refSetTbl(ed.key, nv); renderVerify(); }, { min: 1e-9 })}
+      <i class="vfsrc">${esc(ed.key.split('|')[0])}</i></div>`;
+  }).join('');
+
+  /* 못 고치는 값 — 왜 못 고치는지 밝힌다 */
+  const fixed = st.vars.filter(v => !(v[3] && v[3].key)).map(v => v[0]);
+
+  box.innerHTML =
+    (stdHtml ? `<div class="vfcap">기준정보 상수 — 산식에 박힌 값 (「기준정보」 탭과 같은 값입니다)</div>
+       <div class="refgrid" data-sec="std">${stdHtml}</div>` : '')
+  + (tblHtml ? `<div class="vfcap" style="margin-top:11px">엑셀 표에서 조회된 값 — 이 제품이 짚은 칸만</div>
+       <div class="refgrid" data-sec="tbl">${tblHtml}</div>` : '')
+  + (!stdHtml && !tblHtml ? '<div class="vfwarn" style="color:var(--dim)">이 공정에는 고칠 수 있는 상수가 없습니다 (고정 시간).</div>' : '')
+  + (fixed.length ? `<div class="vfwarn" style="color:var(--dim);margin-top:9px">
+       고칠 수 없는 값 — ${esc(fixed.join(' · '))}<br>
+       계획서에서 읽은 값이거나 위 값들로부터 계산되는 값입니다. 계획서를 고치면 따라 바뀝니다.</div>` : '')
+  + `<div class="vfwarn" style="color:var(--dim);margin-top:7px">
+       고치면 <b>시뮬레이션 전체가 곧바로 다시 계산</b>됩니다. ↺ 로 그 값만 되돌릴 수 있고,
+       바꾼 내용은 「기준정보」 탭의 <b>내보내기</b>로 JSON 한 장에 저장됩니다.</div>`;
+  refBind();
+}
 /* ================= 병목 분석 ================= */
 /* 병목 유형 판정 — 성격이 다른 병목을 구분해서 보여준다 */
 function bnType(x){
@@ -1675,7 +1810,7 @@ function boot(){
   }
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
-  ['vfOrder','vfK','vfSeq','vfMach'].forEach(id=>{ if($(id)) $(id).addEventListener('change', renderVerify); });
+  ['vfOrder','vfK','vfSeq','vfMach'].forEach(id=>{ if($(id)) $(id).addEventListener('change', ()=>renderVerify(true)); });
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
   /* ── 공정 흐름 화면 끌어서 이동 · 휠로 확대 (2026-08-14) ── */
   let dragV = null;
@@ -1724,7 +1859,7 @@ function boot(){
    · 원본과 다른 칸은 노란색 + 되돌리기(↺)
    · JSON 한 장으로 내보내고 불러온다 (메일로 주고받기 · 다음에 그대로 복원)
    ==================================================================== */
-let REF_EDIT = { std:{}, co:{}, cap:{} };   // 기본값과 다른 것만 담는다
+let REF_EDIT = { std:{}, co:{}, cap:{}, tbl:{} };   // 기본값과 다른 것만 담는다
 
 /* 표준시간 상수의 하한.
    **분모로 쓰이는 값이 0 이 되면** 소요시간이 Infinity 가 되어 완료일이 146만 일로 튀고
@@ -1746,6 +1881,7 @@ function refApply(full = false) {
   setRefStd(REF_EDIT.std);
   setRefCo(REF_EDIT.co);
   setRefCap(REF_EDIT.cap);
+  setRefTbl(REF_EDIT.tbl);
   /* 확관 최적화 해가 실제로 있을 때만 무효화한다.
      종전에는 값 하나만 고쳐도 invalidatePlan() 이 배분 규칙을 OPT→EAT 로 되돌려 놓고,
      그 때문에 생긴 makespan 변화가 마치 편집 때문인 것처럼 보였다. 그리고 runSim() 이 두 번 돌았다. */
@@ -1784,7 +1920,20 @@ function refCount() {
   for (const p in REF_EDIT.std) n += Object.keys(REF_EDIT.std[p]).length;
   for (const p in REF_EDIT.co)  n += Object.keys(REF_EDIT.co[p]).length;
   n += Object.keys(REF_EDIT.cap).length;
+  n += Object.keys(REF_EDIT.tbl).length;
   return n;
+}
+/** 엑셀 표 셀 하나 덮어쓰기/해제 (「산식 검증」 인라인 편집).
+    v === null 이면 원표 값으로 되돌린다. */
+function refSetTbl(key, v) {
+  const prev = REF_EDIT.tbl[key];
+  if (v === null) delete REF_EDIT.tbl[key]; else REF_EDIT.tbl[key] = v;
+  refApply();
+  if (SIM && !isFinite(SIM.kpi.makespanH)) {
+    if (prev === undefined) delete REF_EDIT.tbl[key]; else REF_EDIT.tbl[key] = prev;
+    refApply(true);
+    alert('그 값을 넣으면 계산 결과가 무한대가 되어 되돌렸습니다.');
+  }
 }
 
 /** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다.
@@ -1976,12 +2125,17 @@ const REF_TBL_DESC = {
   packingMarking:'포장 마킹 상수', dieSpec:'확관 다이 스펙 (M1 107 · M2 68 · RB 37행) — specs.py 정본',
 };
 function renderRefTbl() {
+  /* 표 자체는 여기서 통째로 고치지 않는다 — 「산식 검증」 탭에서 **그 제품이 짚은 칸**만 고친다.
+     여기서는 어느 표의 몇 칸이 고쳐졌는지만 보여 준다. (2026-08-19) */
+  const edited = {};
+  for (const key in REF_EDIT.tbl) edited[key.split('|')[0]] = (edited[key.split('|')[0]] || 0) + 1;
   $('refTblBody').innerHTML = Object.keys(T).map(k => {
     const v = T[k];
     const n = Array.isArray(v) ? v.length
       : (v && typeof v === 'object' ? Object.values(v).reduce((a, x) => a + (Array.isArray(x) ? x.length : 1), 0) : 1);
+    const e = edited[k] || 0;
     return `<tr><td><b>${esc(k)}</b></td><td style="color:#6e7681">${esc(REF_TBL_DESC[k] || '')}</td>
-      <td class="num">${n.toLocaleString()}</td></tr>`;
+      <td class="num">${n.toLocaleString()}${e ? ` <span style="color:#e3b341">· ${e}칸 수정</span>` : ''}</td></tr>`;
   }).join('');
 }
 
@@ -2000,6 +2154,9 @@ function refExport() {
     설비대수: REF_EDIT.cap,
     전환시간: REF_EDIT.co,
     표준시간상수: REF_EDIT.std,
+    /* 「산식 검증」 탭에서 그 자리에서 고친 엑셀 표 칸.
+       키는 `표이름|행|열` (범위표) · `표이름|인치` (인치표) · `표이름|키` (상수) 형식이다. */
+    엑셀표재정의: REF_EDIT.tbl,
   };
   const blob = new Blob([JSON.stringify(doc, null, 2)], { type:'application/json' });
   const a = document.createElement('a');
@@ -2016,7 +2173,7 @@ function refSanitize(d) {
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const RISKY = new Set(['__proto__', 'constructor', 'prototype']);
   const num = (v) => typeof v === 'number' && isFinite(v);
-  const out = { std:{}, co:{}, cap:{} };
+  const out = { std:{}, co:{}, cap:{}, tbl:{} };
 
   const cap = d.설비대수 ?? d.cap;
   if (cap != null) {
@@ -2061,7 +2218,34 @@ function refSanitize(d) {
       }
     }
   }
+  /* 엑셀 표 재정의 — 키가 실제로 존재하는 칸을 가리키는지까지 확인한다.
+     (없는 표·없는 행을 그대로 받으면 조용히 무시돼 "고쳤는데 안 바뀐다" 가 된다) */
+  const tbl = d.엑셀표재정의 ?? d.tbl;
+  if (tbl != null) {
+    if (!plain(tbl)) bad.push('엑셀표재정의 형식이 올바르지 않습니다');
+    else for (const key in tbl) {
+      if (!own(tbl, key) || RISKY.has(key)) { bad.push(`엑셀표재정의: 쓸 수 없는 키 ${key}`); continue; }
+      const v = +tbl[key];
+      if (!num(v)) { bad.push(`엑셀표재정의 ${key}: 숫자만 (${tbl[key]})`); continue; }
+      if (!refTblCellExists(key)) { bad.push(`엑셀표재정의: 가리키는 칸이 없습니다 — ${key}`); continue; }
+      out.tbl[key] = v;
+    }
+  }
   return { out, bad };
+}
+/** `표이름|…` 키가 실제 표의 칸을 가리키는지 */
+function refTblCellExists(key) {
+  const seg = String(key).split('|');
+  const tab = T[seg[0]];
+  if (tab == null) return false;
+  if (seg.length === 3) {                       // 범위표: 표|행|열
+    const i = +seg[1];
+    return Array.isArray(tab) && tab[i] != null && tab[i][seg[2]] !== undefined;
+  }
+  if (seg.length === 2) {                       // 인치표·상수: 표|키
+    return Object.prototype.hasOwnProperty.call(tab, seg[1]);
+  }
+  return false;
 }
 function refImportFile(file) {
   const rd = new FileReader();
@@ -2078,6 +2262,7 @@ function refImportFile(file) {
     try {
       REF_EDIT = out;
       refApply(true);
+      if ($('vfBody')) renderVerify(true);
     } catch (e) {
       REF_EDIT = prev; refApply(true);
       alert('기준정보를 적용하지 못해 이전 상태로 되돌렸습니다: ' + (e.message || e));
@@ -2102,7 +2287,8 @@ function initRefTab() {
   $('refRevert').onclick = () => {
     if (!refCount()) return;
     if (!confirm('고친 값을 전부 원래대로 되돌립니다. 계속할까요?')) return;
-    REF_EDIT = { std:{}, co:{}, cap:{} }; refApply();
+    REF_EDIT = { std:{}, co:{}, cap:{}, tbl:{} }; refApply(true);
+    if ($('vfBody')) renderVerify(true);
   };
   $('refExport').onclick = refExport;
   $('refImport').onchange = e => { if (e.target.files[0]) refImportFile(e.target.files[0]); e.target.value = ''; };

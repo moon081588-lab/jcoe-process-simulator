@@ -12,23 +12,43 @@ const odInch = (od_mm) => od_mm / MM_PER_INCH;
    종전에는 구멍에 떨어진 값이 조용히 '마지막 행'(가장 두꺼운=가장 느린 조건)을 받아
    두께 29.05mm 같은 입력에서 용접시간이 29% 과대 계상됐습니다.
    → 구멍에 떨어지면 가장 가까운 구간을 쓰고, 동점이면 위쪽(보수적) 구간을 씁니다. */
-function pickRange(rows, x, valIdx = 2) {
-  for (const r of rows) if (x >= r[0] && x <= r[1]) return r[valIdx];
-  if (x < rows[0][0]) return rows[0][valIdx];
-  if (x > rows[rows.length - 1][1]) return rows[rows.length - 1][valIdx];
-  let best = rows[rows.length - 1], bd = Infinity;
-  for (const r of rows) {
-    const d = x < r[0] ? r[0] - x : x - r[1];
-    if (d < bd || (d === bd && r[0] > x)) { bd = d; best = r; }   // 동점 → 위쪽 구간
+/* 어느 행이 뽑히는지 먼저 정한다 (재정의를 걸려면 행 번호를 알아야 한다) */
+function pickRangeIdx(rows, x) {
+  for (let i = 0; i < rows.length; i++) if (x >= rows[i][0] && x <= rows[i][1]) return i;
+  if (x < rows[0][0]) return 0;
+  if (x > rows[rows.length - 1][1]) return rows.length - 1;
+  let bi = rows.length - 1, bd = Infinity;
+  for (let i = 0; i < rows.length; i++) {
+    const d = x < rows[i][0] ? rows[i][0] - x : x - rows[i][1];
+    if (d < bd || (d === bd && rows[i][0] > x)) { bd = d; bi = i; }   // 동점 → 위쪽 구간
   }
-  return best[valIdx];
+  return bi;
+}
+/* tkey 를 주면 그 셀에 대한 화면 편집값(REF.tbl)이 있을 때 그것을 쓴다.
+   반환값을 그냥 숫자로 쓰던 기존 호출부는 그대로 동작한다. */
+function pickRange(rows, x, valIdx = 2, tkey) {
+  const i = pickRangeIdx(rows, x);
+  return tblVal(tkey && `${tkey}|${i}|${valIdx}`, rows[i][valIdx]);
+}
+/** 이 조회가 어느 셀을 짚었는지 — 편집 화면이 「이 값을 고치면 무엇이 바뀌나」를 알려면 필요 */
+function pickRangeRef(rows, x, valIdx = 2, tkey) {
+  const i = pickRangeIdx(rows, x);
+  return { key: tkey ? `${tkey}|${i}|${valIdx}` : null, def: rows[i][valIdx], row: rows[i] };
 }
 /* 인치 키 테이블 조회 (짝수 인치) — 가장 가까운 값 */
-function pickInch(obj, inch) {
+function pickInchKey(obj, inch) {
   const keys = Object.keys(obj).map(Number).sort((a, b) => a - b);
   let best = keys[0];
   for (const k of keys) if (Math.abs(k - inch) < Math.abs(best - inch)) best = k;
-  return obj[best];
+  return best;
+}
+function pickInch(obj, inch, tkey) {
+  const b = pickInchKey(obj, inch);
+  return tblVal(tkey && `${tkey}|${b}`, obj[b]);
+}
+function pickInchRef(obj, inch, tkey) {
+  const b = pickInchKey(obj, inch);
+  return { key: tkey ? `${tkey}|${b}` : null, def: obj[b], at: b };
 }
 const ceil = Math.ceil, floor = Math.floor;
 
@@ -128,7 +148,35 @@ const REF_STD_DEFAULT = {
 
 /* 편집 가능한 현재값. REF.std[공정][키] 로 읽는다. */
 function refClone(o) { return JSON.parse(JSON.stringify(o)); }
-const REF = { std: refClone(REF_STD_DEFAULT), co: null, cap: {} };
+const REF = { std: refClone(REF_STD_DEFAULT), co: null, cap: {}, tbl: {} };
+/* ---- 엑셀 표 값 재정의 -------------------------------------------------
+   emSpeed·preBenderPitch 같은 **엑셀 원표에서 조회되는 값**은 종전에 어디서도 고칠 수 없었다
+   (「기준정보」 탭은 행 수만 보여 줬다). 현장에서 "이 두께의 용접속도가 실제와 다르다" 를
+   반영하려면 엑셀을 고쳐 tables.json 을 다시 뽑아야 했다.
+   이제 조회된 **그 셀 하나**만 화면에서 덮어쓸 수 있다. 원표(T)는 건드리지 않는다.
+     키 형식  범위표: `<표이름>|<행번호>|<열번호>`   인치표: `<표이름>|<인치>`   상수: `<표이름>|<키>`
+   (2026-08-19 「산식 검증」 인라인 편집) */
+function tblVal(key, def) {
+  if (!key) return def;
+  const v = REF.tbl[key];
+  return (typeof v === 'number' && isFinite(v)) ? v : def;
+}
+/** 직접 참조하는 상수(T.hydroConst.airVent 등) 용 */
+function tblConst(tbl, k, def) { return tblVal(`${tbl}|${k}`, def); }
+/** 화면에서 고친 표 값을 반영. patch = { '표|행|열': 숫자 } — 빈 객체면 전부 원래대로 */
+function setRefTbl(patch) {
+  REF.tbl = {};
+  if (!patch || typeof patch !== 'object') return REF.tbl;
+  for (const k in patch) {
+    if (!own(patch, k)) continue;
+    /* __proto__ 등으로 프로토타입을 오염시키지 못하게 한다 (2026-08-14 전수 감사와 같은 이유) */
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    const v = patch[k];
+    if (typeof v === 'number' && isFinite(v)) REF.tbl[k] = v;
+  }
+  return REF.tbl;
+}
+function refTblDiff() { return Object.assign({}, REF.tbl); }
 /** 설비 대수 반영. patch = { 노드ID: 대수 } — 빈 객체면 코드 기본값 사용 */
 function setRefCap(patch) {
   REF.cap = {};
@@ -223,7 +271,8 @@ const STD = {};
 STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
   const E = RSTD.EdgeMiller;
   const L = s.L, Lm = L / 1000;
-  const feed = pickRange(T.emFeed, Lm);
+  const feed = pickRange(T.emFeed, Lm, 2, 'emFeed');
+  const feedRef = pickRangeRef(T.emFeed, Lm, 2, 'emFeed');
   const base = line === '18M' ? E.base18 : E.base12;
   const first = (seqInOrder === 1) ? E.firstPiece : 0;
   if (s.grade === 'hiMn') {
@@ -234,12 +283,15 @@ STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
         .concat(first ? [['첫 본 생산 가산', first]] : []) },
       `${b}s + 길이×${E.lenA} + (전진거리/${E.feedDiv})${first ? ` + ${E.firstPiece}s(첫 본)` : ''}   [${line} 고망간]`,
       [['길이(mm)', L, '계획서'], ['두께(mm)', s.t, '계획서'], ['재질 등급', gradeLabel(s.grade), '계획서'],
-       ['판재 이송거리(mm)', feed, '엑셀 emFeed 표 (길이 구간)'],
+       ['판재 이송거리(mm)', feed, `엑셀 emFeed 표 (길이 ${feedRef.row[0]}~${feedRef.row[1]}m)`, feedRef],
        ['오더 내 본 번호', seqInOrder, '시뮬레이터'] ],
       `${b} + ${nf(L)}×${E.lenA} + ${nf(feed)}/${E.feedDiv}${first ? ` + ${first}` : ''}`);
   }
-  const row = T.emSpeed.find(r => s.t >= r.tmin && s.t <= r.tmax) || T.emSpeed[1];
-  const v = s.grade === 'high' ? row.high : row.normal;   // 고속 Setting [m/min]
+  let ri = T.emSpeed.findIndex(r => s.t >= r.tmin && s.t <= r.tmax); if (ri < 0) ri = 1;
+  const row = T.emSpeed[ri];
+  const vCol = s.grade === 'high' ? 'high' : 'normal';
+  const vRef = { key: `emSpeed|${ri}|${vCol}`, def: row[vCol] };
+  const v = tblVal(vRef.key, row[vCol]);                  // 고속 Setting [m/min]
   const sec = base - E.vNum / v + feed / E.feedDiv + L * (E.lenA / v - E.lenB) + first;
   return withCalc({ sec, expr: `${base} − ${E.vNum}/v + feed/${E.feedDiv} + L×(${E.lenA}/v − ${E.lenB}), v=${v}m/min, feed=${feed}mm${first ? ` + ${E.firstPiece}(첫 본)` : ''}`,
     terms: [['기본', base], [`−${E.vNum}/v`, -E.vNum / v], [`피딩기 feed/${E.feedDiv}`, feed / E.feedDiv],
@@ -247,8 +299,8 @@ STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
     `${base}s − (${E.vNum}/고속값) + (전진거리/${E.feedDiv}) + 길이×(${E.lenA}/고속값 − ${E.lenB})`
       + `${first ? ` + ${E.firstPiece}s(첫 본)` : ''}   [${line} ${gradeLabel(s.grade)}]`,
     [['길이(mm)', L, '계획서'], ['두께(mm)', s.t, '계획서'], ['재질 등급', gradeLabel(s.grade), '계획서'],
-     ['밀링 고속값(m/min)', v, `엑셀 emSpeed 표 (두께 ${row.tmin}~${row.tmax})`],
-     ['판재 이송거리(mm)', feed, '엑셀 emFeed 표 (길이 구간)'],
+     ['밀링 고속값(m/min)', v, `엑셀 emSpeed 표 (두께 ${row.tmin}~${row.tmax}, ${vCol === 'high' ? '고강도' : '일반'} 열)`, vRef],
+     ['판재 이송거리(mm)', feed, `엑셀 emFeed 표 (길이 ${feedRef.row[0]}~${feedRef.row[1]}m)`, feedRef],
      ['오더 내 본 번호', seqInOrder, '시뮬레이터 — 1이면 첫 본 가산']],
     `${base} − ${E.vNum}/${nf(v)} + ${nf(feed)}/${E.feedDiv} + ${nf(L)}×(${E.lenA}/${nf(v)}−${E.lenB})${first ? ` + ${first}` : ''}`);
 };
@@ -256,7 +308,8 @@ STD.EdgeMiller = (s, line, _seqAll, seqInOrder) => {
 /* 3~4. Pre Bender */
 STD.PreBender = (s, line) => {
   const P = RSTD.PreBender;
-  const pitch = pickRange(T.preBenderPitch, s.t);
+  const pitch = pickRange(T.preBenderPitch, s.t, 2, 'preBenderPitch');
+  const pitchRef = pickRangeRef(T.preBenderPitch, s.t, 2, 'preBenderPitch');
   const base = line === '18M' ? P.base18 : P.base12;
   const n = ceil((s.L - P.lead) / pitch);
   const sec = base + (pitch / P.pitchDiv + P.perStroke) * n;
@@ -264,7 +317,7 @@ STD.PreBender = (s, line) => {
     terms: [['기본', base], [`성형 ${n}회`, (pitch / P.pitchDiv + P.perStroke) * n]] },
     `${base}s + (피치/${P.pitchDiv} + ${P.perStroke}s) × 올림((길이−${P.lead})/피치)   [${line}]`,
     [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
-     ['성형 피치(mm)', pitch, '엑셀 preBenderPitch 표 (두께별)'],
+     ['성형 피치(mm)', pitch, `엑셀 preBenderPitch 표 (두께 ${pitchRef.row[0]}~${pitchRef.row[1]}mm)`, pitchRef],
      ['성형 횟수 n(회)', n, `올림((${nf(s.L)}−${P.lead})/${nf(pitch)})`]],
     `${base} + (${nf(pitch)}/${P.pitchDiv} + ${P.perStroke}) × ${n}`);
 };
@@ -272,7 +325,8 @@ STD.PreBender = (s, line) => {
 /* 5~6. Press Bender */
 STD.PressBender = (s, line) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
-  const x1 = pickInch(T.pressX1, inch);
+  const x1 = pickInch(T.pressX1, inch, 'pressX1');
+  const x1Ref = pickInchRef(T.pressX1, inch, 'pressX1');
   const P = RSTD.PressBender;
   const base = line === '18M' ? P.base18 : P.base12;
   const k = line === '18M' ? P.k18 : P.k12;
@@ -283,7 +337,7 @@ STD.PressBender = (s, line) => {
     `${base}s + (길이[m]/${P.lenDiv}) − (외경/${P.odDiv}) + X1횟수×${k}s   [${line}]`,
     [['길이(m)', s.L / 1000, '계획서'], ['외경(mm)', s.od, '계획서'],
      ['공칭 인치(")', inch, `외경 ${nf(s.od)}mm ÷ 25.4 → 짝수 인치 반올림`],
-     ['X1 Side Press 횟수', x1, `엑셀 pressX1 표 (${inch}")`]],
+     ['X1 Side Press 횟수', x1, `엑셀 pressX1 표 (${x1Ref.at}")`, x1Ref]],
     `${base} + ${nf(s.L / 1000)}/${P.lenDiv} − ${nf(s.od)}/${P.odDiv} + ${x1}×${k}`);
 };
 
@@ -316,57 +370,63 @@ STD.GapPress = (s) => {
 
 /* 8. Tack Welder (태그 웰딩) */
 STD.TackWelder = (s, line) => {
-  const v = pickRange(T.tackWeld, s.t);          // mm/s
+  const v = pickRange(T.tackWeld, s.t, 2, 'tackWeld');          // mm/s
+  const vRef = pickRangeRef(T.tackWeld, s.t, 2, 'tackWeld');
   const base = line === '18M' ? RSTD.TackWelder.base18 : RSTD.TackWelder.base12;
   const sec = base + s.L / v;
   return withCalc({ sec, expr: `${base} + L / v,  v=${v.toFixed(1)}mm/s (WPS t=${s.t})`,
     terms: [['이송·Gap조정', base], ['용접 L/v', s.L / v]] },
     `${base}s + (길이 / 용접속도)   [${line}]`,
     [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
-     ['용접속도(mm/s)', v, `엑셀 tackWeld 표 (WPS 두께 ${nf(s.t)})`]],
+     ['용접속도(mm/s)', v, `엑셀 tackWeld 표 (WPS 두께 ${vRef.row[0]}~${vRef.row[1]}mm)`, vRef]],
     `${base} + ${nf(s.L)}/${nf(v)}`);
 };
 
 /* 9. Inside Welder (내면 SAW) */
 STD.InsideWelder = (s, line) => {
-  const v = pickRange(T.insideWeld, s.t);
-  const p = pickRange(T.insideWeld, s.t, 3);
+  const v = pickRange(T.insideWeld, s.t, 2, 'insideWeld');
+  const p = pickRange(T.insideWeld, s.t, 3, 'insideWeld');
+  const vRef = pickRangeRef(T.insideWeld, s.t, 2, 'insideWeld');
+  const pRef = pickRangeRef(T.insideWeld, s.t, 3, 'insideWeld');
   const base = line === '18M' ? RSTD.InsideWelder.base18 : RSTD.InsideWelder.base12;
   const sec = base + s.L / v;
   return withCalc({ sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
     terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] },
     `${base}s + (길이 / 용접속도)   [${line} · 내면 SAW]`,
     [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
-     ['용접속도(mm/s)', v, `엑셀 insideWeld 표 (WPS 두께 ${nf(s.t)})`],
-     ['용접 패스 수', p, '엑셀 insideWeld 표 — 속도에 이미 반영됨']],
+     ['용접속도(mm/s)', v, `엑셀 insideWeld 표 (WPS 두께 ${vRef.row[0]}~${vRef.row[1]}mm)`, vRef],
+     ['용접 패스 수', p, '엑셀 insideWeld 표 — 속도에 이미 반영됨(참고값)', pRef]],
     `${base} + ${nf(s.L)}/${nf(v)}`);
 };
 
 /* 10. Outside Welder (외면 SAW) */
 STD.OutsideWelder = (s, line) => {
-  const v = pickRange(T.outsideWeld, s.t);
-  const p = pickRange(T.outsideWeld, s.t, 3);
+  const v = pickRange(T.outsideWeld, s.t, 2, 'outsideWeld');
+  const p = pickRange(T.outsideWeld, s.t, 3, 'outsideWeld');
+  const vRef = pickRangeRef(T.outsideWeld, s.t, 2, 'outsideWeld');
+  const pRef = pickRangeRef(T.outsideWeld, s.t, 3, 'outsideWeld');
   const base = line === '18M' ? RSTD.OutsideWelder.base18 : RSTD.OutsideWelder.base12;
   const sec = base + s.L / v;
   return withCalc({ sec, expr: `${base} + L / v,  v=${v.toFixed(2)}mm/s, ${p}pass (WPS)`,
     terms: [['장입·Setting·배출', base], [`용접 L/v (${p}pass)`, s.L / v]] },
     `${base}s + (길이 / 용접속도)   [${line} · 외면 SAW]`,
     [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
-     ['용접속도(mm/s)', v, `엑셀 outsideWeld 표 (WPS 두께 ${nf(s.t)})`],
-     ['용접 패스 수', p, '엑셀 outsideWeld 표 — 속도에 이미 반영됨']],
+     ['용접속도(mm/s)', v, `엑셀 outsideWeld 표 (WPS 두께 ${vRef.row[0]}~${vRef.row[1]}mm)`, vRef],
+     ['용접 패스 수', p, '엑셀 outsideWeld 표 — 속도에 이미 반영됨(참고값)', pRef]],
     `${base} + ${nf(s.L)}/${nf(v)}`);
 };
 
 /* 11. 1st-UT (관단탭 절단 포함) */
 STD.FirstUT = (s) => {
   const P = RSTD.FirstUT;
-  const cv = pickRange(T.utCut, s.t);
+  const cv = pickRange(T.utCut, s.t, 2, 'utCut');
+  const cvRef = pickRangeRef(T.utCut, s.t, 2, 'utCut');
   const sec = P.base + s.L / P.feedDiv + (P.cutLen / cv) * P.cutTimes;
   return withCalc({ sec, expr: `${P.base} + L/${P.feedDiv} + (${P.cutLen}/절단속도)×${P.cutTimes}, 절단속도=${cv}`,
     terms: [['기본', P.base], [`이송 L/${P.feedDiv}`, s.L / P.feedDiv], [`탭 절단 ×${P.cutTimes}`, (P.cutLen / cv) * P.cutTimes]] },
     `${P.base}s + (길이/${P.feedDiv}) + (${P.cutLen}/절단속도)×${P.cutTimes}회`,
     [['길이(mm)', s.L, '계획서'], ['두께(mm)', s.t, '계획서'],
-     ['관단탭 절단속도', cv, `엑셀 utCut 표 (두께 ${nf(s.t)})`]],
+     ['관단탭 절단속도', cv, `엑셀 utCut 표 (두께 ${cvRef.row[0]}~${cvRef.row[1]}mm)`, cvRef]],
     `${P.base} + ${nf(s.L)}/${P.feedDiv} + (${P.cutLen}/${nf(cv)})×${P.cutTimes}`);
 };
 
@@ -656,17 +716,21 @@ STD.EndFacing = (s) => {
     const tGap = (s.t >= r[1] && s.t < r[2]) ? 0 : Math.min(Math.abs(s.t - r[1]), Math.abs(s.t - r[2]));
     return tGap * 1000 + Math.abs(r[0] - inch);        // 두께 구간 적합도 우선, 그다음 외경 근접
   };
-  for (const r of T.endFacing) { const d = score(r); if (d < bd) { bd = d; best = r; } }
-  if (!best) best = T.endFacing[T.endFacing.length - 1];
+  let bi = -1;
+  for (let i = 0; i < T.endFacing.length; i++) { const d = score(T.endFacing[i]); if (d < bd) { bd = d; bi = i; } }
+  if (bi < 0) bi = T.endFacing.length - 1;
+  best = T.endFacing[bi];
+  const cutRef = { key: `endFacing|${bi}|3`, def: best[3] };
+  const cut = tblVal(cutRef.key, best[3]);
   const B = RSTD.EndFacing.base;
-  const sec = B + best[3];
-  return withCalc({ sec, expr: `${B} + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = ${B} + ${best[3]}s`,
-    terms: [['기본', B], ['저속 절삭(안전계수 K=1.5)', best[3]]] },
+  const sec = B + cut;
+  return withCalc({ sec, expr: `${B} + 저속절삭시간(${best[0]}", t${best[1]}~${best[2]}) = ${B} + ${cut}s`,
+    terms: [['기본', B], ['저속 절삭(안전계수 K=1.5)', cut]] },
     `${B}s + 저속 절삭시간(표 조회)`,
     [['외경(mm)', s.od, '계획서'], ['두께(mm)', s.t, '계획서'],
      ['공칭 인치(")', inch, `외경 ${nf(s.od)}mm ÷ 25.4 → 짝수 인치`],
-     ['저속 절삭시간(s)', best[3], `엑셀 endFacing 표 (${best[0]}" · t${best[1]}~${best[2]}, 안전계수 K=1.5)`]],
-    `${B} + ${nf(best[3])}`);
+     ['저속 절삭시간(s)', cut, `엑셀 endFacing 표 (${best[0]}" · t${best[1]}~${best[2]}, 안전계수 K=1.5)`, cutRef]],
+    `${B} + ${nf(cut)}`);
 };
 
 /* 15. Outer bead removal (슬러그/비드 제거) */
@@ -683,14 +747,18 @@ STD.OuterBead = (s) => {
 STD.HydroTest = (s) => {
   const inch = Math.round(odInch(s.od) / 2) * 2;
   const P = RSTD.HydroTest;
-  let fill = pickInch(T.hydroFill, inch);
+  const fillRef = pickInchRef(T.hydroFill, inch, 'hydroFill');
+  let fill = pickInch(T.hydroFill, inch, 'hydroFill');
   if (s.L / 1000 >= P.longThresholdM) fill += P.longAdd;   // 18미터일 시 20초씩 추가
   /* 「36" 이상」 판정은 **공칭 인치**로 한다.
      종전에는 짝수 스냅(round(inch/2)×2)한 값을 썼기 때문에 OD889(정확히 35")가 36 으로 올라가
      2차 압빼기·에어 벤트 상수가 300/180 으로 잘못 바뀌었다(+180s). (2026-08-14 전수 감사) */
   const big = Math.round(odInch(s.od)) >= P.bigInch;
-  const de = big ? T.hydroConst.deflate2nd_36up : T.hydroConst.deflate2nd;
-  const av = big ? T.hydroConst.airVent_36up : T.hydroConst.airVent;
+  const deK = big ? 'deflate2nd_36up' : 'deflate2nd', avK = big ? 'airVent_36up' : 'airVent';
+  const deRef = { key: `hydroConst|${deK}`, def: T.hydroConst[deK] };
+  const avRef = { key: `hydroConst|${avK}`, def: T.hydroConst[avK] };
+  const de = tblVal(deRef.key, T.hydroConst[deK]);
+  const av = tblVal(avRef.key, T.hydroConst[avK]);
   const hold = s.holdSec != null ? s.holdSec : 60;        // MES 제작시방서 조회값
   const sec = P.base + fill + P.riseSec + hold + de + av;
   return withCalc({ sec, expr: `${P.base} + 충수(${fill}s) + 압력상승(${P.riseSec}s) + 유지(${hold}s) + 2차압빼기(${de}s) + 에어벤트(${av}s)`,
@@ -700,11 +768,12 @@ STD.HydroTest = (s) => {
       + `   [${big ? `36" 이상` : `36" 미만`}${s.L / 1000 >= P.longThresholdM ? `, 18m 이상 +${P.longAdd}s` : ''}]`,
     [['외경(mm)', s.od, '계획서'], ['공칭 인치(")', Math.round(odInch(s.od)), `외경/25.4 반올림 — ${P.bigInch}" 이상이면 대구경 상수`],
      ['길이(mm)', s.L, '계획서'],
-     ['충수 시간(s)', fill, `엑셀 hydroFill 표 (${inch}")${s.L / 1000 >= P.longThresholdM ? ` + 18m 가산 ${P.longAdd}` : ''}`],
+     ['충수 시간(s)', fill, `엑셀 hydroFill 표 (${fillRef.at}")${s.L / 1000 >= P.longThresholdM ? ` + 18m 가산 ${P.longAdd}` : ''}`,
+      s.L / 1000 >= P.longThresholdM ? null : fillRef],
      ['압력 상승(s)', P.riseSec, '기준정보'],
      ['압력 유지(s)', hold, s.holdSec != null ? 'MES 제작시방서 조회값' : '기본값 60s (시방서 미조회)'],
-     ['2차 압빼기(s)', de, big ? '엑셀 hydroConst.deflate2nd_36up' : '엑셀 hydroConst.deflate2nd'],
-     ['에어 벤트(s)', av, big ? '엑셀 hydroConst.airVent_36up' : '엑셀 hydroConst.airVent']],
+     ['2차 압빼기(s)', de, `엑셀 hydroConst.${deK}`, deRef],
+     ['에어 벤트(s)', av, `엑셀 hydroConst.${avK}`, avRef]],
     `${P.base} + ${nf(fill)} + ${P.riseSec} + ${nf(hold)} + ${nf(de)} + ${nf(av)}`);
 };
 

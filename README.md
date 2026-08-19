@@ -32,7 +32,7 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | 확관 최적화 | 배분 규칙 비교 · 최적화 실행 · 외부 CP-SAT 스케줄 가져오기 |
 | In · Out | 설비별 투입·산출 시각표 |
 | 표준시간 계산기 | 규격을 넣으면 20개 공정 산출식을 항별로 전개 |
-| **산식 검증** | 오더 간트에서 행을 클릭 → 그 오더가 지나는 **모든 공정**의 「적용 산식 → 파라미터 값(출처 포함) → 숫자를 대입한 계산」 |
+| **산식 검증** | 오더 간트에서 행을 클릭 → 그 오더가 지나는 **모든 공정**의 「적용 산식 → 파라미터 값(출처 포함) → 숫자를 대입한 계산」<br>공정 카드의 **`✎ 편집`** 으로 그 자리에서 상수·엑셀 표 값을 고치면 즉시 다시 계산됩니다 |
 | 반복 실행 | 확률 변동을 켜고 여러 번 돌려 분포 확인 |
 | 실적 검증 | MES 실적 로그를 올려 표준시간과 대조 |
 
@@ -533,7 +533,7 @@ python3 source/build.py       # → ./JCOE_Simulator.html  (2D + 3D 한 파일)
 
 WebGL 을 쓸 수 없는 PC 에서는 **3D 탭에만 안내가 뜨고 나머지 기능은 전부 정상 동작**합니다.
 
-### 검증 — 6종
+### 검증 — 7종
 
 ```bash
 node source/tools/verify_formulas.js   # 산출식 20개를 엑셀 원문으로 독립 재계산 (node 만 있으면 됨)
@@ -543,6 +543,7 @@ node source/tools/verify_calc.js       # 「산식 검증」 화면에 찍히는
 npm i playwright
 node source/tools/verify_static.js     # 모든 탭을 실제로 열어 id 중복·미존재 참조·콘솔 오류 점검
 node source/tools/verify_ui.js         # 2D·3D 브라우저 통합 (두 화면 결과 일치까지 확인)
+node source/tools/verify_vfedit.js     # 「산식 검증」 인라인 편집 — 값 반영·연속 입력·되돌리기
 ```
 
 `verify_formulas.js` 는 **엔진과 독립적으로** 엑셀 산출식을 다시 구현해 대조합니다.
@@ -607,6 +608,7 @@ source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기
 │   ├── verify_calc.js          「산식 검증」 표기식 ↔ 엔진 값 대조 288건 (node)
 │   ├── verify_static.js        id 중복·미존재 참조·콘솔 오류 (playwright)
 │   ├── verify_ui.js            2D·3D 브라우저 통합 · 두 화면 결과 일치 (playwright)
+│   ├── verify_vfedit.js        「산식 검증」 인라인 편집 동작 (playwright)
 │   ├── runsim.js               Node 에서 시뮬레이터를 불러오는 헬퍼
 │   ├── extract_tables.py       엑셀 → data/tables.json
 │   ├── extract_images.py       시트에 이미지로만 적힌 산출식 추출 → data/evidence/
