@@ -730,6 +730,120 @@ function specOf(o, cfg) {
 }
 
 /* ====================================================================
+   시간 분해 — 간트 막대 길이가 무엇으로 채워져 있는가
+   --------------------------------------------------------------------
+   "앞 공정이 안 끝나서 생긴 대기, 공구 교체 시간이 막대에 섞여 있을 텐데
+    그걸 구별해서 보고 싶다" 에 답하기 위한 함수들이다.
+
+   막대(오더 스팬)를 **서로 겹치지 않는 네 가지**로 나눈다.
+
+     가공    설비가 이 오더의 파이프를 실제로 깎고 있던 시간
+     전환    공구·다이 교체(setup) — 앞 제품과 규격이 달라 생긴 시간
+     대기    가동시간인데 이 오더가 아무 설비도 잡지 못한 시간
+             (앞 공정이 안 끝났거나, 설비가 다른 오더에 물려 있었거나)
+     비가동  교대 종료·점심·주말 — 공장이 안 도는 시간
+
+   네 값의 합은 막대 길이와 **정확히** 같다.
+   ==================================================================== */
+
+/** 구간 목록을 겹치지 않게 합친다 */
+function mergeSpans(list) {
+  if (!list.length) return [];
+  const a = list.slice().sort((x, y) => x[0] - y[0]);
+  const out = [a[0].slice()];
+  for (let i = 1; i < a.length; i++) {
+    const last = out[out.length - 1];
+    if (a[i][0] <= last[1]) last[1] = Math.max(last[1], a[i][1]);
+    else out.push(a[i].slice());
+  }
+  return out;
+}
+/** 구간 목록에서 b 와 겹치는 부분을 뺀다 (a·b 모두 정렬·병합된 상태여야 한다) */
+function subtractSpans(a, b) {
+  const out = [];
+  for (const [s0, e0] of a) {
+    let cur = s0;
+    for (const [s1, e1] of b) {
+      if (e1 <= cur || s1 >= e0) continue;
+      if (s1 > cur) out.push([cur, Math.min(s1, e0)]);
+      cur = Math.max(cur, e1);
+      if (cur >= e0) break;
+    }
+    if (cur < e0) out.push([cur, e0]);
+  }
+  return out;
+}
+/** 구간 목록의 **가동시간** 합계 (교대 종료·주말 제외) */
+function openSpanSec(cal, spans) {
+  let t = 0;
+  for (const [a, b] of spans) if (b > a) t += cal.capBetween(a, b);
+  return t;
+}
+/** 이 오더가 쓰는 캘린더 — R/B 라인 노드를 지나면 R/B 근무조 */
+function calOf(SIM, ev) {
+  const useRB = ev.some(e => RB_LINE.has(e.n));
+  return useRB && SIM.calRB ? SIM.calRB : SIM.cal;
+}
+
+/** 오더 하나의 간트 막대를 가공/전환/대기/비가동으로 나눈다 */
+function orderTimeSplit(SIM, no) {
+  if (!SIM || !SIM.events) return null;
+  const ev = SIM.events.filter(e => String(e.o) === String(no));
+  if (!ev.length) return null;
+  const cal = calOf(SIM, ev);
+  const s0 = Math.min(...ev.map(e => e.s));
+  const e0 = Math.max(...ev.map(e => e.e));
+  const total = e0 - s0;
+  const open = cal.capBetween(s0, e0);
+  const closed = Math.max(0, total - open);
+
+  const work = mergeSpans(ev.map(e => [e.s, e.e]).filter(x => x[1] > x[0]));
+  /* 전환은 작업 구간과 겹칠 수 있다(다른 본이 다른 설비에서 돌고 있으므로) — 작업을 우선한다 */
+  const setupRaw = mergeSpans(ev.filter(e => e.co > 0).map(e => [Math.max(s0, e.s - e.co), e.s]).filter(x => x[1] > x[0]));
+  const setup = subtractSpans(setupRaw, work);
+
+  const workOpen = openSpanSec(cal, work);
+  const setupOpen = openSpanSec(cal, setup);
+  const waitOpen = Math.max(0, open - workOpen - setupOpen);
+  return {
+    s: s0, e: e0, total, open, closed,
+    work: workOpen, setup: setupOpen, wait: waitOpen,
+    workSpans: work, setupSpans: setup,
+    pipes: new Set(ev.map(e => e.k)).size,
+    calRB: cal === SIM.calRB,
+  };
+}
+
+/** 본 1개의 리드타임을 같은 네 가지로 나눈다 — 이쪽은 근사 없이 정확하다.
+    (d·co 는 가동시간 안에서만 소비되므로 그대로 «가공»·«전환» 이다) */
+function pipeTimeSplit(SIM, no, k) {
+  if (!SIM || !SIM.events) return null;
+  const all = SIM.events.filter(e => String(e.o) === String(no));
+  if (!all.length) return null;
+  const kMax = Math.max(...all.map(e => e.k));
+  const kk = Math.max(1, Math.min(kMax, Math.round(k || 1)));
+  const ev = all.filter(e => e.k === kk).sort((a, b) => a.s - b.s);
+  if (!ev.length) return null;
+  const cal = calOf(SIM, ev);
+  const s0 = ev[0].r, e0 = ev[ev.length - 1].e;
+  const total = e0 - s0;
+  const open = cal.capBetween(s0, e0);
+  let work = 0, setup = 0;
+  const rows = ev.map(e => {
+    work += e.d; setup += e.co;
+    return {
+      nid: e.n, mach: e.mach, u: e.u,
+      wait: Math.max(0, cal.capBetween(e.r, Math.max(e.r, e.s - e.co))),
+      setup: e.co, work: e.d,
+      r: e.r, s: e.s, e: e.e,
+    };
+  });
+  const wait = Math.max(0, open - work - setup);
+  return { k: kk, s: s0, e: e0, total, open, closed: Math.max(0, total - open),
+           work, setup, wait, rows, calRB: cal === SIM.calRB };
+}
+
+/* ====================================================================
    산식 검증 — "어떤 식에 어떤 값이 들어가 이 숫자가 나왔는가"
    ====================================================================
    시뮬레이터가 쓴 것과 **똑같은 경로·똑같은 인자**로 STD 를 다시 호출해

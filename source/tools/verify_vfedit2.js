@@ -27,9 +27,11 @@ const ok = (n, c, e) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  $
   await p.goto('file://' + path.join(ROOT, 'JCOE_Simulator.html'), { waitUntil: 'load' });
   await p.waitForTimeout(2400);
 
+  /* 「산식 검증」 탭 쪽 화면을 연다 (간트 안 상세 패널은 verify_gantt.js 가 본다) */
   const openFirst = async () => {
     await p.evaluate(() => goTab('pGantt')); await p.waitForTimeout(250);
-    await p.click('#gantt .gr[data-vf]'); await p.waitForTimeout(600);
+    await p.evaluate(() => openVerify(document.querySelector('#gantt .gr[data-vf]').getAttribute('data-vf')));
+    await p.waitForTimeout(600);
   };
   const cards = () => p.evaluate(() => [...document.querySelectorAll('#vfBody .vfstep[data-i]')]
     .map(c => ({ nid: c.dataset.nid, name: c.querySelector('.vfhd b').textContent,

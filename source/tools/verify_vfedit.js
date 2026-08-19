@@ -28,9 +28,11 @@ const ok = (name, cond, extra) => { if (!cond) fail++; console.log(`${cond ? 'PA
 
   const days0 = await p.textContent('#kpibar .k b');
 
-  /* 오더 간트 → 첫 행 클릭 */
+  /* 오더 간트 → 첫 행을 「산식 검증」 탭에서 연다
+     (2026-08-19 부터 행 클릭은 간트 안에서 펼치므로, 탭 화면은 openVerify 로 연다) */
   await p.evaluate(() => goTab('pGantt')); await p.waitForTimeout(300);
-  await p.click('#gantt .gr[data-vf]'); await p.waitForTimeout(700);
+  await p.evaluate(() => openVerify(document.querySelector('#gantt .gr[data-vf]').getAttribute('data-vf')));
+  await p.waitForTimeout(700);
 
   /* 카드 2 = Pre Bender (엑셀 preBenderPitch 칸이 있다) 를 찾는다 */
   const idx = await p.evaluate(() => {

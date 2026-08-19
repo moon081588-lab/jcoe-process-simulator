@@ -100,7 +100,9 @@ function runSim() {
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
-  buildVfOrders(); if($('vfBody')) renderVerify();   /* 편집 패널이 열려 있으면 숫자만 제자리 갱신된다 */
+  buildVfOrders();
+  /* 시뮬레이션이 다시 돌면 간트 상세도 같이 갱신된다 (renderGantt 안에서) */
+  if (!GV_OPEN) { VF_BOX = 'vfBody'; if($('vfBody')) { if(!VFS.no && $('vfOrder')) VFS.no = $('vfOrder').value; renderVerify(); } }
   renderKpiBar();
   if($('refKpi')) renderRefKpi();
   /* 3D 탭이 이미 떠 있으면 같은 결과로 갱신 — 두 화면이 어긋나지 않게 한다 */
@@ -1014,22 +1016,150 @@ function renderGantt(){
   const on = dl!=null && dlPct<=100;
   const marks    = on ? `<div class="gover" style="left:${dlPct}%;right:0"></div><div class="gdl nolbl" style="left:${dlPct}%"></div>` : '';
   const marksHdr = on ? `<div class="gover" style="left:${dlPct}%;right:0"></div><div class="gdl" style="left:${dlPct}%"></div>` : '';
+  const seg = $('gSeg') ? $('gSeg').checked : true;
   const rows = spans.map(([no,v])=>{
     const late = (dl && v.e>dl) || (v.tardyH!=null && v.tardyH>0);
+    const T = seg ? orderTimeSplit(SIM, no) : null;
     const tt = esc(`${no}\n${fmtT(v.s)} → ${fmtT(v.e)}\n${((v.e-v.s)/3600).toFixed(1)}h`)
-      + (v.due?`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`:'');
-    return `<div class="gr" data-vf="${esc(no)}" title="클릭 → 산식 검증">
+      + (T ? esc(`\n가공 ${(T.work/3600).toFixed(1)}h · 전환 ${(T.setup/3600).toFixed(1)}h`
+                + `\n대기 ${(T.wait/3600).toFixed(1)}h · 비가동 ${(T.closed/3600).toFixed(1)}h`) : '')
+      + (v.due?esc(`\n납기 ${v.due}${v.tardyH>0?` (${(v.tardyH/24).toFixed(1)}일 지연)`:' (준수)'}`):'');
+    /* 막대 안을 가공(진한 색)·전환(주황)으로 칠한다 — 나머지가 대기·비가동이다 */
+    let inner = '';
+    if (T && T.total > 0) {
+      const pos = (a,b)=>({l:(a-T.s)/T.total*100, w:Math.max(0.15,(b-a)/T.total*100)});
+      inner = mergeThin(T.workSpans, T.total).map(([a,b])=>{const q=pos(a,b);
+          return `<i class="gseg w" style="left:${q.l}%;width:${q.w}%"></i>`;}).join('')
+        + mergeThin(T.setupSpans, T.total).map(([a,b])=>{const q=pos(a,b);
+          return `<i class="gseg s" style="left:${q.l}%;width:${Math.max(0.35,q.w)}%"></i>`;}).join('');
+    }
+    return `<div class="gr" data-vf="${esc(no)}" title="클릭 → 이 오더의 시간 구성과 산식을 아래에 펼칩니다">
       <div class="gl"><b>${esc(no)}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
         <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
-      <div class="gvbtn">산식 검증 ▸</div>
+      <div class="gvbtn">${GV_OPEN===String(no)?'▼ 닫기':'▸ 펼치기'}</div>
       <div class="gt">${marks}
-        <div class="gb${late?' late':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
-          title="${tt}"></div>
-      </div></div>`;}).join('');
-  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gvbtn">검증</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
+        <div class="gb${late?' late':''}${seg?' seg':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
+          title="${tt}">${inner}</div>
+      </div></div>`
+      + (GV_OPEN===String(no) ? `<div class="gdet" data-det="${esc(no)}"></div>` : '');
+  }).join('');
+  $('gantt').innerHTML = `<div class="ghdr"><div class="gl">오더 / 사양</div><div class="gvbtn">상세</div><div class="gt">${marksHdr}${hdr}</div></div>${rows}`;
   $('gantt').querySelectorAll('.gr[data-vf]').forEach(el =>
-    el.addEventListener('click', () => openVerify(el.getAttribute('data-vf'))));
+    el.addEventListener('click', () => toggleGanttDetail(el.getAttribute('data-vf'))));
+  if (GV_OPEN) renderGanttDetail();
+  if ($('gLegend')) $('gLegend').style.display = seg ? '' : 'none';
 }
+/* 막대 안 조각이 수백 개가 되지 않게, 전체의 0.4% 미만으로 벌어진 틈은 이어 붙인다 */
+function mergeThin(spans, total){
+  if (!spans || !spans.length) return [];
+  const gap = total * 0.004;
+  const out = [spans[0].slice()];
+  for (let i=1;i<spans.length;i++){
+    const last = out[out.length-1];
+    if (spans[i][0] - last[1] <= gap) last[1] = Math.max(last[1], spans[i][1]);
+    else out.push(spans[i].slice());
+  }
+  return out.slice(0, 400);
+}
+
+/* ================= 간트 안 상세 패널 =================
+   "페이지가 따로 있어 불편하다" → 오더 간트에서 그 행 바로 아래에 펼친다.
+   ① 막대가 무엇으로 채워져 있는지 (가공 / 전환 / 대기 / 비가동)
+   ② 본 1개 리드타임의 같은 분해 + 공정별 대기·전환·가공
+   ③ 공정별 적용 산식 · 파라미터 · 계산 (편집 포함)
+   (2026-08-19) */
+let GV_OPEN = null;
+function toggleGanttDetail(no){
+  no = String(no);
+  if (GV_OPEN === no) { GV_OPEN = null; VF_BOX = 'vfBody'; VF_SHAPE = ''; VF_OPEN.clear(); renderGantt(); return; }
+  GV_OPEN = no;
+  VFS.no = no; VFS.k = 1; VFS.seq = ''; VFS.mach = '';
+  VF_OPEN.clear(); VF_SHAPE = '';
+  renderGantt();
+  const el = $('gantt').querySelector(`.gr[data-vf="${CSS.escape(no)}"]`);
+  if (el) el.scrollIntoView({ block:'nearest' });
+}
+const hSec = (v) => v >= 3600 ? (v/3600).toFixed(1)+'h' : Math.round(v/60)+'분';
+function splitBar(T, keys){
+  const seg = keys.map(k => ({ k:k[0], l:k[1], v:T[k[0]]||0, c:k[2] })).filter(x => x.v > 0);
+  const tot = seg.reduce((a,x)=>a+x.v,0) || 1;
+  return `<div class="tsbar">${seg.map(x=>
+      `<i style="width:${x.v/tot*100}%;background:${x.c}" title="${esc(x.l)} ${hSec(x.v)} (${(x.v/tot*100).toFixed(0)}%)"></i>`).join('')}</div>
+    <div class="tslg">${seg.map(x=>
+      `<span><i style="background:${x.c}"></i>${esc(x.l)} <b>${hSec(x.v)}</b> ${(x.v/tot*100).toFixed(0)}%</span>`).join('')}</div>`;
+}
+const TS_KEYS = [['work','가공','#2ea043'],['setup','전환(공구·다이 교체)','#d29922'],
+                 ['wait','대기(앞 공정·설비 점유)','#8b949e'],['closed','비가동(교대 종료·주말)','#30363d']];
+function renderGanttDetail(){
+  const box = $('gantt') && $('gantt').querySelector(`.gdet[data-det="${CSS.escape(GV_OPEN||'')}"]`);
+  if (!box) return;
+  const no = GV_OPEN;
+  const T = orderTimeSplit(SIM, no);
+  const P = pipeTimeSplit(SIM, no, VFS.k);
+  const v = SIM.orderSpan[no];
+  if (!T || !v) { box.innerHTML = '<div class="note">이 오더의 실행 기록이 없습니다.</div>'; return; }
+  const qty = v.qty;
+  const procRows = P ? P.rows.map(r => {
+    const n = NODE[r.nid] || { label:r.nid };
+    return `<tr><td>${esc(n.label.replace(/\n/g,' '))}</td>
+      <td class="v" style="color:#8b949e">${r.wait>0?hSec(r.wait):'—'}</td>
+      <td class="v" style="color:#d29922">${r.setup>0?hSec(r.setup):'—'}</td>
+      <td class="v" style="color:#7ee787">${hSec(r.work)}</td>
+      <td class="src">${fmtT(r.s).slice(5,16)} → ${fmtT(r.e).slice(11,16)}</td></tr>`;
+  }).join('') : '';
+  box.innerHTML = `<div class="gdinner">
+    <div class="gdhd"><b>${esc(no)}</b>
+      <span class="vfsub">OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(3)}m · ${qty}본 · ${esc(v.line)} · ${fmtT(T.s)} → ${fmtT(T.e)}</span>
+      <button class="vfbtn" id="gvBig">산식 검증 탭에서 크게 보기 ▸</button>
+      <button class="vfbtn" id="gvClose">✕ 닫기</button></div>
+
+    <div class="gdgrid">
+      <div class="gdcard">
+        <div class="vfcap">이 막대(${hSec(T.total)})가 무엇으로 채워져 있나 — 오더 전체</div>
+        ${splitBar(T, TS_KEYS)}
+        <div class="vfwarn" style="color:var(--dim)">
+          «가공» 은 이 오더의 파이프 중 <b>하나라도</b> 설비에 물려 있던 시간입니다(${T.pipes}본이 겹쳐 흐릅니다).
+          «대기» 는 공장이 도는데 이 오더가 아무 설비도 못 잡은 시간 — 앞 공정이 안 끝났거나 설비가 다른 오더에 물린 경우입니다.
+          네 값의 합은 막대 길이와 정확히 같습니다.${T.calRB?' (R/B 근무조 기준)':''}
+        </div>
+      </div>
+      <div class="gdcard">
+        <div class="vfcap">본 1개가 겪는 시간 — <b>${P?P.k:1}번째 본</b> (${P?hSec(P.total):'—'})</div>
+        ${P ? splitBar(P, TS_KEYS) : '<div class="vfform">기록 없음</div>'}
+        <div class="vfwarn" style="color:var(--dim)">
+          한 본이 첫 공정에 도착해 포장까지 끝나는 데 걸린 실제 시간입니다.
+          표준시간(가공)은 ${P?hSec(P.work):'—'} 인데 실제 리드타임이 ${P?hSec(P.total):'—'} 인 이유가 여기 다 있습니다.
+        </div>
+      </div>
+    </div>
+
+    <div class="gdcard" style="margin-top:10px">
+      <div class="gdrow">
+        <div class="vfcap" style="margin:0">공정별 — 대기 · 전환 · 가공 (${P?P.k:1}번째 본)</div>
+        <label class="gdk">본 번호 <input type="number" id="gvK" value="${P?P.k:1}" min="1" max="${qty}" step="1"></label>
+        <label class="gdk">확관 호기 <select id="gvMach">
+          <option value="">실제 배정</option><option value="M1">#1호기</option><option value="M2">#2호기</option>
+          <option value="BOTH">#1·#2 동시</option><option value="RB">R/B 라인</option></select></label>
+      </div>
+      <table class="vfp gdtbl"><tr><td><b>공정</b></td><td class="v"><b>대기</b></td><td class="v"><b>전환</b></td>
+        <td class="v"><b>가공</b></td><td class="src"><b>실행 구간</b></td></tr>${procRows}</table>
+    </div>
+
+    <div class="vfcap" style="margin:14px 0 6px">공정별 적용 산식 · 파라미터 · 계산 <span style="color:var(--dim);font-weight:400">— 카드의 ✎ 편집으로 그 자리에서 값을 고칠 수 있습니다</span></div>
+    <div id="gvf"></div>
+  </div>`;
+  if ($('gvMach')) $('gvMach').value = VFS.mach || '';
+  $('gvClose').onclick = (e) => { e.stopPropagation(); toggleGanttDetail(no); };
+  $('gvBig').onclick   = (e) => { e.stopPropagation(); VF_BOX='vfBody'; openVerify(no); };
+  $('gvK').onchange    = () => { VFS.k = Math.max(1, Math.round(+$('gvK').value || 1)); refreshGanttDetail(); };
+  $('gvMach').onchange = () => { VFS.mach = $('gvMach').value; refreshGanttDetail(); };
+  box.querySelector('.gdinner').addEventListener('click', e => e.stopPropagation());
+  VF_BOX = 'gvf';
+  VFS.no = no;
+  renderVerify(true);
+}
+/* 본 번호·호기만 바뀌었을 때 — 간트 전체를 다시 그리지 않는다 */
+function refreshGanttDetail(){ VF_OPEN.clear(); VF_SHAPE = ''; renderGanttDetail(); }
 
 /* ================= 산식 검증 =================
    "어떤 식에 어떤 파라미터가 들어가 이 값이 나왔는가" 를 공정별로 전부 펼친다.
@@ -1081,8 +1211,14 @@ function vfActual(no, k){
   };
 }
 function openVerify(no){
+  VF_BOX = 'vfBody';
+  VFS.no = String(no); VFS.k = 1; VFS.seq = ''; VFS.mach = '';
+  VF_OPEN.clear(); VF_SHAPE = '';
   buildVfOrders(no);
   if ($('vfOrder')) $('vfOrder').value = String(no);
+  if ($('vfK')) $('vfK').value = 1;
+  if ($('vfSeq')) $('vfSeq').value = '';
+  if ($('vfMach')) $('vfMach').value = '';
   goTab('pVf');
   renderVerify(true);
 }
@@ -1092,31 +1228,35 @@ function openVerify(no){
     사라져 두 번째 입력부터 조용히 버려진다. 2026-08-14 전수 감사 ①) */
 const VF_OPEN = new Set();
 let VF_LAST = null;                     // 마지막으로 계산한 verifyOrder 결과
+/* ★ 화면이 두 곳(「산식 검증」 탭 · 오더 간트 안 상세 패널)이라 **상태를 DOM 이 아니라 여기서** 갖는다.
+   종전에는 vfCompute 가 $('vfOrder') 같은 입력칸을 직접 읽어, 다른 화면에서는 쓸 수 없었다. */
+const VFS = { no: null, k: 1, seq: '', mach: '' };
+let VF_BOX = 'vfBody';                  // 카드를 그릴 컨테이너 id
+let VF_SHAPE = '';                      // 마지막으로 그린 공정 구성 (nid 시퀀스)
 
 /** 지금 화면에 그려진 카드와 같은 조건으로 다시 계산한다.
     본 번호를 바꾸면 **그 본의 실제 호기·전역 순번**을 시뮬레이션에서 가져온다. */
 function vfCompute(){
-  if (!CFG) return null;
-  const sel = $('vfOrder'); if (!sel || !sel.value) return null;
-  const kRaw = $('vfK') ? parseFloat($('vfK').value) : 1;
-  const k = Math.max(1, Math.round(isFinite(kRaw) ? kRaw : 1));
-  const act = vfActual(sel.value, k);
-  const mSel = $('vfMach') ? $('vfMach').value : '';
+  if (!CFG || !VFS.no) return null;
+  const k = Math.max(1, Math.round(isFinite(VFS.k) ? VFS.k : 1));
+  const act = vfActual(VFS.no, k);
   /* 전역 누적 본 번호: 비워 두면(=자동) 시뮬레이션 값을 그대로 쓴다.
      사용자가 숫자를 넣으면 그 값을 쓴다(민감도 확인용). */
-  const seqRaw = $('vfSeq') ? $('vfSeq').value.trim() : '';
+  const seqRaw = String(VFS.seq || '').trim();
   const seqAuto = seqRaw === '';
   const seqNum = Math.max(1, Math.round(parseFloat(seqRaw) || 1));
-  const V = verifyOrder(sel.value, CFG, {
+  const V = verifyOrder(VFS.no, CFG, {
     k,
     seqGlobal: seqAuto ? (act.g != null ? act.g : k) : seqNum,
-    machine: mSel || act.machine || null,
+    machine: VFS.mach || act.machine || null,
     co: act.co,
   });
   if (V) {
-    V._act = act; V._manualMach = !!mSel; V._seqAuto = seqAuto;
+    V._act = act; V._manualMach = !!VFS.mach; V._seqAuto = seqAuto;
+    VFS.k = V.k;                                     // 범위 밖 입력은 여기서 보정된다
     /* 보정한 값을 입력칸에 되먹인다 — 칸에는 999 가 남고 계산은 70본으로 되던 문제 */
     if ($('vfK') && String(V.k) !== $('vfK').value) $('vfK').value = V.k;
+    if ($('gvK') && String(V.k) !== $('gvK').value) $('gvK').value = V.k;
     if ($('vfSeq') && seqAuto) $('vfSeq').placeholder = `자동 ${V.seqGlobal}`;
   }
   return V;
@@ -1183,8 +1323,8 @@ function vfReconHtml(V){
 function vfPatch(pre){
   const V = pre || vfCompute(); if (!V) return;
   VF_LAST = V;
-  const box = $('vfBody'); if (!box) return;
-  $('vfSum').innerHTML = vfSumHtml(V);
+  const box = $(VF_BOX) || $('vfBody'); if (!box) return;
+  if ($('vfSum') && VF_BOX === 'vfBody') $('vfSum').innerHTML = vfSumHtml(V);
   V.steps.forEach((st, i) => {
     const card = box.querySelector(`.vfstep[data-i="${i}"]`); if (!card) return;
     const set = (f, html) => { const el = card.querySelector(`[data-f="${f}"]`); if (el) el.innerHTML = html; };
@@ -1233,7 +1373,7 @@ function vfSameShape(box, V){
   return true;
 }
 function renderVerify(force){
-  const box = $('vfBody'); if(!box) return;
+  const box = $(VF_BOX) || $('vfBody'); if(!box) return;
   /* 편집 패널이 열려 있고 **공정 구성이 그대로일 때만** 숫자만 갈아 끼운다.
      구성이 바뀌었으면 편집 패널을 잃더라도 반드시 다시 그린다 — 틀린 값을 보여주는 것보다 낫다. */
   if (!force && VF_OPEN.size && box.querySelector('.vfstep')) {
@@ -1241,14 +1381,20 @@ function renderVerify(force){
     if (V0 && vfSameShape(box, V0)) return vfPatch(V0);
   }
   if (!CFG) { box.innerHTML = '<div class="note">먼저 「계획 실행」에서 시뮬레이션을 한 번 돌려 주세요.</div>'; return; }
-  const sel = $('vfOrder');
-  if (sel && !sel.options.length) buildVfOrders();
-  if (!sel || !sel.value) { box.innerHTML = '<div class="note">오더가 없습니다.</div>'; return; }
+  if ($('vfOrder') && !$('vfOrder').options.length) buildVfOrders();
+  if (!VFS.no) { box.innerHTML = '<div class="note">오더가 없습니다.</div>'; return; }
   const V = vfCompute();
   if (!V) { box.innerHTML = '<div class="note">해당 오더를 찾을 수 없습니다.</div>'; return; }
+  /* 다시 그리더라도 **열어 둔 편집 패널은 그대로 열어 준다.**
+     간트 안에서 값을 고치면 runSim → renderGantt 로 패널이 통째로 다시 만들어지는데,
+     그때마다 편집칸이 닫히면 연속 편집이 불가능하다. 공정 구성이 같을 때만 복원한다. */
+  const shape = V.steps.map(x => x.nid).join('>') + '@' + V.no;
+  const reopen = (shape === VF_SHAPE) ? new Set(VF_OPEN) : new Set();
+  VF_SHAPE = shape;
   VF_LAST = V; VF_OPEN.clear();
   if ($('vfK')) $('vfK').max = V.qty;
-  $('vfSum').innerHTML = vfSumHtml(V);
+  const inTab = VF_BOX === 'vfBody';
+  if (inTab && $('vfSum')) $('vfSum').innerHTML = vfSumHtml(V);
 
   const rowsHtml = V.steps.map((st, i) => `<div class="vfstep" data-i="${i}" data-nid="${esc(st.nid)}" data-st="${esc(st.st||'')}">
       <div class="vfhd"><div class="vfno">${i+1}</div>
@@ -1267,17 +1413,21 @@ function renderVerify(force){
         <div class="vfedbox" data-f="edit" hidden></div>
       </div></div>`).join('');
 
-  const recon = V._act && V._act.evSec ? `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
+  const recon = (inTab && V._act && V._act.evSec) ? `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
         <span class="vfsub">${esc(V.no)} 의 <b>${V.k}번째 본</b>이 실제로 각 공정에 머문 시간 vs 위 산식 결과 (${V._act.pipes}개 공정)</span></div>
       <div class="vfbody"><div data-f="recon">${vfReconHtml(V)}</div></div></div>` : '';
 
-  box.innerHTML = `<div class="note" style="margin:0 0 12px">
+  /* #vfDirty 는 「산식 검증」 탭에만 둔다 — 간트 안에 또 만들면 id 가 중복된다 */
+  const head = inTab ? `<div class="note" style="margin:0 0 12px">
       <b>${esc(V.no)}</b> · 오더 내 <b>${V.k}번째 본</b> (전역 누적 ${V.seqGlobal}본째) 기준입니다.
       표준시간은 <b>가동률을 고려하지 않은 Net Time</b>이며, 설비 전환시간·대기시간은 여기에 포함되지 않습니다.
       <div id="vfDirty" style="margin-top:6px"></div>
-    </div>${rowsHtml}${recon}`;
-  box.querySelectorAll('.vfedit').forEach(b => b.onclick = () => vfToggleEdit(+b.dataset.i));
-  vfMarkEdited();
+    </div>` : '';
+  box.innerHTML = head + rowsHtml + recon;
+  box.querySelectorAll('.vfedit').forEach(b => b.onclick = (e) => { e.stopPropagation(); vfToggleEdit(+b.dataset.i); });
+  box.querySelectorAll('.vfstep').forEach(c => c.addEventListener('click', e => e.stopPropagation()));
+  reopen.forEach(i => { if (V.steps[i]) vfToggleEdit(i); });
+  if (inTab) vfMarkEdited();
 }
 
 /** 열려 있는 편집칸의 표시값을 현재 엔진값으로 맞춘다.
@@ -1304,7 +1454,7 @@ function vfSyncEditInputs(card, st){
    ②는 종전에 어디서도 고칠 수 없었다(「기준정보」 탭은 행 수만 보여 줬다).
    계획서에서 온 값(길이·두께·외경)과 파생값은 여기서 고치지 않는다 — 계획서를 고쳐야 한다. */
 function vfToggleEdit(i){
-  const card = $('vfBody').querySelector(`.vfstep[data-i="${i}"]`); if (!card) return;
+  const card = ($(VF_BOX) || $('vfBody')).querySelector(`.vfstep[data-i="${i}"]`); if (!card) return;
   const box = card.querySelector('[data-f="edit"]');
   const btn = card.querySelector('.vfedit');
   if (!box.hidden) { box.hidden = true; VF_OPEN.delete(i); btn.textContent = '✎ 편집'; btn.classList.remove('on'); return; }
@@ -1902,6 +2052,21 @@ function boot(){
       $('tabMore').classList.remove('open');
     }
     if (t.dataset.p==='pFlow') fit();
+    /* 간트로 돌아오면 펼쳐 둔 상세 패널이 다시 카드의 목적지가 된다 */
+    if (t.dataset.p==='pGantt' && GV_OPEN && SIM && $('gvf')) {
+      VF_BOX = 'gvf'; VF_OPEN.clear(); VF_SHAPE = ''; VFS.no = GV_OPEN;
+      renderVerify(true);
+    }
+    /* 「산식 검증」 탭을 직접 열면 카드 목적지를 탭 쪽으로 되돌린다
+       (간트 안 상세를 펼쳐 둔 채로 탭을 눌렀을 때 빈 화면이 되지 않게 한다) */
+    if (t.dataset.p==='pVf' && SIM) {
+      VF_BOX = 'vfBody'; VF_OPEN.clear(); VF_SHAPE = '';
+      if (!VFS.no && $('vfOrder')) { buildVfOrders(); VFS.no = $('vfOrder').value; }
+      if ($('vfOrder') && VFS.no) $('vfOrder').value = VFS.no;
+      if ($('vfK')) $('vfK').value = VFS.k;
+      if ($('vfMach')) $('vfMach').value = VFS.mach || '';
+      renderVerify(true);
+    }
     /* 3D 는 처음 열 때 한 번만 초기화하고(three.js 장면 구성 비용이 크다),
        그 뒤로는 2D 가 계산한 SIM 을 그대로 받아 그린다. */
     if (t.dataset.p==='p3D' && window.JCOE3D) {
@@ -1922,7 +2087,16 @@ function boot(){
   }
   $('btnRun').onclick=runSim;
   $('btnCalc').onclick=calc;
-  ['vfOrder','vfK','vfSeq','vfMach'].forEach(id=>{ if($(id)) $(id).addEventListener('change', ()=>renderVerify(true)); });
+  if($('gSeg')) $('gSeg').onchange = () => { if(SIM) renderGantt(); };
+  ['vfOrder','vfK','vfSeq','vfMach'].forEach(id=>{ if($(id)) $(id).addEventListener('change', ()=>{
+    VF_BOX = 'vfBody';
+    if ($('vfOrder')) VFS.no = $('vfOrder').value;
+    if (id === 'vfOrder') { VFS.k = 1; VFS.seq = ''; if ($('vfK')) $('vfK').value = 1; if ($('vfSeq')) $('vfSeq').value = ''; }
+    VFS.k = Math.max(1, Math.round(parseFloat($('vfK') ? $('vfK').value : 1) || 1));
+    VFS.seq = $('vfSeq') ? $('vfSeq').value : '';
+    VFS.mach = $('vfMach') ? $('vfMach').value : '';
+    renderVerify(true);
+  }); });
   document.querySelectorAll('#pCalc input,#pCalc select').forEach(el=>el.oninput=calc);
   /* ── 공정 흐름 화면 끌어서 이동 · 휠로 확대 (2026-08-14) ── */
   let dragV = null;

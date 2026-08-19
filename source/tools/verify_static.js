@@ -62,6 +62,15 @@ function literalIds(file, prefix = '') {
     await p.setInputFiles('#lgFile', log);
     await p.waitForTimeout(2000);
   }
+  /* 오더 간트의 상세 패널도 펼쳐 둔다 — 그 안 컨트롤(gvK·gvMach…)까지 id 검사 대상에 넣기 위해서다.
+     (2026-08-19 — 간트 안 상세 패널 신설) */
+  await p.evaluate(() => goTab('pGantt'));
+  await p.waitForTimeout(400);
+  await p.click('#gantt .gr[data-vf]');
+  await p.waitForTimeout(900);
+  const detOpen = await p.evaluate(() => !!document.querySelector('#gantt .gdet .gdinner'));
+  ok('⓪ 간트 행을 누르면 그 자리에 상세 패널이 펼쳐진다', detOpen);
+
   console.log(`탭 ${tabs.length}개를 모두 열었습니다: ${tabs.join(', ')}\n`);
 
   /* ---- ① 런타임 id 중복 ---------------------------------------------- */

@@ -28,7 +28,7 @@ POSTECH 산업경영공학과 IDEA Lab × 세아제강 「철강 제조 공정�
 | 분석 ▾ | 하는 일 |
 |---|---|
 | 병목 분석 | 가공·전환·제약 병목을 나눠서 진단 |
-| 오더 간트 | 오더별 착수~완료 구간 · **행을 누르면 산식 검증으로** |
+| 오더 간트 | 오더별 착수~완료 구간 · **행을 누르면 그 자리에서** 시간 구성(가공/전환/대기/비가동) · 공정별 대기·전환·가공 · 적용 산식이 펼쳐집니다 |
 | 확관 최적화 | 배분 규칙 비교 · 최적화 실행 · 외부 CP-SAT 스케줄 가져오기 |
 | In · Out | 설비별 투입·산출 시각표 |
 | 표준시간 계산기 | 규격을 넣으면 20개 공정 산출식을 항별로 전개 |
@@ -533,7 +533,7 @@ python3 source/build.py       # → ./JCOE_Simulator.html  (2D + 3D 한 파일)
 
 WebGL 을 쓸 수 없는 PC 에서는 **3D 탭에만 안내가 뜨고 나머지 기능은 전부 정상 동작**합니다.
 
-### 검증 — 9종
+### 검증 — 10종
 
 ```bash
 node source/tools/verify_formulas.js   # 산출식 20개를 엑셀 원문으로 독립 재계산 (node 만 있으면 됨)
@@ -546,6 +546,7 @@ node source/tools/verify_static.js     # 모든 탭을 실제로 열어 id 중�
 node source/tools/verify_ui.js         # 2D·3D 브라우저 통합 (두 화면 결과 일치까지 확인)
 node source/tools/verify_vfedit.js     # 「산식 검증」 인라인 편집 — 값 반영·연속 입력·되돌리기
 node source/tools/verify_vfedit2.js    # 3차 감사 회귀(브라우저) — 카드 밀림·폭주 방어·탭 동기화·리셋
+node source/tools/verify_gantt.js      # 간트 안 상세 패널 — 시간 분해 합 일치·공정별 표·인라인 편집
 ```
 
 `verify_formulas.js` 는 **엔진과 독립적으로** 엑셀 산출식을 다시 구현해 대조합니다.
@@ -613,6 +614,7 @@ source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기
 │   ├── verify_ui.js            2D·3D 브라우저 통합 · 두 화면 결과 일치 (playwright)
 │   ├── verify_vfedit.js        「산식 검증」 인라인 편집 동작 (playwright)
 │   ├── verify_vfedit2.js       3차 감사 회귀 — 카드 밀림·폭주 방어 (playwright)
+│   ├── verify_gantt.js         간트 안 상세 패널 · 시간 분해 (playwright)
 │   ├── runsim.js               Node 에서 시뮬레이터를 불러오는 헬퍼
 │   ├── extract_tables.py       엑셀 → data/tables.json
 │   ├── extract_images.py       시트에 이미지로만 적힌 산출식 추출 → data/evidence/
