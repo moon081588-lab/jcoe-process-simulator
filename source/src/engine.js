@@ -172,9 +172,44 @@ function setRefTbl(patch) {
     /* __proto__ 등으로 프로토타입을 오염시키지 못하게 한다 (2026-08-14 전수 감사와 같은 이유) */
     if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
     const v = patch[k];
-    if (typeof v === 'number' && isFinite(v)) REF.tbl[k] = v;
+    /* 표 값은 전부 **속도·거리·시간·횟수**라 0 이하가 될 수 없다.
+       0 을 받으면 나눗셈이 Infinity 가 되고 음수를 받으면 소요시간이 음수가 된다.
+       종전에는 `isFinite` 만 봐서 JSON 한 장으로 완료일이 192만 일이 됐다. (2026-08-19 전수 감사) */
+    if (typeof v === 'number' && isFinite(v) && v > 0) REF.tbl[k] = v;
   }
   return REF.tbl;
+}
+/** 이 키가 **실제로 조회에 쓰이는 칸**을 가리키는가 —
+    화면/불러오기에서 "저장은 되는데 아무 효과 없는" 재정의를 막는다.
+    tblVal 이 만드는 키 형태와 정확히 같은 것만 통과시킨다. (2026-08-19 전수 감사) */
+const TBL_RANGE_COLS = { tackWeld:[2], insideWeld:[2,3], outsideWeld:[2,3], utCut:[2],
+                         emFeed:[2], preBenderPitch:[2], endFacing:[3] };
+const TBL_OBJ_TABLES = { pressX1:'num', hydroFill:'num', emSpeed:'emSpeed', hydroConst:'key' };
+/* hydroConst 는 표에 6개 키가 있지만 엔진이 조회하는 것은 4개뿐이다
+   (pressureRise·faceplateChangeMin 은 기준정보 상수로 따로 관리된다) */
+const TBL_HYDRO_KEYS = ['deflate2nd', 'deflate2nd_36up', 'airVent', 'airVent_36up'];
+function refTblKeyValid(key) {
+  const seg = String(key).split('|');
+  const tab = T[seg[0]];
+  if (tab == null) return false;
+  if (seg.length === 3) {
+    if (seg[0] === 'emSpeed') {                       // emSpeed|<행>|normal|high
+      const i = Number(seg[1]);
+      return String(i) === seg[1] && Array.isArray(tab) && tab[i] != null
+          && (seg[2] === 'normal' || seg[2] === 'high');
+    }
+    const cols = TBL_RANGE_COLS[seg[0]]; if (!cols) return false;
+    const i = Number(seg[1]), c = Number(seg[2]);
+    return String(i) === seg[1] && String(c) === seg[2]
+        && Array.isArray(tab) && tab[i] != null && cols.indexOf(c) >= 0 && tab[i][c] !== undefined;
+  }
+  if (seg.length === 2) {
+    const kind = TBL_OBJ_TABLES[seg[0]]; if (!kind) return false;
+    if (kind === 'num') return String(Number(seg[1])) === seg[1] && own(tab, seg[1]);
+    if (kind === 'key') return TBL_HYDRO_KEYS.indexOf(seg[1]) >= 0 && typeof tab[seg[1]] === 'number';
+    return false;
+  }
+  return false;
 }
 function refTblDiff() { return Object.assign({}, REF.tbl); }
 /** 설비 대수 반영. patch = { 노드ID: 대수 } — 빈 객체면 코드 기본값 사용 */
@@ -247,11 +282,18 @@ const RSTD = new Proxy({}, { get: (_, proc) =>
 
    sec / expr / terms 는 그대로 두므로 기존 화면·검사에는 영향이 없다. (2026-08-14)
    ==================================================================== */
+/* 소수 3자리 고정 반올림은 **0 이 아닌 값을 0 으로 찍어** 「123/0」 같은 식을 만든다.
+   (기준정보에서 용접속도를 0.0004 로 낮추면 그대로 재현된다. 2026-08-19 전수 감사)
+   → 3자리로 충분하면 3자리, 아니면 유효숫자를 지켜 실제 값과 같은 수를 찍는다. */
 const nf = (v) => {
   if (v == null || v === '') return '—';
   if (typeof v !== 'number') return String(v);
+  if (!isFinite(v)) return String(v);
   if (Number.isInteger(v)) return v.toLocaleString();
-  return (Math.round(v * 1000) / 1000).toString();
+  const r = Math.round(v * 1000) / 1000;
+  if (r !== 0) return r.toString();
+  /* 3자리로 반올림하면 0 이 되는 아주 작은 값 — 유효숫자 6자리로 살린다 */
+  return Number(v.toPrecision(6)).toString();
 };
 /** 산식 검증 정보를 결과 객체에 붙인다 */
 function withCalc(res, tpl, vars, subst) {
@@ -311,7 +353,9 @@ STD.PreBender = (s, line) => {
   const pitch = pickRange(T.preBenderPitch, s.t, 2, 'preBenderPitch');
   const pitchRef = pickRangeRef(T.preBenderPitch, s.t, 2, 'preBenderPitch');
   const base = line === '18M' ? P.base18 : P.base12;
-  const n = ceil((s.L - P.lead) / pitch);
+  /* 선단 여유(lead)를 관 길이보다 크게 잡으면 n 이 음수가 되어 **음수 표준시간·음수 가동률**이
+     그대로 KPI 에 찍혔다. 성형 횟수는 0 미만이 될 수 없다. (2026-08-19 전수 감사) */
+  const n = Math.max(ceil((s.L - P.lead) / pitch), 0);
   const sec = base + (pitch / P.pitchDiv + P.perStroke) * n;
   return withCalc({ sec, expr: `${base} + (pitch/${P.pitchDiv} + ${P.perStroke}) × ceil((L−${P.lead})/pitch), pitch=${pitch}mm, n=${n}`,
     terms: [['기본', base], [`성형 ${n}회`, (pitch / P.pitchDiv + P.perStroke) * n]] },
@@ -360,7 +404,7 @@ STD.GapPress = (s) => {
   return withCalc({ sec, expr: `${P.base} − L[m]/${P.lenDiv} + [ceil(L/${P.segLen})×${P.per}×${P.mult}]${hi ? `×${P.x70}(X70↑)` : ''}, ceil(L/${P.segLen})=${seg}`,
     terms: [['기본', P.base], [`길이 보정 −L/${P.lenDiv}`, -Lm / P.lenDiv], [`프레스 ${seg}구간`, bracket]] },
     `${P.base}s − (길이[m]/${P.lenDiv}) + [올림(길이/${P.segLen}m)×${P.per}s×${P.mult}]`
-      + `${hi ? ` ×${P.x70}  ← X70 이상` : '   (X70 미만이라 대괄호 밖 ×${P.x70} 미적용)'}`,
+      + `${hi ? ` ×${P.x70}  ← X70 이상` : `   (X70 미만이라 대괄호 밖 ×${P.x70} 미적용)`}`,
     [['길이(m)', Lm, '계획서'], ['두께(mm)', s.t, '계획서 — t>25 일 때만 투입'],
      ['재질 등급', gradeLabel(s.grade), '계획서'],
      ['프레스 구간 수', seg, `올림(${nf(Lm)}/${P.segLen})`],
@@ -674,7 +718,9 @@ STD.Expander = (s, machine, cfg) => {
           ? '소형 다이 → −100' : (machine === 'RB' ? 'R/B → −90' : '통상 −150')],
        ['확관 Step(mm)', d.recipe, `다이 ${nf(d.step)} − 여유 ${nf(d.margin)} = HMI 입력값`],
        ['확관 횟수 N(회)', n, EXP_NMODE === 'excel' ? '엑셀 N식' : '운영모델 specs.py N식']].concat([['옥외 열처리', heat ? '예 (자재기호 C2 / 병목 HT102)' : '아니오', '계획서·자재내역']]),
-      heat ? `${E.rbBase}` : `${E.rbBase} + (${n}−${E.rbOffset})×${E.rbPer}`);
+      /* sec 는 max(N−offset, 0) 을 쓴다. 표기식도 같은 클램프를 반영해야
+         N<offset(짧은 시편) 에서 화면 숫자가 엔진과 어긋나지 않는다. (2026-08-19 전수 감사) */
+      heat ? `${E.rbBase}` : `${E.rbBase} + ${nf(Math.max(n - E.rbOffset, 0))}×${E.rbPer}`);
   }
   const E = RSTD.Expander;
   if (machine === 'M1') {
@@ -768,8 +814,9 @@ STD.HydroTest = (s) => {
       + `   [${big ? `36" 이상` : `36" 미만`}${s.L / 1000 >= P.longThresholdM ? `, 18m 이상 +${P.longAdd}s` : ''}]`,
     [['외경(mm)', s.od, '계획서'], ['공칭 인치(")', Math.round(odInch(s.od)), `외경/25.4 반올림 — ${P.bigInch}" 이상이면 대구경 상수`],
      ['길이(mm)', s.L, '계획서'],
-     ['충수 시간(s)', fill, `엑셀 hydroFill 표 (${fillRef.at}")${s.L / 1000 >= P.longThresholdM ? ` + 18m 가산 ${P.longAdd}` : ''}`,
-      s.L / 1000 >= P.longThresholdM ? null : fillRef],
+     /* 18m 이상이면 기준정보 상수 longAdd 가 더해질 뿐, **표 칸 자체는 같다.**
+        종전에는 이 경우 편집 서술자를 지워 "계획서에서 읽은 값" 으로 잘못 안내했다. (2026-08-19 전수 감사) */
+     ['충수 시간(s)', fill, `엑셀 hydroFill 표 (${fillRef.at}")${s.L / 1000 >= P.longThresholdM ? ` + 기준정보 18m 가산 ${P.longAdd}` : ''}`, fillRef],
      ['압력 상승(s)', P.riseSec, '기준정보'],
      ['압력 유지(s)', hold, s.holdSec != null ? 'MES 제작시방서 조회값' : '기본값 60s (시방서 미조회)'],
      ['2차 압빼기(s)', de, `엑셀 hydroConst.${deK}`, deRef],
@@ -918,10 +965,15 @@ function changeoverSec(station, prev, cur, machine) {
   if (!prev) return 0;
   if (station === 'Expander' && EXP_SETUP_MODE === 'tool') return expanderSetup(prev, cur, machine).sec;
   const c = CHANGEOVER[station]; if (!c) return 0;
+  /* ★ **셋 중 가장 큰 값 하나만** 적용한다.
+     2026-08-06 세아제강 회신 — "셋업은 상위값만 적용하는 것이 맞음. 헤드+다이 동시 교체 시
+     150분(합산 아님)". 확관의 공구 계층 룰(expanderSetup)은 처음부터 상위값만 적용했는데,
+     이 일반 경로만 od+t+L 을 **더하고** 있었다. 화면 설명("셋 중 가장 큰 값 하나만 적용됩니다")
+     과도 정반대였다. → 총 전환시간이 약 11% 과대 계상됐다. (2026-08-19 전수 감사) */
   let s = 0;
-  if (Math.abs(prev.od - cur.od) > 0.5) s += c.od;
-  if (Math.abs(prev.t - cur.t) > 0.5) s += c.t;
-  if (Math.abs(prev.L - cur.L) > 1) s += c.L;
+  if (Math.abs(prev.od - cur.od) > 0.5) s = Math.max(s, c.od);
+  if (Math.abs(prev.t - cur.t) > 0.5) s = Math.max(s, c.t);
+  if (Math.abs(prev.L - cur.L) > 1) s = Math.max(s, c.L);
   // Edge Miller 은 25T 경계를 넘을 때만 Tool 교체
   /* 경계는 Gap Press 투입 조건·재질 대리변수와 같은 `t > 25` 로 통일 (종전 `>= 25` 는 t=25.0 에서 어긋남) */
   if (station === 'EdgeMiller' && (prev.t > 25) === (cur.t > 25)) s = 0;

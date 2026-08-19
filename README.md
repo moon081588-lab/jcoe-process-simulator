@@ -533,17 +533,19 @@ python3 source/build.py       # → ./JCOE_Simulator.html  (2D + 3D 한 파일)
 
 WebGL 을 쓸 수 없는 PC 에서는 **3D 탭에만 안내가 뜨고 나머지 기능은 전부 정상 동작**합니다.
 
-### 검증 — 7종
+### 검증 — 9종
 
 ```bash
 node source/tools/verify_formulas.js   # 산출식 20개를 엑셀 원문으로 독립 재계산 (node 만 있으면 됨)
 node source/tools/verify_audit.js      # 전수 감사 회귀 방지 72항목
 node source/tools/verify_prodlog.js    # 실적 로그 파서·추정치
-node source/tools/verify_calc.js       # 「산식 검증」 화면에 찍히는 식을 실제로 계산해 엔진 값과 대조 (288건)
+node source/tools/verify_calc.js       # 「산식 검증」 화면에 찍히는 식을 실제로 계산해 엔진 값과 대조 (289건)
+node source/tools/verify_audit2.js     # 3차 전수 감사 회귀 — 산식 표기·계산·표 재정의 방어·시뮬 일치 21,388건
 npm i playwright
 node source/tools/verify_static.js     # 모든 탭을 실제로 열어 id 중복·미존재 참조·콘솔 오류 점검
 node source/tools/verify_ui.js         # 2D·3D 브라우저 통합 (두 화면 결과 일치까지 확인)
 node source/tools/verify_vfedit.js     # 「산식 검증」 인라인 편집 — 값 반영·연속 입력·되돌리기
+node source/tools/verify_vfedit2.js    # 3차 감사 회귀(브라우저) — 카드 밀림·폭주 방어·탭 동기화·리셋
 ```
 
 `verify_formulas.js` 는 **엔진과 독립적으로** 엑셀 산출식을 다시 구현해 대조합니다.
@@ -605,10 +607,12 @@ source/                     ↓ 위 HTML 을 만들어 내는 것 전부. 쓰기
 │   ├── verify_formulas.js      산출식 20개를 엑셀 원문으로 독립 재계산 (node)
 │   ├── verify_audit.js         전수 감사 회귀 방지 72항목 (node)
 │   ├── verify_prodlog.js       실적 로그 파서·추정치 (node)
-│   ├── verify_calc.js          「산식 검증」 표기식 ↔ 엔진 값 대조 288건 (node)
+│   ├── verify_calc.js          「산식 검증」 표기식 ↔ 엔진 값 대조 289건 (node)
+│   ├── verify_audit2.js        3차 전수 감사 회귀 · 시뮬 일치 21,388건 (node)
 │   ├── verify_static.js        id 중복·미존재 참조·콘솔 오류 (playwright)
 │   ├── verify_ui.js            2D·3D 브라우저 통합 · 두 화면 결과 일치 (playwright)
 │   ├── verify_vfedit.js        「산식 검증」 인라인 편집 동작 (playwright)
+│   ├── verify_vfedit2.js       3차 감사 회귀 — 카드 밀림·폭주 방어 (playwright)
 │   ├── runsim.js               Node 에서 시뮬레이터를 불러오는 헬퍼
 │   ├── extract_tables.py       엑셀 → data/tables.json
 │   ├── extract_images.py       시트에 이미지로만 적힌 산출식 추출 → data/evidence/

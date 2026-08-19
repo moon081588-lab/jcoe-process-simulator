@@ -745,7 +745,10 @@ function verifyOrder(no, cfg, opts) {
   const qty = rows.reduce((a, x) => a + x.qty, 0);
   const k = Math.max(1, Math.min(qty, Math.round(opts.k || 1)));          // 오더 내 본 번호
   const seqGlobal = opts.seqGlobal != null ? opts.seqGlobal : k;          // 전역 순번(포장 10본마다)
-  /* 확관 호기 — 시뮬레이션이 실제로 배정한 호기를 그대로 쓴다 */
+  /* 확관 호기 — 시뮬레이션이 **그 본을** 실제로 넣은 호기를 그대로 쓴다.
+     오더 하나가 통째로 한 호기에 들어가지 않는다 (기본 오더셋 58개 중 29개가 #1·#2 에 갈린다).
+     종전에는 화면이 오더의 첫 본 호기를 오더 전체에 적용해 1,446본 중 505본의 확관 시간이 틀렸다
+     — 최악은 345s 로 표시되고 실제는 1,176s 였다. (2026-08-19 전수 감사) */
   let machine = opts.machine || null;
   if (!machine) {
     const em = expanderMode(spec, cfg);
@@ -1074,7 +1077,10 @@ function simulate(orders, cfg) {
         }
         pipeCount[nid] = (pipeCount[nid] || 0) + 1;      // 파이프 실제 통과 본수 (BOTH 도 1회)
         ready = en;
-        if (collect) events.push({ o: o.no, k, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
+        /* g = **전역 누적 본 번호**. 포장의 「n본마다 추가 검사」가 이 값으로 정해지는데
+           종전에는 이벤트에 남지 않아 「산식 검증」 화면이 오더 내 번호로 추측할 수밖에 없었고,
+           그 결과 1,446본 중 242본에서 포장 시간이 시뮬과 달랐다. (2026-08-19 전수 감사) */
+        if (collect) events.push({ o: o.no, k, g: seqGlobal, n: nid, p: prevId, u: u.idx, r: arrive, cs, s: st, e: en, d: dur, co,
                       both: !!coUnits, mach: machine, rw: rework > 0 });
         prevId = nid;
         if (st < oS) oS = st;

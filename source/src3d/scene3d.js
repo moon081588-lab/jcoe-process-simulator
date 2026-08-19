@@ -984,8 +984,13 @@ function mount(){
   resize(); window.addEventListener('resize', resize);
   renderer.domElement.addEventListener('click', e=>pick(e.clientX,e.clientY));
   $('btnPlay').onclick=()=>{ if(!SIM) return; playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
+  /* doneCnt 는 updateStat/refreshVisual 이 건드리지 않아, ↺ 뒤에도 직전 재생의 완료 본수가
+     남아 실적처럼 보였다. (2026-08-19 전수 감사) */
   $('btnReset').onclick=()=>{ if(!SIM) return; animT=SIM.t0; evIdx=0; completed=0; started=0; logs.length=0;
     for(const n of NODES) nodeState[n.id]={active:[],q:0,done:0};
+    if($('doneCnt')) $('doneCnt').textContent='0';
+    if($('seek')) $('seek').value=0;
+    if($('simClock')) $('simClock').textContent=fmtT(SIM.t0);
     updateStat(); refreshVisual(); };
   $('spd').oninput=e=>{ speed=[600,3600,18000,86400,259200][+e.target.value];
     $('spdL').textContent=['10분/s','1시간/s','5시간/s','1일/s','3일/s'][+e.target.value]; };

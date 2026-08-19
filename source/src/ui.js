@@ -455,7 +455,11 @@ function stepAnim(dt) {
 }
 let last=null;
 function loop(ts){ if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
-  if (playing) stepAnim(Math.min(dt,0.1)); draw(); requestAnimationFrame(loop); }
+  /* syncSeek() 은 정의만 있고 **호출하는 곳이 하나도 없었다** — 재생 중 타임라인이 전혀
+     움직이지 않아 지금 어느 시점을 보고 있는지 알 수 없었다. 3D 는 처음부터 이 일을 한다.
+     (2026-08-19 전수 감사) */
+  if (playing) { stepAnim(Math.min(dt,0.1)); syncSeek(); }
+  draw(); requestAnimationFrame(loop); }
 
 /* ================= 사이드 통계 ================= */
 function statsByFlow(){
@@ -522,8 +526,13 @@ const CALC_ORDER = [
   ['GapPress','Gap Press'], ['TackWelder','태그 웰딩'], ['InsideWelder','내면 SAW'],
   ['OuterBead','슬러그/비드 제거'], ['OutsideWelder','외면 SAW'], ['FirstUT','1차 U.T'],
   ['Expander','확관 (Expander)'], ['EndFacing','면취기 (End-Facing)'], ['HydroTest','수압'],
-  ['FinalUT','Final U.T'], ['RT','X-ray (RT)'], ['Packing','포장'],
+  ['FinalUT','Final U.T'], ['EndRT','관단 R/T (RT102)'], ['RT','전장 X-ray (RT101·RT105)'],
+  ['CUT','관단탭 절단'], ['Packing','포장'],
 ];
+/* 시뮬레이터 라우트에는 RT 노드가 둘이다 — 관단 R/T(XE, End-RT)와 전장 F-X ray.
+   계산기는 전장 하나만 세어 **같은 제품인데 두 화면의 1본 총시간이 달랐다**(−400s).
+   (2026-08-19 전수 감사) */
+const CALC_ALIAS = { EndRT: { fn: 'RT', rtType: 'End-RT' } };
 function calc(){
   const s = {
     od: calcIn('cOD', 914, 100, 3000), t: calcIn('cT', 9.3, 1, 100),
@@ -539,7 +548,15 @@ function calc(){
     if (k==='GapPress' && s.t<=25) { rows.push({k,label,skip:'두께 25T 이하 → Gap Press 미투입'}); continue; }
     if (k==='FirstUT' && !(s.api5l||s.qty>=50)) { rows.push({k,label,skip:'단일오더 API 5L·50PCS 미만 → By-pass'}); continue; }
     if (k==='FinalUT' && !s.api5l) { rows.push({k,label,skip:'프로세싱 파이프 → 별도 요청 시에만 진행'}); continue; }
-    const r = k==='Expander' ? STD.Expander(s, mach) : STD[k](s, line, 1);
+    /* 관단 R/T 는 API 5L 제품만 지난다 (라우팅 D5 와 같은 조건) */
+    if (k==='EndRT' && !s.api5l) { rows.push({k,label,skip:'API 5L 아님 → 관단 R/T By-pass'}); continue; }
+    /* 관단탭 절단은 표준시간 측정 대상이 아니지만 시뮬레이터 라우트에는 들어 있다.
+       빼놓고 합계만 보여 주면 「산식 검증」과 1본 총시간이 달라 보인다. (2026-08-19 전수 감사) */
+    if (k==='CUT') { rows.push({k,label,skip:`고정 ${CFG?CFG.freeStationSec:300}s — 표준시간 측정 대상 외 (시뮬레이터에는 포함)`}); continue; }
+    const al = CALC_ALIAS[k];
+    const r = k==='Expander' ? STD.Expander(s, mach)
+            : al ? STD[al.fn]({...s, rtType: al.rtType}, line, 1)
+            : STD[k](s, line, 1);
     rows.push({k,label,...r});
   }
   const act = rows.filter(r=>!r.skip);
@@ -1029,19 +1046,39 @@ function buildVfOrders(keep){
     `<option value="${esc(o.no)}">${esc(o.no)} — OD${Math.trunc(o.od)} × t${o.t} × ${(o.L/1000).toFixed(2)}m · ${o.qty}본</option>`).join('');
   if (cur && sel.querySelector(`option[value="${CSS.escape(cur)}"]`)) sel.value = cur;
 }
-/* 시뮬레이션이 이 오더를 실제로 어느 확관 호기에 넣었는지 / 전환시간은 얼마였는지 */
-function vfActual(no){
-  if (!SIM || !SIM.events) return { machine:null, co:null, evSec:null };
+/* 시뮬레이션이 **이 오더의 k번째 본을** 실제로 어떻게 흘렸는지 꺼낸다.
+   ★ 오더 단위가 아니라 **본 단위**여야 한다.
+     · 확관 호기는 오더 안에서 갈린다 (기본 오더셋 58개 중 29개가 #1·#2 혼재)
+     · 포장의 「n본마다 추가 검사」는 전역 누적 본 번호(e.g)로 정해진다
+   종전에는 오더의 첫 본 것을 오더 전체에 썼고, 대사표도 노드별 **평균**과 비교해서
+   변동성을 꺼도 42/58 오더가 "어긋남" 색으로 표시됐다. (2026-08-19 전수 감사) */
+function vfActual(no, k){
+  const none = { machine:null, co:null, evSec:null, g:null, pipes:0, kMax:0, machines:[] };
+  if (!SIM || !SIM.events) return none;
   const ev = SIM.events.filter(e => String(e.o) === String(no));
-  if (!ev.length) return { machine:null, co:null, evSec:null };
-  const expEv = ev.find(e => e.n === 'EXP' || e.n === 'RB');
-  const co = {}, sum = {}, cnt = {};
+  if (!ev.length) return none;
+  const co = {};
+  let kMax = 0;
+  const machines = new Set();
   for (const e of ev) {
     co[e.n] = (co[e.n] || 0) + e.co;
-    sum[e.n] = (sum[e.n] || 0) + e.d; cnt[e.n] = (cnt[e.n] || 0) + 1;
+    if (e.k > kMax) kMax = e.k;
+    if (e.n === 'EXP' || e.n === 'RB') machines.add(e.mach);
   }
-  const evSec = {}; for (const k in sum) evSec[k] = sum[k] / cnt[k];
-  return { machine: expEv ? expEv.mach : null, co, evSec, pipes: ev.length };
+  /* k 번째 본의 이벤트만 뽑는다 — 재작업으로 같은 노드를 두 번 지났으면 **첫 통과**를 쓴다
+     (verifyOrder 도 명목 경로 1회만 재현한다) */
+  const kk = Math.max(1, Math.min(kMax, Math.round(k || 1)));
+  const mine = ev.filter(e => e.k === kk);
+  const evSec = {};
+  for (const e of mine) if (evSec[e.n] == null) evSec[e.n] = e.d;
+  const expEv = mine.find(e => e.n === 'EXP' || e.n === 'RB');
+  const anyEv = mine[0];
+  return {
+    machine: expEv ? expEv.mach : null,
+    g: anyEv && anyEv.g != null ? anyEv.g : null,      // 이 본의 전역 누적 번호
+    co, evSec, pipes: mine.length, kMax,
+    machines: [...machines],
+  };
 }
 function openVerify(no){
   buildVfOrders(no);
@@ -1056,19 +1093,32 @@ function openVerify(no){
 const VF_OPEN = new Set();
 let VF_LAST = null;                     // 마지막으로 계산한 verifyOrder 결과
 
-/** 지금 화면에 그려진 카드와 같은 조건으로 다시 계산한다 */
+/** 지금 화면에 그려진 카드와 같은 조건으로 다시 계산한다.
+    본 번호를 바꾸면 **그 본의 실제 호기·전역 순번**을 시뮬레이션에서 가져온다. */
 function vfCompute(){
   if (!CFG) return null;
   const sel = $('vfOrder'); if (!sel || !sel.value) return null;
-  const act = vfActual(sel.value);
+  const kRaw = $('vfK') ? parseFloat($('vfK').value) : 1;
+  const k = Math.max(1, Math.round(isFinite(kRaw) ? kRaw : 1));
+  const act = vfActual(sel.value, k);
   const mSel = $('vfMach') ? $('vfMach').value : '';
+  /* 전역 누적 본 번호: 비워 두면(=자동) 시뮬레이션 값을 그대로 쓴다.
+     사용자가 숫자를 넣으면 그 값을 쓴다(민감도 확인용). */
+  const seqRaw = $('vfSeq') ? $('vfSeq').value.trim() : '';
+  const seqAuto = seqRaw === '';
+  const seqNum = Math.max(1, Math.round(parseFloat(seqRaw) || 1));
   const V = verifyOrder(sel.value, CFG, {
-    k: +($('vfK') ? $('vfK').value : 1) || 1,
-    seqGlobal: +($('vfSeq') ? $('vfSeq').value : 1) || 1,
+    k,
+    seqGlobal: seqAuto ? (act.g != null ? act.g : k) : seqNum,
     machine: mSel || act.machine || null,
     co: act.co,
   });
-  if (V) { V._act = act; V._manualMach = !!mSel; }
+  if (V) {
+    V._act = act; V._manualMach = !!mSel; V._seqAuto = seqAuto;
+    /* 보정한 값을 입력칸에 되먹인다 — 칸에는 999 가 남고 계산은 70본으로 되던 문제 */
+    if ($('vfK') && String(V.k) !== $('vfK').value) $('vfK').value = V.k;
+    if ($('vfSeq') && seqAuto) $('vfSeq').placeholder = `자동 ${V.seqGlobal}`;
+  }
   return V;
 }
 const VF_MACH_LBL = {M1:'#1호기', M2:'#2호기', M3:'#3호기', BOTH:'#1·#2 동시', RB:'R/B 라인'};
@@ -1102,24 +1152,36 @@ function vfSumHtml(V){
   return kk(`<span style="font-size:15px">OD${V.spec.od} × t${V.spec.t}</span>`, `${(V.spec.L/1000).toFixed(3)}m · ${V.qty}본 · ${V.line} 라인`)
     + kk(`${(V.totalSec/60).toFixed(1)}분`, `1본 총 표준시간 (${Math.round(V.totalSec).toLocaleString()}초)`)
     + kk(`<span style="font-size:15px">${esc(V.bottleneck ? V.bottleneck.label.replace(/\n/g,' ') : '—')}</span>`, `최장 공정 ${V.bottleneck?(V.bottleneck.sec/60).toFixed(1):'—'}분`, 'bn')
-    + kk(`<span style="font-size:15px">${esc(machLbl)}</span>`, '확관 배정' + (V._manualMach ? ' (수동 지정)' : V._act.machine ? ' (시뮬레이션 결과)' : ''))
+    + kk(`<span style="font-size:15px">${esc(machLbl)}</span>`,
+        '확관 배정' + (V._manualMach ? ' (수동 지정)'
+          : V._act.machine ? ` (${V.k}번째 본 실제 배정${V._act.machines.length > 1 ? ` · 이 오더는 ${V._act.machines.map(m=>VF_MACH_LBL[m]||m).join('·')} 혼재` : ''})`
+          : ' (추정)'))
     + kk(`${V.steps.length}개`, '통과 공정');
 }
+/* 대사표 — **같은 본(k)의 이벤트**와 1:1 로 맞춘다.
+   종전에는 「1본의 산식 결과」 vs 「그 오더 전 본의 노드별 평균」을 비교해서,
+   변동성·보정을 다 꺼도 58개 중 42개 오더가 "어긋남" 색으로 표시됐다. (2026-08-19 전수 감사) */
 function vfReconHtml(V){
   const act = V._act;
   if (!act || !act.evSec) return '';
+  let diff = 0;
   const rows = V.steps.map(st => {
     const a = act.evSec[st.nid];
     if (a == null) return '';
     const d = (a - st.sec) / (st.sec || 1) * 100;
+    if (Math.abs(d) >= 0.5) diff++;
     return `<tr><td>${esc(st.label.replace(/\n/g,' '))}</td><td class="v">${Math.round(st.sec).toLocaleString()}</td><td class="v">${Math.round(a).toLocaleString()}</td><td class="v" style="color:${Math.abs(d)<0.5?'var(--dim)':'#f0a252'}">${d>=0?'+':''}${d.toFixed(1)}%</td></tr>`;
   }).join('');
-  return `<table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 평균(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>`;
+  return `<table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 실행(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>`
+    + `<div class="vfwarn" style="color:${diff ? '#f0a252' : 'var(--dim)'}">${diff
+        ? `${diff}개 공정이 다릅니다 — 변동성(로그정규 CV) 또는 실적 보정이 켜져 있다는 뜻입니다. 둘 다 끄면 전부 0% 가 됩니다.`
+        : '전 공정 일치 — 이 화면의 산식이 시뮬레이션이 실제로 쓴 값과 같습니다.'}</div>`;
 }
 
-/** 값만 제자리에서 갱신한다 — 편집 패널·입력 포커스는 건드리지 않는다 */
-function vfPatch(){
-  const V = vfCompute(); if (!V) return;
+/** 값만 제자리에서 갱신한다 — 편집 패널·입력 포커스는 건드리지 않는다.
+    호출 전에 vfSameShape() 로 공정 구성이 같은지 확인해야 한다. */
+function vfPatch(pre){
+  const V = pre || vfCompute(); if (!V) return;
   VF_LAST = V;
   const box = $('vfBody'); if (!box) return;
   $('vfSum').innerHTML = vfSumHtml(V);
@@ -1132,6 +1194,9 @@ function vfPatch(){
     set('subst', esc(st.subst));
     set('terms', vfTermRows(st));
     set('note', vfNoteHtml(st));
+    /* 같은 상수를 두 카드가 가리킬 수 있다(관단 R/T·F-X ray 는 둘 다 RT).
+       한쪽에서 고치면 다른 쪽 편집칸도 같이 움직여야 한다. */
+    if (VF_OPEN.has(i)) vfSyncEditInputs(card, st);
   });
   const rc = box.querySelector('[data-f="recon"]');
   if (rc) rc.innerHTML = vfReconHtml(V);
@@ -1156,10 +1221,25 @@ function vfMarkEdited(){
   if ($('vfExport2')) $('vfExport2').onclick = refExport;
 }
 
+/** 화면에 그려진 카드 구성과 새로 계산한 공정 구성이 같은가.
+    ★ 이걸 안 보면, 설정을 바꿔 공정이 하나 늘었을 때 카드 제목은 그대로인 채
+      값만 한 칸씩 밀려 **「면취 공정」 자리에 Calibration Press 의 300초**가 찍힌다.
+      (2026-08-19 전수 감사 — 실제로 재현됨) */
+function vfSameShape(box, V){
+  const cards = box.querySelectorAll('.vfstep[data-i]');
+  if (cards.length !== V.steps.length) return false;
+  for (let i = 0; i < cards.length; i++)
+    if (cards[i].dataset.nid !== V.steps[i].nid) return false;
+  return true;
+}
 function renderVerify(force){
   const box = $('vfBody'); if(!box) return;
-  /* 편집 패널이 열려 있으면 카드를 다시 만들지 않고 숫자만 갈아 끼운다 */
-  if (!force && VF_OPEN.size && box.querySelector('.vfstep')) return vfPatch();
+  /* 편집 패널이 열려 있고 **공정 구성이 그대로일 때만** 숫자만 갈아 끼운다.
+     구성이 바뀌었으면 편집 패널을 잃더라도 반드시 다시 그린다 — 틀린 값을 보여주는 것보다 낫다. */
+  if (!force && VF_OPEN.size && box.querySelector('.vfstep')) {
+    const V0 = vfCompute();
+    if (V0 && vfSameShape(box, V0)) return vfPatch(V0);
+  }
   if (!CFG) { box.innerHTML = '<div class="note">먼저 「계획 실행」에서 시뮬레이션을 한 번 돌려 주세요.</div>'; return; }
   const sel = $('vfOrder');
   if (sel && !sel.options.length) buildVfOrders();
@@ -1170,7 +1250,7 @@ function renderVerify(force){
   if ($('vfK')) $('vfK').max = V.qty;
   $('vfSum').innerHTML = vfSumHtml(V);
 
-  const rowsHtml = V.steps.map((st, i) => `<div class="vfstep" data-i="${i}" data-st="${esc(st.st||'')}">
+  const rowsHtml = V.steps.map((st, i) => `<div class="vfstep" data-i="${i}" data-nid="${esc(st.nid)}" data-st="${esc(st.st||'')}">
       <div class="vfhd"><div class="vfno">${i+1}</div>
         <div><b>${esc(st.label.replace(/\n/g,' '))}</b>${st.sub?` <span class="vfsub">${esc(st.sub)}</span>`:''}${st.machine?` <span class="vfsub">· ${esc(VF_MACH_LBL[V.machine]||V.machine)}</span>`:''}</div>
         <button class="vfbtn vfedit" data-i="${i}">✎ 편집</button>
@@ -1188,10 +1268,8 @@ function renderVerify(force){
       </div></div>`).join('');
 
   const recon = V._act && V._act.evSec ? `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
-        <span class="vfsub">이 오더 ${V._act.pipes}개 공정 이벤트의 평균 소요 vs 위 산식 결과</span></div>
-      <div class="vfbody"><div data-f="recon">${vfReconHtml(V)}</div>
-      <div class="vfwarn" style="color:var(--dim)">차이가 0% 가 아니면 변동성(로그정규 CV) 또는 실적 보정이 켜져 있다는 뜻입니다. 둘 다 끄면 정확히 일치합니다.</div>
-      </div></div>` : '';
+        <span class="vfsub">${esc(V.no)} 의 <b>${V.k}번째 본</b>이 실제로 각 공정에 머문 시간 vs 위 산식 결과 (${V._act.pipes}개 공정)</span></div>
+      <div class="vfbody"><div data-f="recon">${vfReconHtml(V)}</div></div></div>` : '';
 
   box.innerHTML = `<div class="note" style="margin:0 0 12px">
       <b>${esc(V.no)}</b> · 오더 내 <b>${V.k}번째 본</b> (전역 누적 ${V.seqGlobal}본째) 기준입니다.
@@ -1200,6 +1278,23 @@ function renderVerify(force){
     </div>${rowsHtml}${recon}`;
   box.querySelectorAll('.vfedit').forEach(b => b.onclick = () => vfToggleEdit(+b.dataset.i));
   vfMarkEdited();
+}
+
+/** 열려 있는 편집칸의 표시값을 현재 엔진값으로 맞춘다.
+    같은 상수를 두 카드가 가리키거나(관단 R/T·F-X ray = 둘 다 RT),
+    「기준정보」 탭에서 값이 바뀐 경우에 필요하다. (2026-08-19 전수 감사) */
+function vfSyncEditInputs(card, st){
+  const box = card.querySelector('[data-f="edit"]'); if (!box || box.hidden) return;
+  box.querySelectorAll('input.refin[data-ref]').forEach(el => {
+    const r = el.dataset.ref.split('\u241F');
+    let cur, def;
+    if (r[0] === 'std') { cur = REF.std[r[1]][r[2]].v; def = REF_STD_DEFAULT[r[1]][r[2]].v; }
+    else { def = +r[2]; cur = REF_EDIT.tbl[r[1]] != null ? REF_EDIT.tbl[r[1]] : def; }
+    if (String(cur) !== el.value) { el.value = cur; el.dataset.last = cur; }
+    const chg = Math.abs(cur - def) > 1e-9;
+    el.classList.toggle('chg', chg);
+    const u = document.getElementById(el.id + 'u'); if (u) u.classList.toggle('on', chg);
+  });
 }
 
 /* ---- [편집] — 이 공정에 쓰인 값을 그 자리에서 고친다 --------------------
@@ -1226,7 +1321,8 @@ function vfBuildEdit(i, box){
     const G = REF.std[proc], D = REF_STD_DEFAULT[proc];
     stdHtml = Object.keys(G).filter(k => k[0] !== '_').map(k =>
       `<div class="refrow"><span title="${esc(G[k].l)}">${esc(G[k].l)}</span>
-        ${refInput(G[k].v, D[k].v, v => { refSet('std', proc, k, v); renderVerify(); }, { min: REF_STD_MIN(proc, k) })}
+        ${refInput(G[k].v, D[k].v, v => { refSet('std', proc, k, v); renderVerify(); },
+          { min: REF_STD_LO(proc, k), max: REF_STD_MAX(proc, k), ref: `std\u241F${proc}\u241F${k}` })}
         <i>${esc(G[k].u || '')}</i></div>`).join('');
   }
 
@@ -1235,8 +1331,11 @@ function vfBuildEdit(i, box){
   const tblHtml = cells.map(v => {
     const ed = v[3];
     const cur = REF_EDIT.tbl[ed.key] != null ? REF_EDIT.tbl[ed.key] : ed.def;
+    /* 하한은 «기본값의 1/1000». 0·음수는 물론, 1e-9 같은 값으로 완료일이 100만 일이 되는 것도 막는다.
+       (종전 하한 1e-9 은 사실상 하한이 아니었다 — 2026-08-19 전수 감사) */
     return `<div class="refrow"><span title="${esc(v[2])}">${esc(v[0])}</span>
-      ${refInput(cur, ed.def, nv => { refSetTbl(ed.key, nv); renderVerify(); }, { min: 1e-9 })}
+      ${refInput(cur, ed.def, nv => { refSetTbl(ed.key, nv); renderVerify(); },
+        { min: Math.abs(ed.def) / 1000, max: Math.abs(ed.def) * 1000, ref: `tbl\u241F${ed.key}\u241F${ed.def}` })}
       <i class="vfsrc">${esc(ed.key.split('|')[0])}</i></div>`;
   }).join('');
 
@@ -1448,7 +1547,18 @@ let WIZ_BASE = null;                  /* 최적화 직전(현 규칙) 결과 —
 function goTab(p){ const t=document.querySelector(`.tab[data-p="${p}"]`); if(t) t.click(); }
 function initWizard(){
   if(!$('wizSteps')) return;
-  const keepBase = () => { const s = snapKpi(); if (s && s.rule !== 'OPT') WIZ_BASE = s; };
+  /* 이미 OPT 로 돌아가는 중이면 「현 규칙」 결과가 없다 → EAT 로 한 번 돌려 기준을 만든다.
+     종전에는 최적화를 먼저 돌린 뒤 위저드를 쓰면 「전후 비교」가 영영 빈칸으로 남았다.
+     (2026-08-19 전수 감사) */
+  const keepBase = () => {
+    const s = snapKpi();
+    if (s && s.rule !== 'OPT') { WIZ_BASE = s; return; }
+    if (WIZ_BASE) return;
+    try {
+      const S = simulate(ORDERS, { ...readCfg(), dispatchRule: 'EAT', plan: null });
+      WIZ_BASE = { rule: 'EAT', mk: S.kpi.makespanH, setup: S.kpi.expSetupH, bal: S.kpi.expBalanceH };
+    } catch (e) { /* 기준선을 못 만들면 비교만 생략한다 */ }
+  };
   $('wizRunAll').onclick = () => {
     keepBase();
     runOptimizer();                    /* 내부에서 optRule=OPT 설정 + runSim() 까지 수행 */
@@ -1799,8 +1909,10 @@ function boot(){
     }
   });
   $('btnPlay').onclick=()=>{ playing=!playing; $('btnPlay').textContent=playing?'❚❚':'▶'; };
-  $('btnReset').onclick=()=>{ animT=SIM.t0; evIdx=0; completed=0; logs.length=0;
-    for (const n of NODES) nodeState[n.id]={active:[],q:0,done:0}; };
+  /* 종전에는 내부 변수만 되돌리고 화면 갱신을 안 해서, 정지 상태로 ↺ 를 누르면
+     시계·완료 본수·가동률 막대·시크바가 전부 옛 시점 그대로 남았다 (loop 은 playing 일 때만
+     stepAnim 을 부른다). 3D 처럼 seekTo() 로 시작 시점을 실제로 다시 그린다. (2026-08-19 전수 감사) */
+  $('btnReset').onclick=()=>{ if(!SIM) return; seekTo(SIM.t0); syncSeek(); };
   $('spd').oninput=e=>{ speed=[60,600,3600,18000,86400][+e.target.value]; $('spdL').textContent=
     ['1분/s','10분/s','1시간/s','5시간/s','1일/s'][+e.target.value]; };
   /* 표의 「자세히」 토글 — 기본은 핵심 열만 (2026-08-14) */
@@ -1865,9 +1977,30 @@ let REF_EDIT = { std:{}, co:{}, cap:{}, tbl:{} };   // 기본값과 다른 것�
    **분모로 쓰이는 값이 0 이 되면** 소요시간이 Infinity 가 되어 완료일이 146만 일로 튀고
    병목 가동률이 Infinity% 로 표시된다. 음수 상수도 가동시간을 음수로 만든다.
    → 분모·속도·주기류는 0 초과, 나머지는 0 이상만 허용한다. (2026-08-14 전수 감사) */
-const REF_POSITIVE_KEYS = /Div|Len$|segLen|extraEvery|shotLen|pitchDiv|perStroke|marginRB|marginM1/;
+/* 이름 정규식으로 잡던 것을 **실제로 분모로 쓰이는 키 목록**으로 바꿨다.
+   종전 정규식은 분모가 아닌 7개(Packing.extraEvery·refLen, PreBender.perStroke, FirstUT.cutLen,
+   Expander.marginRB/marginM1/marginM1Small)까지 잡아 **정상값 0 을 넣을 수 없게** 했다.
+   특히 Packing.extraEvery 는 engine 이 `> 0` 으로 «추가검사 안 함» 을 명시적으로 지원한다.
+   (2026-08-19 전수 감사) */
+const REF_DENOM_KEYS = new Set([
+  'EdgeMiller.feedDiv', 'PreBender.pitchDiv', 'PressBender.lenDiv', 'PressBender.odDiv',
+  'GapPress.lenDiv', 'GapPress.segLen', 'OuterBead.feedDiv', 'FirstUT.feedDiv',
+  'Expander.m1FeedDiv', 'FinalUT.scanDiv', 'RT.shotLen', 'RT.endDivA', 'RT.endDivB',
+  'Packing.feedDiv',
+]);
 function REF_STD_MIN(proc, key) {
-  return REF_POSITIVE_KEYS.test(key) ? 1e-6 : 0;
+  return REF_DENOM_KEYS.has(proc + '.' + key) ? 1e-6 : 0;
+}
+/* 상한 — 분모를 하한 근처로 밀어 완료일이 100만 일이 되는 것을 막는다.
+   기본값의 1000배·1/1000 을 벗어나면 오타로 본다. */
+function REF_STD_MAX(proc, key) {
+  const d = REF_STD_DEFAULT[proc] && REF_STD_DEFAULT[proc][key];
+  return (d && d.v > 0) ? d.v * 1000 : null;
+}
+function REF_STD_LO(proc, key) {
+  const d = REF_STD_DEFAULT[proc] && REF_STD_DEFAULT[proc][key];
+  if (REF_DENOM_KEYS.has(proc + '.' + key)) return (d && d.v > 0) ? d.v / 1000 : 1e-6;
+  return 0;
 }
 let REF_BASE = null;                        // 아무것도 안 고친 상태의 시뮬 결과 (영향 비교용)
 
@@ -1888,7 +2021,11 @@ function refApply(full = false) {
   const hadPlan = !!PLAN;
   if (hadPlan) invalidatePlan(); else { runSim(); calc(); }
   if (hadPlan) calc();
-  if (full) renderRef(); else { renderRefKpi(); renderRefPreviews(); refMarkDirty(); }
+  /* 「기준정보」 탭을 보고 있지 않다면 표를 다시 그려도 포커스를 뺏을 일이 없다.
+     종전에는 「산식 검증」에서 고친 값이 기준정보 입력칸에 영영 반영되지 않아,
+     거기서 ↺ 를 누르면 **자기 편집이 조용히 지워졌다.** (2026-08-19 전수 감사) */
+  const refPaneOpen = $('pRef') && $('pRef').classList.contains('on');
+  if (full || !refPaneOpen) renderRef(); else { renderRefKpi(); renderRefPreviews(); refMarkDirty(); }
   if (hadPlan && $('refPlanWarn'))
     $('refPlanWarn').textContent = '※ 확관 최적화 해는 상수가 바뀌어 무효가 됐고, 배분 규칙이 EAT 로 되돌아갔습니다.';
 }
@@ -1929,11 +2066,29 @@ function refSetTbl(key, v) {
   const prev = REF_EDIT.tbl[key];
   if (v === null) delete REF_EDIT.tbl[key]; else REF_EDIT.tbl[key] = v;
   refApply();
-  if (SIM && !isFinite(SIM.kpi.makespanH)) {
+  const why = refInsane();
+  if (why) {
     if (prev === undefined) delete REF_EDIT.tbl[key]; else REF_EDIT.tbl[key] = prev;
     refApply(true);
-    alert('그 값을 넣으면 계산 결과가 무한대가 되어 되돌렸습니다.');
+    alert(`그 값을 넣으면 ${why} 되돌렸습니다.`);
   }
+}
+/* ★ 종전 방어 `!isFinite(SIM.kpi.makespanH)` 는 **한 번도 발동하지 않는 죽은 코드**였다.
+   flow.js 가 orderSpan 에서 비유한 종료시각을 걸러내고 makespan 을 내기 때문에
+   kpi.makespanH 는 언제나 유한하다. 실제로는 완료일이 192만 일이 되는데도 경고가 없었다.
+   → 공정 소요가 비유한·음수인지, 완료일이 기준선 대비 터무니없이 커졌는지로 판정한다.
+   (2026-08-19 전수 감사) */
+function refInsane() {
+  if (!SIM) return null;
+  if (!isFinite(SIM.kpi.makespanH) || SIM.kpi.makespanH <= 0) return '계산 결과가 무한대가 되어';
+  for (const st of SIM.stats) {
+    if (!isFinite(st.busyH) || st.busyH < 0) return `${st.label} 의 가동시간이 음수·무한대가 되어`;
+    if (!isFinite(st.util) || st.util < 0) return `${st.label} 의 가동률이 음수·무한대가 되어`;
+  }
+  const base = REF_BASE && REF_BASE.days > 0 ? REF_BASE.days : null;
+  const days = SIM.kpi.makespanH / 24;
+  if (base && days > base * 100) return `완료일이 ${Math.round(days).toLocaleString()}일(원래의 ${Math.round(days / base)}배)이 되어`;
+  return null;
 }
 
 /** 값 하나 설정/해제.  v === null 이면 기본값으로 되돌린다.
@@ -1944,11 +2099,12 @@ function refSet(group, a, b, v) {
   if (v === null) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
   else { (G[a] = G[a] || {})[b] = v; }
   refApply();
-  if (SIM && !isFinite(SIM.kpi.makespanH)) {
+  const why = refInsane();
+  if (why) {
     if (prev === undefined) { if (G[a]) { delete G[a][b]; if (!Object.keys(G[a]).length) delete G[a]; } }
     else (G[a] = G[a] || {})[b] = prev;
     refApply(true);
-    alert('그 값을 넣으면 계산 결과가 무한대가 되어 되돌렸습니다.');
+    alert(`그 값을 넣으면 ${why} 되돌렸습니다.`);
   }
 }
 function refSetCap(id, v) {
@@ -1965,7 +2121,7 @@ function refInput(cur, def, onChange, opts) {
   const chg = Math.abs(cur - def) > 1e-9;
   const id = 'ri' + (refInput._n = (refInput._n || 0) + 1);
   const html = `<input id="${id}" class="refin${chg ? ' chg' : ''}" type="number" step="${opts.int ? 1 : 'any'}"
-            value="${cur}"${opts.width ? ` style="width:${opts.width}px"` : ''} title="기본값 ${def}">
+            value="${cur}"${opts.width ? ` style="width:${opts.width}px"` : ''}${opts.ref ? ` data-ref="${esc(opts.ref)}"` : ''} title="기본값 ${def}">
           <button id="${id}u" class="undo${chg ? ' on' : ''}" title="기본값 ${def} 로 되돌리기">↺</button>`;
   /* 화면에 붙은 직후 바인딩한다 (표를 다시 그리지 않으므로 한 번만 걸린다) */
   refInput._pending.push(() => {
@@ -1998,8 +2154,22 @@ function refBind() { const q = refInput._pending; refInput._pending = []; q.forE
 /** 변경이 하나도 없을 때의 결과를 기준선으로 계속 갱신한다.
     종전에는 부팅 때 한 번만 잡아 둬서, 교대·계획서를 바꾼 뒤 기준정보를 고치면
     「+18.9일 악화」처럼 **부호까지 반대로** 표시됐다. (2026-08-14 전수 감사) */
+/** 지금 기준선이 어떤 조건에서 잡힌 것인지 — 오더셋·교대·규칙이 바뀌면 다시 잡아야 한다 */
+function refFingerprint() {
+  if (!CFG) return '';
+  return [ORDERS.length, ORDERS.reduce((a, o) => a + o.qty, 0), CFG.shifts, CFG.netHoursPerShift,
+          CFG.dispatchRule, CFG.useRB, CFG.useCP, CFG.rbMode, CFG.rbPost, CFG.useM3,
+          CFG.skipWeekend, CFG.startDate, PLAN_SRC || ''].join('|');
+}
+/* ★ 종전에는 `refCount()===0` 일 때만 기준선을 다시 잡았다. 그래서 **아무 효과 없는 편집**이
+   하나라도 남아 있으면(예: 계산에 쓰이지 않는 표 키) 기준선이 그 시점에 얼어붙고,
+   그 뒤 계획서를 바꾸면 그 차이가 「기준정보 편집 덕분」인 것처럼 ±일로 표시됐다.
+   → 조건(오더셋·교대·규칙)이 달라졌으면 편집이 남아 있어도 기준선을 버린다. (2026-08-19 전수 감사) */
 function refRebase() {
-  if (SIM && refCount() === 0) REF_BASE = { days: SIM.kpi.makespanH / 24, top: SIM.stats[0] && SIM.stats[0].label };
+  if (!SIM) return;
+  const fp = refFingerprint();
+  if (refCount() === 0) { REF_BASE = { days: SIM.kpi.makespanH / 24, top: SIM.stats[0] && SIM.stats[0].label, fp }; return; }
+  if (REF_BASE && REF_BASE.fp !== fp) REF_BASE = null;      // 조건이 달라졌다 → 비교 불가
 }
 /* ── 결과 요약바 — 어느 탭에 있든 헤더 아래에 항상 보인다 ──────────────
    종전에는 완료일·병목이 우상단 11px 회색 글씨에만 있어서, 가장 중요한 숫자가
@@ -2101,7 +2271,8 @@ function renderRefStd() {
     const G = REF.std[proc], D = REF_STD_DEFAULT[proc];
     const rows = Object.keys(G).filter(k => k[0] !== '_').map(k =>
       `<div class="refrow"><span title="${esc(G[k].l)}">${esc(G[k].l)}</span>
-         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v), { min: REF_STD_MIN(proc, k) })}
+         ${refInput(G[k].v, D[k].v, v => refSet('std', proc, k, v),
+            { min: REF_STD_LO(proc, k), max: REF_STD_MAX(proc, k), ref: `std\u241F${proc}\u241F${k}` })}
          <i>${esc(G[k].u || '')}</i></div>`).join('');
     let prev = '';
     try {
@@ -2181,7 +2352,7 @@ function refSanitize(d) {
     else for (const id in cap) {
       if (!own(cap, id) || RISKY.has(id)) { bad.push(`설비대수: 쓸 수 없는 키 ${id}`); continue; }
       const v = Math.round(+cap[id]);
-      if (id === 'EXP') bad.push('설비대수: 확관(EXP) 은 「설정」 탭의 #3호기 사용 여부로 정합니다');
+      if (id === 'EXP') bad.push('설비대수: 확관(EXP) 은 #1·#2호기 + R/B 라인 구성이 고정이라 바꿀 수 없습니다');
       else if (!NODE[id] || NODE[id].kind !== 'proc') bad.push(`설비대수: 없는 설비 ${id}`);
       else if (!isFinite(v) || v < 1 || v > 20) bad.push(`설비대수 ${id}: 1~20 범위 밖 (${cap[id]})`);
       else out.cap[id] = v;
@@ -2225,27 +2396,33 @@ function refSanitize(d) {
     if (!plain(tbl)) bad.push('엑셀표재정의 형식이 올바르지 않습니다');
     else for (const key in tbl) {
       if (!own(tbl, key) || RISKY.has(key)) { bad.push(`엑셀표재정의: 쓸 수 없는 키 ${key}`); continue; }
-      const v = +tbl[key];
-      if (!num(v)) { bad.push(`엑셀표재정의 ${key}: 숫자만 (${tbl[key]})`); continue; }
-      if (!refTblCellExists(key)) { bad.push(`엑셀표재정의: 가리키는 칸이 없습니다 — ${key}`); continue; }
+      /* `+v` 강제변환을 쓰면 null·false·"" 가 전부 0 이 되어 통과한다 — 타입부터 본다 */
+      if (typeof tbl[key] !== 'number' || !isFinite(tbl[key])) {
+        bad.push(`엑셀표재정의 ${key}: 숫자만 넣을 수 있습니다 (${JSON.stringify(tbl[key])})`); continue; }
+      const v = tbl[key];
+      /* 표 값은 속도·거리·시간·횟수라 0 이하가 될 수 없다.
+         종전에는 0 하나로 완료일이 192만 일이 됐다. (2026-08-19 전수 감사) */
+      if (v <= 0) { bad.push(`엑셀표재정의 ${key}: 0 보다 커야 합니다 (${v})`); continue; }
+      if (!refTblCellExists(key)) { bad.push(`엑셀표재정의: 실제로 조회에 쓰이지 않는 칸입니다 — ${key}`); continue; }
+      const def = refTblCellDefault(key);
+      if (def != null && def > 0 && (v < def / 1000 || v > def * 1000)) {
+        bad.push(`엑셀표재정의 ${key}: 원래 값 ${def} 의 1/1000~1000배 범위를 벗어났습니다 (${v})`); continue; }
       out.tbl[key] = v;
     }
   }
   return { out, bad };
 }
-/** `표이름|…` 키가 실제 표의 칸을 가리키는지 */
-function refTblCellExists(key) {
+/** `표이름|…` 키가 **엔진이 실제로 조회하는 칸**을 가리키는지.
+    판정은 엔진(refTblKeyValid)에 맡긴다 — 화면과 엔진이 다른 규칙을 쓰면
+    "저장은 됐는데 계산은 안 바뀌는" 먹통 재정의가 생긴다. (2026-08-19 전수 감사) */
+function refTblCellExists(key) { return refTblKeyValid(key); }
+/** 그 칸의 원표 값 */
+function refTblCellDefault(key) {
   const seg = String(key).split('|');
-  const tab = T[seg[0]];
-  if (tab == null) return false;
-  if (seg.length === 3) {                       // 범위표: 표|행|열
-    const i = +seg[1];
-    return Array.isArray(tab) && tab[i] != null && tab[i][seg[2]] !== undefined;
-  }
-  if (seg.length === 2) {                       // 인치표·상수: 표|키
-    return Object.prototype.hasOwnProperty.call(tab, seg[1]);
-  }
-  return false;
+  const tab = T[seg[0]]; if (tab == null) return null;
+  if (seg.length === 3) return Array.isArray(tab) && tab[+seg[1]] != null ? tab[+seg[1]][seg[2]] : null;
+  if (seg.length === 2) return typeof tab[seg[1]] === 'number' ? tab[seg[1]] : null;
+  return null;
 }
 function refImportFile(file) {
   const rd = new FileReader();
