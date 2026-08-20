@@ -27,7 +27,10 @@ const NODES = [
   { id:'BUF',   label:'10번 문 적재', sub:'Buffer · Max 4,000톤', kind:'buf', x:1085, y:315 },
   { id:'D3',    label:'RB 라인\n투입 필요', kind:'dec', x:919, y:310 },
   { id:'RB',    label:'R/B Expander', sub:'EP102 · 여분 라인', st:'Expander', machine:'RB', kind:'proc', x:912, y:405, cap:1 },
-  { id:'EXP',   label:'Expander', sub:'EP103 · EP104', st:'Expander', kind:'proc', x:740, y:315, cap:2, bottleneck:true },
+  /* ★ `bottleneck` 은 **PPT 다이어그램의 표기**일 뿐 시뮬레이션 결과가 아니다.
+     화면의 빨간 표시는 SIM.stats(실제 가동률·전환 1위)로 그린다 — 종전에는 이 플래그로 그려서
+     KPI 는 「JCOE 포장 99.3%」인데 그림은 확관에 빨간 링을 그리고 있었다. (2026-08-19) */
+  { id:'EXP',   label:'Expander', sub:'EP103 · EP104', st:'Expander', kind:'proc', x:740, y:315, cap:2, pptBn:true },
   { id:'D4',    label:'CP\n투입', kind:'dec', x:594, y:310 },
   { id:'CP',    label:'Calibration Press', kind:'proc', st:null, x:587, y:405, cap:1, free:true },
   { id:'EF',    label:'면취 공정', sub:'FC110', st:'EndFacing', kind:'proc', x:420, y:315, cap:1 },
@@ -42,7 +45,7 @@ const NODES = [
   { id:'RP',    label:'Repair', kind:'proc', st:null, x:760, y:640, cap:1, free:true },
   { id:'D7',    label:'용접\n문제', kind:'dec', x:767, y:726 },
   { id:'RW',    label:'보수 용접', kind:'proc', st:null, x:760, y:810, cap:1, free:true },
-  { id:'EP',    label:'Expander 문제', sub:'★ 병목 발생지', kind:'proc', st:null, x:1000, y:722, cap:1, free:true, bottleneck:true },
+  { id:'EP',    label:'Expander 문제', sub:'재확관 (PPT 상 병목 지점)', kind:'proc', st:null, x:1000, y:722, cap:1, free:true, pptBn:true },
   { id:'PACK',  label:'JCOE 포장', sub:'PK113', st:'Packing', kind:'proc', x:1130, y:530, cap:1 },
 
   /* ---- R/B 라인 후처리 (Zone 3) ----

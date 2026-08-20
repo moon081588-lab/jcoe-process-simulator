@@ -108,6 +108,21 @@ const ok = (n, c, e) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  $
   });
   ok('⑥ 본 번호를 바꾸면 표와 카드가 따라온다', chg.cards > 0 && chg.k === '3', `k=${chg.k} · ${chg.cards}장`);
 
+  /* ── ⑥-2 대기 원인 해설 ────────────────────────────────────── */
+  const why = await p.evaluate(() => {
+    const el = document.querySelector('#gantt .wwhy');
+    if (!el) return null;
+    const P = pipeTimeSplit(SIM, GV_OPEN, +$('gvK').value || 1);
+    const first = P.rows[0].wait, later = P.wait - first;
+    const t = el.textContent.replace(/\s+/g, ' ');
+    return { hasSplit: /투입 대기/.test(t) && /공정 간 대기/.test(t),
+             hasTop: /가장 오래 기다린 공정/.test(t),
+             hasBn: new RegExp(SIM.stats[0].label.replace('\n',' ')).test(t),
+             ok: first >= 0 && later >= 0 && Math.abs(first + later - P.wait) < 1 };
+  });
+  ok('⑥ 대기 원인이 투입 대기 / 공정 간 대기로 갈라져 표시된다',
+     why && why.hasSplit && why.hasTop && why.hasBn && why.ok, JSON.stringify(why));
+
   /* ── ⑦ 막대 시간 구성 표시 토글 ────────────────────────────── */
   const segOn = await p.evaluate(() => document.querySelectorAll('#gantt .gseg').length);
   await p.evaluate(() => { $('gSeg').checked = false; $('gSeg').dispatchEvent(new Event('change')); });
@@ -121,6 +136,21 @@ const ok = (n, c, e) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  $
   await p.evaluate(() => { const b = document.querySelector('#gantt .gdet .gdinner .vfbtn:last-of-type'); if (b) b.click(); });
   await p.waitForTimeout(500);
   ok('⑦ ✕ 닫기로 접힌다', await p.evaluate(() => !document.querySelector('#gantt .gdet')));
+
+  /* ── ⑨ 병목 표시가 시뮬레이션 결과를 따라가는가 ─────────────── */
+  const bn = await p.evaluate(() => {
+    const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
+    const su  = SIM.stats.slice().sort((a,b)=>b.setupH-a.setupH)[0];
+    return { mark: JSON.parse(JSON.stringify(BN_MARK)), top: top.id, topU: top.util, su: su.id,
+             pptOnly: NODES.filter(n => n.pptBn).map(n => n.id) };
+  });
+  ok('⑨ 빨간 병목 표시가 가동률 1위 설비에 붙는다',
+     !!bn.mark[bn.top] && bn.mark[bn.top].c === '#f05252', `${bn.top} ${bn.topU.toFixed(1)}%`);
+  ok('⑨ 전환 1위는 주황으로 따로 표시된다',
+     !!bn.mark[bn.su] && (bn.su === bn.top || bn.mark[bn.su].c === '#d29922'), bn.su);
+  ok('⑨ PPT 표기(pptBn)는 화면 강조에 쓰지 않는다',
+     bn.pptOnly.every(id => id === bn.top || id === bn.su || !bn.mark[id]),
+     `PPT 표기 ${bn.pptOnly.join('·')} / 강조 ${Object.keys(bn.mark).join('·')}`);
 
   ok('⑧ 콘솔 오류·미처리 예외 없음', errs.length === 0, errs.slice(0, 3).join(' | '));
   await b.close();

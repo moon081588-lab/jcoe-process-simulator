@@ -99,6 +99,7 @@ function runSim() {
     + (PLAN_WARN.length ? ` · ⚠ 스케줄 경고 ${PLAN_WARN.length}건` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
+  calcBnMark();
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
   buildVfOrders();
   /* 시뮬레이션이 다시 돌면 간트 상세도 같이 갱신된다 (renderGantt 안에서) */
@@ -288,7 +289,7 @@ function draw() {
   /* 구역 배경 */
   const zones = [
     [45, 48, 1360, 240, '조관 (Forming) — JCOE', '#1f6feb'],
-    [45, 296, 1520, 190, '확관 (Expansion) — 병목 공정', '#8957e5'],
+    [45, 296, 1520, 190, '확관 (Expansion) — 전환시간 최대 구간', '#8957e5'],
     [45, 498, 1520, 372, '검사 · 보수 · 출하 (Inspection & Shipping)', '#238636'],
   ];
   for (const [x,y,w,h,t,c] of zones) {
@@ -322,7 +323,16 @@ function draw() {
     ctx.fillStyle = col + (n.kind==='dec' ? '33' : (s.active.length?'':'22'));
     if (n.kind!=='dec' && s.active.length) ctx.fillStyle = col;
     ctx.fill(); ctx.shadowBlur=0;
-    ctx.strokeStyle = col; ctx.lineWidth = n.bottleneck?2.2:1.4; ctx.stroke();
+    /* 병목 강조는 **시뮬레이션 결과**로 — 가동률 1위 빨강, 전환 1위 주황 (2026-08-19) */
+    const bnk = BN_MARK[n.id];
+    ctx.strokeStyle = bnk ? bnk.c : col; ctx.lineWidth = bnk ? 3 : 1.4; ctx.stroke();
+    if (bnk) {
+      ctx.save();
+      ctx.font = '700 10px "Segoe UI","Malgun Gothic",sans-serif';
+      ctx.fillStyle = bnk.c; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(bnk.t, b.x + b.w/2, b.y - 4);
+      ctx.restore();
+    }
 
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle = (n.kind!=='dec' && s.active.length) ? '#fff' : C.text;
@@ -462,6 +472,18 @@ function loop(ts){ if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
      (2026-08-19 전수 감사) */
   if (playing) { stepAnim(Math.min(dt,0.1)); syncSeek(); }
   draw(); requestAnimationFrame(loop); }
+
+/* 병목 표시 — 어느 설비에 빨간 테두리를 칠지 **시뮬레이션 결과**로 정한다.
+   NODES 의 `pptBn` 은 PPT 다이어그램 표기일 뿐이라 화면 강조에 쓰지 않는다. */
+let BN_MARK = {};
+function calcBnMark(){
+  BN_MARK = {};
+  if (!SIM || !SIM.stats || !SIM.stats.length) return;
+  const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
+  const su  = SIM.stats.slice().sort((a,b)=>b.setupH-a.setupH)[0];
+  if (top) BN_MARK[top.id] = { c:'#f05252', t:`가동률 1위 ${top.util.toFixed(0)}%` };
+  if (su && su.setupH > 0.5 && !BN_MARK[su.id]) BN_MARK[su.id] = { c:'#d29922', t:`전환 1위 ${su.setupH.toFixed(0)}h` };
+}
 
 /* ================= 사이드 통계 ================= */
 function statsByFlow(){
@@ -1088,6 +1110,37 @@ function splitBar(T, keys){
     <div class="tslg">${seg.map(x=>
       `<span><i style="background:${x.c}"></i>${esc(x.l)} <b>${hSec(x.v)}</b> ${(x.v/tot*100).toFixed(0)}%</span>`).join('')}</div>`;
 }
+/* ★ 「대기가 왜 200시간이나 되나」 — 화면이 스스로 답하게 한다.
+   대기를 두 갈래로 가른다.
+     투입 대기  첫 공정 앞에서 기다린 시간. 계획서 전량을 같은 시각에 라인 앞에 쌓아 두기 때문에
+                (설정 → 오더 투입일 = 「계획서 시트 순서대로」) 뒤 오더일수록 길어진다.
+                «앞 공정이 안 끝나서» 가 아니라 «내 차례가 아직 안 와서» 다.
+     공정 간 대기 착수 뒤 공정과 공정 사이에서 기다린 시간. 병목(가동률 1위) 앞에 몰린다.
+   (2026-08-19) */
+function waitWhyHtml(P){
+  if (!P || P.wait <= 0) return '';
+  const first = P.rows[0] ? P.rows[0].wait : 0;
+  const later = Math.max(0, P.wait - first);
+  const top = P.rows.map(r => ({ n:(NODE[r.nid]||{label:r.nid}).label.replace(/\n/g,' '), w:r.wait }))
+    .filter(x => x.w > 60).sort((a,b) => b.w - a.w).slice(0, 3);
+  const bn = SIM.stats[0];
+  const sheet = !CFG || (CFG.dateMode || 'sheet') === 'sheet';
+  return `<div class="wwhy">
+    <div class="vfcap" style="margin:0 0 5px">대기 ${hSec(P.wait)} 는 어디서 생겼나</div>
+    <table class="vfp" style="margin-bottom:5px">
+      <tr><td>투입 대기 <span style="color:#6e7681">— 첫 공정(${esc((NODE[P.rows[0]?P.rows[0].nid:'']||{label:'—'}).label.replace(/\n/g,' '))}) 앞에서 내 차례를 기다린 시간</span></td>
+        <td class="v">${hSec(first)}</td><td class="src">${(first/P.wait*100).toFixed(0)}%</td></tr>
+      <tr><td>공정 간 대기 <span style="color:#6e7681">— 착수 뒤 앞 공정·설비 점유로 기다린 시간</span></td>
+        <td class="v">${hSec(later)}</td><td class="src">${(later/P.wait*100).toFixed(0)}%</td></tr>
+    </table>
+    <div class="vfwarn" style="color:var(--dim);margin-top:0">
+      가장 오래 기다린 공정 — ${top.map(x=>`<b>${esc(x.n)} ${hSec(x.w)}</b>`).join(' · ') || '없음'}<br>
+      라인 전체 1위 병목은 <b>${esc(bn.label.replace(/\n/g,' '))} 가동률 ${bn.util.toFixed(1)}%</b> 입니다 —
+      이 설비가 상한이라 나머지 본은 어딘가에서 기다릴 수밖에 없습니다.
+      ${sheet ? `<br><b style="color:#e3b341">지금은 계획서 ${ORDERS.length}오더 ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본이 전부 같은 시각에 투입</b>돼 있습니다.
+        「설정 → 오더 투입일 → <b>시작일부터 순차 투입</b>」로 바꾸면 <b>완료일은 그대로 두고</b> 대기·재공만 줄일 수 있습니다.` : ''}
+    </div></div>`;
+}
 const TS_KEYS = [['work','가공','#2ea043'],['setup','전환(공구·다이 교체)','#d29922'],
                  ['wait','대기(앞 공정·설비 점유)','#8b949e'],['closed','비가동(교대 종료·주말)','#30363d']];
 function renderGanttDetail(){
@@ -1130,6 +1183,7 @@ function renderGanttDetail(){
           한 본이 첫 공정에 도착해 포장까지 끝나는 데 걸린 실제 시간입니다.
           표준시간(가공)은 ${P?hSec(P.work):'—'} 인데 실제 리드타임이 ${P?hSec(P.total):'—'} 인 이유가 여기 다 있습니다.
         </div>
+        ${P ? waitWhyHtml(P) : ''}
       </div>
     </div>
 

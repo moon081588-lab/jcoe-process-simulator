@@ -37,7 +37,7 @@ const AISLES = [
   { row:0,   label:'조관 12M 라인',                     color:0x1f6feb, cs:'#4d94ff', c0:-0.7, c1:2.7 },
   { row:1,   label:'조관 18M 라인',                     color:0x1f6feb, cs:'#4d94ff', c0:-0.7, c1:2.7 },
   { row:2,   label:'용접 · 절단 (SAW)',                 color:0x2f9e9e, cs:'#5fd4d4', c0:-0.7, c1:6.7 },
-  { row:3,   label:'확관 (Expansion) — 병목 공정',      color:0x8957e5, cs:'#a77bff', c0:-0.7, c1:7.7 },
+  { row:3,   label:'확관 (Expansion) — 전환시간 최대 구간', color:0x8957e5, cs:'#a77bff', c0:-0.7, c1:7.7 },
   { row:4,   label:'검사 · 출하',                       color:0x238636, cs:'#3fbf5c', c0:-0.7, c1:5.7 },
   { row:5,   label:'보수 · 재작업',                     color:0xb06020, cs:'#e0913f', c0:1.3,  c1:5.7 },
   { row:6,   label:'R/B 라인 (여분 · 열처리·배척)',     color:0xd29922, cs:'#e3b341', c0:1.3,  c1:4.7 },
@@ -348,7 +348,7 @@ function buildScene(){
     const g = new THREE.Group();
     const P = nodePos(n.id);
     g.position.set(P.x, 0, P.z);
-    let statusMesh=null, lamp=null, units=null, h=3.2;
+    let statusMesh=null, lamp=null, units=null, h=3.2, bnRing=null;
     if(n.kind==='dec'){
       const oc=new THREE.Mesh(new THREE.OctahedronGeometry(1.9),
         new THREE.MeshStandardMaterial({color:COL.dec, emissive:COL.dec, emissiveIntensity:0.35,
@@ -381,11 +381,15 @@ function buildScene(){
         }
       }
       statusMesh = units[0].statusMesh; lamp = units[0].lamp;
-      if(n.bottleneck){
-        const r=new THREE.Mesh(new THREE.TorusGeometry(NW*0.66,0.09,8,44),
-          new THREE.MeshBasicMaterial({color:0xf05252, transparent:true, opacity:0.7}));
-        r.rotation.x=-Math.PI/2; r.position.y=0.1; r.scale.z = (cap>1? (Math.abs(zs[0])*2+ND*zsc)/ (NW*1.32) *1.6 : 1); g.add(r);
-      }
+      /* ★ 병목 표시는 **시뮬레이션 결과**로 켠다.
+         종전에는 NODES 에 손으로 박아 둔 `bottleneck:true`(PPT 다이어그램 표기) 로만 그려서,
+         KPI 는 「JCOE 포장 99.3%」라고 하는데 그림은 확관에 빨간 링을 그리고 있었다.
+         한 화면이 서로 다른 말을 하니 「확관이 병목 아니었나?」가 될 수밖에 없다. (2026-08-19) */
+      bnRing=new THREE.Mesh(new THREE.TorusGeometry(NW*0.66,0.09,8,44),
+        new THREE.MeshBasicMaterial({color:0xf05252, transparent:true, opacity:0.75}));
+      bnRing.rotation.x=-Math.PI/2; bnRing.position.y=0.1;
+      bnRing.scale.z = (cap>1? (Math.abs(zs[0])*2+ND*zsc)/ (NW*1.32) *1.6 : 1);
+      bnRing.visible=false; g.add(bnRing);
     }
     const sp = labelSprite(n.label, n.sub||'', 10.6);
     sp.position.set(0, h+2.3, 0); g.add(sp);
@@ -417,13 +421,28 @@ function buildScene(){
     }
     scene.add(g);
     node3d[n.id]={g, statusMesh, lamp, units, sp, h, badge:null, bay, gauge, bayPad:bay?bay.children[0]:null,
-                  bayRing:bay?bay.children[1]:null};
+                  bayRing:bay?bay.children[1]:null, bnRing, bnTag:null};
   }
 
   buildStockMeshes();
   buildYards();
   raycaster = new THREE.Raycaster();
   applyCam();
+}
+
+/* 병목 배지 — 이름표와 겹치지 않게 색이 있는 작은 딱지로 따로 만든다 */
+function bnSprite(text, color){
+  const cv=document.createElement('canvas'), S2=3;
+  cv.width=340*S2; cv.height=56*S2;
+  const c=cv.getContext('2d'); c.scale(S2,S2);
+  c.fillStyle=color; c.beginPath(); c.roundRect(6,6,328,44,10); c.fill();
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillStyle='#0d1117'; c.font='700 26px "Malgun Gothic","Segoe UI",sans-serif';
+  c.fillText(text,170,29);
+  const tex=new THREE.CanvasTexture(cv); tex.colorSpace=THREE.SRGBColorSpace;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false, transparent:true}));
+  sp.scale.set(9.6, 9.6*56/340, 1); sp.renderOrder = 22;
+  return sp;
 }
 
 /* ================================================================
@@ -652,8 +671,33 @@ function applySim(sim, cfg, srcLabel){
     + ` · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
     + (srcLabel ? ` · ${srcLabel}` : '')
     + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed}` : '');
+  markBottleneck();
   buildStat(); updateStat(); refreshVisual();
   if(!same && $('simClock')) $('simClock').textContent = fmtT(SIM.t0);
+}
+
+/* ★ 시뮬레이션 결과가 가리키는 곳에 병목 표시를 옮긴다.
+     빨강  가동률 1위  — 처리능력 상한(이 설비가 완료일을 정한다)
+     주황  전환 1위    — 공구·다이 교체 손실이 가장 큰 설비
+   두 개가 같은 설비면 빨강만 켠다. */
+function markBottleneck(){
+  if(!SIM || !SIM.stats || !SIM.stats.length) return;
+  const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
+  const su  = SIM.stats.slice().sort((a,b)=>b.setupH-a.setupH)[0];
+  for(const id in node3d){
+    const o=node3d[id]; if(!o || !o.bnRing) continue;
+    let on=null;
+    if(top && id===top.id) on={c:0xf05252, t:`가동률 1위 ${top.util.toFixed(0)}%`};
+    else if(su && su.setupH>0.5 && id===su.id) on={c:0xd29922, t:`전환 1위 ${su.setupH.toFixed(0)}h`};
+    o.bnRing.visible = !!on;
+    if(on) o.bnRing.material.color.setHex(on.c);
+    if(o.bnTag){ o.g.remove(o.bnTag); o.bnTag=null; }
+    if(on){
+      const tag=bnSprite(on.t, on.c===0xf05252 ? '#f05252' : '#d29922');
+      tag.position.set(0, (o.h||3.2)+4.6, 0);
+      o.g.add(tag); o.bnTag=tag;
+    }
+  }
 }
 
 const _oc={};

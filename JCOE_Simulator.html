@@ -136,6 +136,10 @@ tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
 .tslg{display:flex;flex-wrap:wrap;gap:11px;margin-top:7px;font-size:10.5px;color:var(--dim)}
 .tslg i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 .tslg b{color:#fff;font-variant-numeric:tabular-nums}
+.wwhy{margin-top:10px;padding-top:9px;border-top:1px dashed var(--ln)}
+.wwhy table.vfp td:first-child{width:auto}
+.wwhy table.vfp td.v{width:70px}
+.wwhy table.vfp td.src{width:44px;text-align:right}
 .gr:hover .gvbtn{color:#fff;background:#1f6feb}
 .ghdr .gvbtn{color:var(--dim)}
 /* ---------- 산식 검증 ---------- */
@@ -2478,7 +2482,10 @@ const NODES = [
   { id:'BUF',   label:'10번 문 적재', sub:'Buffer · Max 4,000톤', kind:'buf', x:1085, y:315 },
   { id:'D3',    label:'RB 라인\n투입 필요', kind:'dec', x:919, y:310 },
   { id:'RB',    label:'R/B Expander', sub:'EP102 · 여분 라인', st:'Expander', machine:'RB', kind:'proc', x:912, y:405, cap:1 },
-  { id:'EXP',   label:'Expander', sub:'EP103 · EP104', st:'Expander', kind:'proc', x:740, y:315, cap:2, bottleneck:true },
+  /* ★ `bottleneck` 은 **PPT 다이어그램의 표기**일 뿐 시뮬레이션 결과가 아니다.
+     화면의 빨간 표시는 SIM.stats(실제 가동률·전환 1위)로 그린다 — 종전에는 이 플래그로 그려서
+     KPI 는 「JCOE 포장 99.3%」인데 그림은 확관에 빨간 링을 그리고 있었다. (2026-08-19) */
+  { id:'EXP',   label:'Expander', sub:'EP103 · EP104', st:'Expander', kind:'proc', x:740, y:315, cap:2, pptBn:true },
   { id:'D4',    label:'CP\n투입', kind:'dec', x:594, y:310 },
   { id:'CP',    label:'Calibration Press', kind:'proc', st:null, x:587, y:405, cap:1, free:true },
   { id:'EF',    label:'면취 공정', sub:'FC110', st:'EndFacing', kind:'proc', x:420, y:315, cap:1 },
@@ -2493,7 +2500,7 @@ const NODES = [
   { id:'RP',    label:'Repair', kind:'proc', st:null, x:760, y:640, cap:1, free:true },
   { id:'D7',    label:'용접\n문제', kind:'dec', x:767, y:726 },
   { id:'RW',    label:'보수 용접', kind:'proc', st:null, x:760, y:810, cap:1, free:true },
-  { id:'EP',    label:'Expander 문제', sub:'★ 병목 발생지', kind:'proc', st:null, x:1000, y:722, cap:1, free:true, bottleneck:true },
+  { id:'EP',    label:'Expander 문제', sub:'재확관 (PPT 상 병목 지점)', kind:'proc', st:null, x:1000, y:722, cap:1, free:true, pptBn:true },
   { id:'PACK',  label:'JCOE 포장', sub:'PK113', st:'Packing', kind:'proc', x:1130, y:530, cap:1 },
 
   /* ---- R/B 라인 후처리 (Zone 3) ----
@@ -4116,7 +4123,7 @@ const AISLES = [
   { row:0,   label:'조관 12M 라인',                     color:0x1f6feb, cs:'#4d94ff', c0:-0.7, c1:2.7 },
   { row:1,   label:'조관 18M 라인',                     color:0x1f6feb, cs:'#4d94ff', c0:-0.7, c1:2.7 },
   { row:2,   label:'용접 · 절단 (SAW)',                 color:0x2f9e9e, cs:'#5fd4d4', c0:-0.7, c1:6.7 },
-  { row:3,   label:'확관 (Expansion) — 병목 공정',      color:0x8957e5, cs:'#a77bff', c0:-0.7, c1:7.7 },
+  { row:3,   label:'확관 (Expansion) — 전환시간 최대 구간', color:0x8957e5, cs:'#a77bff', c0:-0.7, c1:7.7 },
   { row:4,   label:'검사 · 출하',                       color:0x238636, cs:'#3fbf5c', c0:-0.7, c1:5.7 },
   { row:5,   label:'보수 · 재작업',                     color:0xb06020, cs:'#e0913f', c0:1.3,  c1:5.7 },
   { row:6,   label:'R/B 라인 (여분 · 열처리·배척)',     color:0xd29922, cs:'#e3b341', c0:1.3,  c1:4.7 },
@@ -4427,7 +4434,7 @@ function buildScene(){
     const g = new THREE.Group();
     const P = nodePos(n.id);
     g.position.set(P.x, 0, P.z);
-    let statusMesh=null, lamp=null, units=null, h=3.2;
+    let statusMesh=null, lamp=null, units=null, h=3.2, bnRing=null;
     if(n.kind==='dec'){
       const oc=new THREE.Mesh(new THREE.OctahedronGeometry(1.9),
         new THREE.MeshStandardMaterial({color:COL.dec, emissive:COL.dec, emissiveIntensity:0.35,
@@ -4460,11 +4467,15 @@ function buildScene(){
         }
       }
       statusMesh = units[0].statusMesh; lamp = units[0].lamp;
-      if(n.bottleneck){
-        const r=new THREE.Mesh(new THREE.TorusGeometry(NW*0.66,0.09,8,44),
-          new THREE.MeshBasicMaterial({color:0xf05252, transparent:true, opacity:0.7}));
-        r.rotation.x=-Math.PI/2; r.position.y=0.1; r.scale.z = (cap>1? (Math.abs(zs[0])*2+ND*zsc)/ (NW*1.32) *1.6 : 1); g.add(r);
-      }
+      /* ★ 병목 표시는 **시뮬레이션 결과**로 켠다.
+         종전에는 NODES 에 손으로 박아 둔 `bottleneck:true`(PPT 다이어그램 표기) 로만 그려서,
+         KPI 는 「JCOE 포장 99.3%」라고 하는데 그림은 확관에 빨간 링을 그리고 있었다.
+         한 화면이 서로 다른 말을 하니 「확관이 병목 아니었나?」가 될 수밖에 없다. (2026-08-19) */
+      bnRing=new THREE.Mesh(new THREE.TorusGeometry(NW*0.66,0.09,8,44),
+        new THREE.MeshBasicMaterial({color:0xf05252, transparent:true, opacity:0.75}));
+      bnRing.rotation.x=-Math.PI/2; bnRing.position.y=0.1;
+      bnRing.scale.z = (cap>1? (Math.abs(zs[0])*2+ND*zsc)/ (NW*1.32) *1.6 : 1);
+      bnRing.visible=false; g.add(bnRing);
     }
     const sp = labelSprite(n.label, n.sub||'', 10.6);
     sp.position.set(0, h+2.3, 0); g.add(sp);
@@ -4496,13 +4507,28 @@ function buildScene(){
     }
     scene.add(g);
     node3d[n.id]={g, statusMesh, lamp, units, sp, h, badge:null, bay, gauge, bayPad:bay?bay.children[0]:null,
-                  bayRing:bay?bay.children[1]:null};
+                  bayRing:bay?bay.children[1]:null, bnRing, bnTag:null};
   }
 
   buildStockMeshes();
   buildYards();
   raycaster = new THREE.Raycaster();
   applyCam();
+}
+
+/* 병목 배지 — 이름표와 겹치지 않게 색이 있는 작은 딱지로 따로 만든다 */
+function bnSprite(text, color){
+  const cv=document.createElement('canvas'), S2=3;
+  cv.width=340*S2; cv.height=56*S2;
+  const c=cv.getContext('2d'); c.scale(S2,S2);
+  c.fillStyle=color; c.beginPath(); c.roundRect(6,6,328,44,10); c.fill();
+  c.textAlign='center'; c.textBaseline='middle';
+  c.fillStyle='#0d1117'; c.font='700 26px "Malgun Gothic","Segoe UI",sans-serif';
+  c.fillText(text,170,29);
+  const tex=new THREE.CanvasTexture(cv); tex.colorSpace=THREE.SRGBColorSpace;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false, transparent:true}));
+  sp.scale.set(9.6, 9.6*56/340, 1); sp.renderOrder = 22;
+  return sp;
 }
 
 /* ================================================================
@@ -4731,8 +4757,33 @@ function applySim(sim, cfg, srcLabel){
     + ` · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`
     + (srcLabel ? ` · ${srcLabel}` : '')
     + (SIM.kpi.stochOn ? ` · 변동 seed ${SIM.kpi.seed}` : '');
+  markBottleneck();
   buildStat(); updateStat(); refreshVisual();
   if(!same && $('simClock')) $('simClock').textContent = fmtT(SIM.t0);
+}
+
+/* ★ 시뮬레이션 결과가 가리키는 곳에 병목 표시를 옮긴다.
+     빨강  가동률 1위  — 처리능력 상한(이 설비가 완료일을 정한다)
+     주황  전환 1위    — 공구·다이 교체 손실이 가장 큰 설비
+   두 개가 같은 설비면 빨강만 켠다. */
+function markBottleneck(){
+  if(!SIM || !SIM.stats || !SIM.stats.length) return;
+  const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
+  const su  = SIM.stats.slice().sort((a,b)=>b.setupH-a.setupH)[0];
+  for(const id in node3d){
+    const o=node3d[id]; if(!o || !o.bnRing) continue;
+    let on=null;
+    if(top && id===top.id) on={c:0xf05252, t:`가동률 1위 ${top.util.toFixed(0)}%`};
+    else if(su && su.setupH>0.5 && id===su.id) on={c:0xd29922, t:`전환 1위 ${su.setupH.toFixed(0)}h`};
+    o.bnRing.visible = !!on;
+    if(on) o.bnRing.material.color.setHex(on.c);
+    if(o.bnTag){ o.g.remove(o.bnTag); o.bnTag=null; }
+    if(on){
+      const tag=bnSprite(on.t, on.c===0xf05252 ? '#f05252' : '#d29922');
+      tag.position.set(0, (o.h||3.2)+4.6, 0);
+      o.g.add(tag); o.bnTag=tag;
+    }
+  }
 }
 
 const _oc={};
@@ -5190,6 +5241,7 @@ function runSim() {
     + (PLAN_WARN.length ? ` · ⚠ 스케줄 경고 ${PLAN_WARN.length}건` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
+  calcBnMark();
   buildStatPanel(); updateStatPanel(); renderBottleneck(); renderGantt(); renderEligWarn(); buildIOFilters(); renderIO(); draw();
   buildVfOrders();
   /* 시뮬레이션이 다시 돌면 간트 상세도 같이 갱신된다 (renderGantt 안에서) */
@@ -5379,7 +5431,7 @@ function draw() {
   /* 구역 배경 */
   const zones = [
     [45, 48, 1360, 240, '조관 (Forming) — JCOE', '#1f6feb'],
-    [45, 296, 1520, 190, '확관 (Expansion) — 병목 공정', '#8957e5'],
+    [45, 296, 1520, 190, '확관 (Expansion) — 전환시간 최대 구간', '#8957e5'],
     [45, 498, 1520, 372, '검사 · 보수 · 출하 (Inspection & Shipping)', '#238636'],
   ];
   for (const [x,y,w,h,t,c] of zones) {
@@ -5413,7 +5465,16 @@ function draw() {
     ctx.fillStyle = col + (n.kind==='dec' ? '33' : (s.active.length?'':'22'));
     if (n.kind!=='dec' && s.active.length) ctx.fillStyle = col;
     ctx.fill(); ctx.shadowBlur=0;
-    ctx.strokeStyle = col; ctx.lineWidth = n.bottleneck?2.2:1.4; ctx.stroke();
+    /* 병목 강조는 **시뮬레이션 결과**로 — 가동률 1위 빨강, 전환 1위 주황 (2026-08-19) */
+    const bnk = BN_MARK[n.id];
+    ctx.strokeStyle = bnk ? bnk.c : col; ctx.lineWidth = bnk ? 3 : 1.4; ctx.stroke();
+    if (bnk) {
+      ctx.save();
+      ctx.font = '700 10px "Segoe UI","Malgun Gothic",sans-serif';
+      ctx.fillStyle = bnk.c; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(bnk.t, b.x + b.w/2, b.y - 4);
+      ctx.restore();
+    }
 
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle = (n.kind!=='dec' && s.active.length) ? '#fff' : C.text;
@@ -5553,6 +5614,18 @@ function loop(ts){ if(last==null) last=ts; const dt=(ts-last)/1000; last=ts;
      (2026-08-19 전수 감사) */
   if (playing) { stepAnim(Math.min(dt,0.1)); syncSeek(); }
   draw(); requestAnimationFrame(loop); }
+
+/* 병목 표시 — 어느 설비에 빨간 테두리를 칠지 **시뮬레이션 결과**로 정한다.
+   NODES 의 `pptBn` 은 PPT 다이어그램 표기일 뿐이라 화면 강조에 쓰지 않는다. */
+let BN_MARK = {};
+function calcBnMark(){
+  BN_MARK = {};
+  if (!SIM || !SIM.stats || !SIM.stats.length) return;
+  const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
+  const su  = SIM.stats.slice().sort((a,b)=>b.setupH-a.setupH)[0];
+  if (top) BN_MARK[top.id] = { c:'#f05252', t:`가동률 1위 ${top.util.toFixed(0)}%` };
+  if (su && su.setupH > 0.5 && !BN_MARK[su.id]) BN_MARK[su.id] = { c:'#d29922', t:`전환 1위 ${su.setupH.toFixed(0)}h` };
+}
 
 /* ================= 사이드 통계 ================= */
 function statsByFlow(){
@@ -6179,6 +6252,37 @@ function splitBar(T, keys){
     <div class="tslg">${seg.map(x=>
       `<span><i style="background:${x.c}"></i>${esc(x.l)} <b>${hSec(x.v)}</b> ${(x.v/tot*100).toFixed(0)}%</span>`).join('')}</div>`;
 }
+/* ★ 「대기가 왜 200시간이나 되나」 — 화면이 스스로 답하게 한다.
+   대기를 두 갈래로 가른다.
+     투입 대기  첫 공정 앞에서 기다린 시간. 계획서 전량을 같은 시각에 라인 앞에 쌓아 두기 때문에
+                (설정 → 오더 투입일 = 「계획서 시트 순서대로」) 뒤 오더일수록 길어진다.
+                «앞 공정이 안 끝나서» 가 아니라 «내 차례가 아직 안 와서» 다.
+     공정 간 대기 착수 뒤 공정과 공정 사이에서 기다린 시간. 병목(가동률 1위) 앞에 몰린다.
+   (2026-08-19) */
+function waitWhyHtml(P){
+  if (!P || P.wait <= 0) return '';
+  const first = P.rows[0] ? P.rows[0].wait : 0;
+  const later = Math.max(0, P.wait - first);
+  const top = P.rows.map(r => ({ n:(NODE[r.nid]||{label:r.nid}).label.replace(/\n/g,' '), w:r.wait }))
+    .filter(x => x.w > 60).sort((a,b) => b.w - a.w).slice(0, 3);
+  const bn = SIM.stats[0];
+  const sheet = !CFG || (CFG.dateMode || 'sheet') === 'sheet';
+  return `<div class="wwhy">
+    <div class="vfcap" style="margin:0 0 5px">대기 ${hSec(P.wait)} 는 어디서 생겼나</div>
+    <table class="vfp" style="margin-bottom:5px">
+      <tr><td>투입 대기 <span style="color:#6e7681">— 첫 공정(${esc((NODE[P.rows[0]?P.rows[0].nid:'']||{label:'—'}).label.replace(/\n/g,' '))}) 앞에서 내 차례를 기다린 시간</span></td>
+        <td class="v">${hSec(first)}</td><td class="src">${(first/P.wait*100).toFixed(0)}%</td></tr>
+      <tr><td>공정 간 대기 <span style="color:#6e7681">— 착수 뒤 앞 공정·설비 점유로 기다린 시간</span></td>
+        <td class="v">${hSec(later)}</td><td class="src">${(later/P.wait*100).toFixed(0)}%</td></tr>
+    </table>
+    <div class="vfwarn" style="color:var(--dim);margin-top:0">
+      가장 오래 기다린 공정 — ${top.map(x=>`<b>${esc(x.n)} ${hSec(x.w)}</b>`).join(' · ') || '없음'}<br>
+      라인 전체 1위 병목은 <b>${esc(bn.label.replace(/\n/g,' '))} 가동률 ${bn.util.toFixed(1)}%</b> 입니다 —
+      이 설비가 상한이라 나머지 본은 어딘가에서 기다릴 수밖에 없습니다.
+      ${sheet ? `<br><b style="color:#e3b341">지금은 계획서 ${ORDERS.length}오더 ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본이 전부 같은 시각에 투입</b>돼 있습니다.
+        「설정 → 오더 투입일 → <b>시작일부터 순차 투입</b>」로 바꾸면 <b>완료일은 그대로 두고</b> 대기·재공만 줄일 수 있습니다.` : ''}
+    </div></div>`;
+}
 const TS_KEYS = [['work','가공','#2ea043'],['setup','전환(공구·다이 교체)','#d29922'],
                  ['wait','대기(앞 공정·설비 점유)','#8b949e'],['closed','비가동(교대 종료·주말)','#30363d']];
 function renderGanttDetail(){
@@ -6221,6 +6325,7 @@ function renderGanttDetail(){
           한 본이 첫 공정에 도착해 포장까지 끝나는 데 걸린 실제 시간입니다.
           표준시간(가공)은 ${P?hSec(P.work):'—'} 인데 실제 리드타임이 ${P?hSec(P.total):'—'} 인 이유가 여기 다 있습니다.
         </div>
+        ${P ? waitWhyHtml(P) : ''}
       </div>
     </div>
 
