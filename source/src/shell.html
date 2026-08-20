@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>세아제강 JCOE 공정 시뮬레이터</title>
+<style>
+:root{--bg:#0d1117;--pnl:#161b22;--pnl2:#1c2128;--ln:#30363d;--tx:#e6edf3;--dim:#8b949e;--acc:#58a6ff;--red:#da3633;--yel:#d29922;--grn:#2ea043;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:'Segoe UI','Malgun Gothic',-apple-system,sans-serif;height:100vh;overflow:hidden;font-size:13px}
+#app{display:flex;flex-direction:column;height:100vh}
+header{display:flex;align-items:center;gap:12px;padding:0 16px;height:52px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0}
+header h1{font-size:15px;font-weight:700;color:var(--acc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
+header h1 small{color:var(--dim);font-weight:400;font-size:11px;margin-left:8px}
+.tabs{display:flex;gap:3px;margin-left:8px;flex-shrink:0}
+.tab{white-space:nowrap;flex-shrink:0;padding:7px 13px;border-radius:7px;background:transparent;border:1px solid transparent;color:var(--dim);cursor:pointer;font-size:12.5px;font-weight:600}
+.tab:hover{color:var(--tx);background:#ffffff0a}
+.tab.on{background:#1f6feb22;border-color:#1f6feb66;color:var(--acc)}
+#simInfo{margin-left:auto;font-size:11px;color:var(--dim);text-align:right;line-height:1.45;flex-shrink:0;max-width:330px}
+main{flex:1;position:relative;overflow:hidden}
+.pane{position:absolute;inset:0;display:none;overflow:auto}
+.pane.on{display:flex}
+/* ---------- 흐름 탭 ---------- */
+#pFlow{flex-direction:column;overflow:hidden}
+#flowbar{display:flex;align-items:center;gap:14px;padding:8px 18px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0}
+#btnPlay,#btnReset{width:34px;height:34px;border-radius:50%;border:none;background:#1f6feb;color:#fff;font-size:13px;cursor:pointer}
+#btnReset{background:#30363d}
+#spd{width:130px;accent-color:#1f6feb}
+#simClock{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;color:#fff;margin-left:auto}
+#progWrap{width:180px;height:6px;background:#21262d;border-radius:3px;overflow:hidden}
+#simProg{height:100%;width:0;background:linear-gradient(90deg,#1f6feb,#58a6ff)}
+.lgnd{display:flex;gap:11px;font-size:10.5px;color:var(--dim)}
+.lgnd i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:3px}
+#flowbody{flex:1;display:grid;grid-template-columns:1fr 250px;grid-template-rows:1fr 128px;overflow:hidden;min-height:0}
+#cvwrap{position:relative;overflow:hidden;background:var(--bg)}
+#cv{display:block;cursor:grab;touch-action:none}
+#cvctl{position:absolute;right:12px;top:10px;display:flex;align-items:center;gap:7px;
+  background:#0a0e15c0;border:1px solid var(--ln);border-radius:7px;padding:4px 8px;font-size:11px;color:var(--dim)}
+#cvctl button{background:#21262d;border:1px solid var(--ln);color:var(--dim);border-radius:5px;
+  padding:2px 8px;font-size:11px;cursor:pointer}
+#cvctl button:hover{color:var(--tx);border-color:var(--acc)}
+#cvZoom{font-variant-numeric:tabular-nums;min-width:34px;text-align:right;color:var(--tx)}
+#cvhint{position:absolute;left:12px;bottom:10px;font-size:10.5px;color:#6e7a8c;
+  background:#0a0e15b0;padding:4px 9px;border-radius:6px;pointer-events:none}
+#side{background:var(--pnl);border-left:1px solid var(--ln);overflow-y:auto;padding:12px}
+#side h2{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:9px}
+.sr{display:flex;align-items:center;gap:5px;margin-bottom:5px}
+.sn{width:88px;font-size:10.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb{flex:1;height:13px;background:#21262d;border-radius:3px;position:relative;overflow:hidden}
+.sf{height:100%;width:0;border-radius:3px;transition:width .3s}
+.sv{position:absolute;right:4px;top:0;line-height:13px;font-size:9.5px;font-weight:600;color:#fff}
+.sc{font-size:9.5px;color:var(--dim);width:20px;text-align:right}
+#doneCnt{font-size:30px;font-weight:700;color:var(--grn);text-align:center;margin:14px 0 2px}
+#doneLbl{font-size:10.5px;color:var(--dim);text-align:center;margin-bottom:12px}
+#logPanel{grid-column:1/-1;background:var(--pnl);border-top:1px solid var(--ln);overflow-y:auto;padding:7px 16px}
+.lg{font-family:Consolas,monospace;font-size:10.5px;color:#9198a1;padding:1px 0}
+/* ---------- 공통 ---------- */
+.pane>.inner{padding:18px 22px;width:100%}
+h3{font-size:13.5px;margin:18px 0 9px;color:var(--acc)}
+h3:first-child{margin-top:0}
+.kpis{display:flex;gap:11px;flex-wrap:wrap;margin-bottom:14px}
+.kpi{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:11px 16px;min-width:135px}
+.kpi b{display:block;font-size:19px;color:#fff;font-weight:700}
+.kpi span{font-size:10.5px;color:var(--dim)}
+.kpi.bn{border-color:#da363366;background:#da363314}
+.kpi.bn b{color:#ff7b72}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--pnl2);color:var(--dim);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:7px 9px;text-align:left;border-bottom:1px solid var(--ln);position:sticky;top:0;z-index:5}
+td{padding:6px 9px;border-bottom:1px solid #21262d}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.fx{font-family:Consolas,monospace;font-size:10.5px;color:var(--dim)}
+td.bar{width:130px}
+td.bar div{height:11px;border-radius:3px}
+td.hi2{color:#e3b341;font-weight:600}
+tr.bnrow{background:#da363318}tr.bnrow td{color:#ff9a92}
+tr.sk td{color:#6e7681;font-style:italic}
+tr.hi td:last-child b{color:#ff7b72}tr.mid td:last-child b{color:#e3b341}
+.tag{background:var(--red);color:#fff;border-radius:4px;padding:1px 5px;font-size:9px;margin-left:5px}
+/* ---------- 계산기 ---------- */
+#calcForm{display:flex;flex-wrap:wrap;gap:11px;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:13px 15px;margin-bottom:15px}
+.f{display:flex;flex-direction:column;gap:3px}
+.f label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+.f input,.f select{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radius:6px;padding:5px 8px;font-size:12px;width:110px}
+.f.ck{flex-direction:row;align-items:center;gap:5px;align-self:flex-end;padding-bottom:5px}
+.f.ck label{text-transform:none;font-size:11.5px;color:var(--tx)}
+#calcTerms{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.tc,.uc{background:var(--pnl);border:1px solid var(--ln);border-radius:8px;padding:10px 12px}
+.tc h4,.uc h4{font-size:11.5px;color:var(--acc);margin-bottom:6px;display:flex;justify-content:space-between}
+.tc h4 span{color:#fff}
+.tr2{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);padding:1.5px 0}
+.tr2 b{color:var(--tx);font-variant-numeric:tabular-nums}
+/* ---------- 간트 ---------- */
+#gantt{font-size:11px}
+.ghdr,.gr{display:flex;align-items:stretch}
+.ghdr{position:sticky;top:0;background:var(--bg);z-index:6;border-bottom:1px solid var(--ln)}
+.gl{width:250px;flex-shrink:0;padding:3px 8px;border-right:1px solid var(--ln)}
+.gl b{color:#fff;font-size:11px}.gl span{display:block;color:var(--dim);font-size:9.5px}
+.gt{flex:1;position:relative;height:30px;background:#0f141a}
+.gd{position:absolute;top:0;height:22px;font-size:9px;color:var(--dim);border-left:1px solid #21262d;padding-left:2px;overflow:hidden}
+.gd.we{background:#da363310}
+.gr:hover{background:#ffffff08}
+.gb{position:absolute;top:5px;height:20px;border-radius:4px;opacity:.9}
+.gb:hover{opacity:1;outline:1px solid #fff}
+.gr{cursor:pointer}
+.gr .gvbtn{flex-shrink:0;width:74px;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:var(--acc);border-right:1px solid var(--ln)}
+/* ---------- 간트 막대 시간 구성 ---------- */
+.gb.seg{opacity:.30}
+.gseg{position:absolute;top:0;height:100%;border-radius:2px}
+.gseg.w{background:#2ea043;opacity:.95}
+.gseg.s{background:#d29922;opacity:1;box-shadow:0 0 0 1px #d2992288}
+#gLegend{display:flex;gap:14px;align-items:center;font-size:10.5px;color:var(--dim);margin:0 0 8px}
+#gLegend i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+#gBar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:-2px 0 8px;font-size:11px;color:var(--dim)}
+#gBar label{display:flex;align-items:center;gap:5px;cursor:pointer}
+/* ---------- 간트 안 상세 패널 ---------- */
+.gdet{background:#0c1117;border-top:1px solid var(--acc);border-bottom:1px solid var(--acc)}
+.gdinner{padding:13px 16px;cursor:default}
+.gdhd{display:flex;align-items:center;gap:10px;margin-bottom:11px;flex-wrap:wrap}
+.gdhd b{font-size:13px;color:#fff}
+.gdhd .vfbtn{margin-left:0}
+.gdhd .vfbtn:first-of-type{margin-left:auto}
+.gdgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:1250px){ .gdgrid{grid-template-columns:1fr} }
+.gdcard{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:11px 13px}
+.gdrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:7px}
+.gdk{font-size:10.5px;color:var(--dim);display:flex;align-items:center;gap:5px;margin-left:auto}
+.gdk input,.gdk select{background:#0d1117;color:var(--tx);border:1px solid var(--ln);border-radius:5px;padding:3px 6px;font-size:11.5px;width:74px}
+.gdk select{width:auto}
+.gdtbl{table-layout:fixed}
+.gdtbl td{padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gdtbl td:first-child{width:auto}
+.gdtbl td.v{width:92px}
+.gdtbl td.src{width:210px;text-align:right;font-variant-numeric:tabular-nums}
+.tsbar{display:flex;height:22px;border-radius:5px;overflow:hidden;background:#0d1117;border:1px solid var(--ln)}
+.tsbar i{display:block;height:100%}
+.tslg{display:flex;flex-wrap:wrap;gap:11px;margin-top:7px;font-size:10.5px;color:var(--dim)}
+.tslg i{display:inline-block;width:11px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.tslg b{color:#fff;font-variant-numeric:tabular-nums}
+.wwhy{margin-top:10px;padding-top:9px;border-top:1px dashed var(--ln)}
+.wwhy table.vfp td:first-child{width:auto}
+.wwhy table.vfp td.v{width:70px}
+.wwhy table.vfp td.src{width:44px;text-align:right}
+.gr:hover .gvbtn{color:#fff;background:#1f6feb}
+.ghdr .gvbtn{color:var(--dim)}
+/* ---------- 산식 검증 ---------- */
+#vfBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:14px}
+#vfBar .f{display:flex;flex-direction:column;gap:4px}
+#vfBar label{font-size:10px;color:var(--dim)}
+#vfBar select,#vfBar input{background:#0d1117;color:var(--tx);border:1px solid var(--ln);border-radius:6px;padding:5px 8px;font-size:12px}
+.vfstep{background:var(--pnl);border:1px solid var(--ln);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.vfhd{display:flex;align-items:center;gap:10px;padding:9px 14px;background:#0f141a;border-bottom:1px solid var(--ln)}
+.vfhd b{font-size:12.5px;color:#fff}
+.vfhd .vfno{width:22px;height:22px;border-radius:50%;background:#1f6feb;color:#fff;font-size:10.5px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.vfhd .vfsec{margin-left:auto;font-size:13px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums}
+.vfhd .vfsub{font-size:10px;color:var(--dim)}
+.vfbody{padding:12px 14px}
+.vfcap{font-size:10.5px;color:var(--dim);font-weight:600;margin:0 0 5px}
+.vfform{background:#0d1117;border:1px solid var(--ln);border-radius:7px;padding:9px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.6;color:#d2e3f7;word-break:break-all;white-space:pre-wrap}
+.vfform.res{color:#7ee787;border-color:#2ea04355}
+.vfgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+@media (max-width:1100px){ .vfgrid{grid-template-columns:1fr} }
+table.vfp{width:100%;border-collapse:collapse;font-size:11.5px}
+table.vfp td{padding:4px 8px;border-bottom:1px solid #21262d}
+table.vfp td:first-child{color:var(--dim);width:44%}
+table.vfp td.v{text-align:right;font-variant-numeric:tabular-nums;color:#fff;font-weight:600;width:22%}
+table.vfp td.src{font-size:10px;color:var(--dim)}
+.vfwarn{font-size:10.5px;color:#f0a252;margin-top:7px}
+.vfbtn{background:#21262d;border:1px solid var(--ln);color:var(--acc);border-radius:6px;padding:3px 10px;font-size:10.5px;cursor:pointer;margin-left:auto}
+.vfbtn:hover{background:#1f6feb;color:#fff;border-color:#1f6feb}
+.vfbtn.on{background:#1f6feb;color:#fff;border-color:#1f6feb}
+.vfhd .vfsec{margin-left:10px}
+.vfedbox{margin-top:12px;padding:11px 13px;background:#0d1117;border:1px solid var(--acc);border-radius:8px}
+.vfedbox .refrow i.vfsrc{width:auto;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#vfDirty .vfbtn{margin-left:6px}
+#bnUnits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+/* ---------- 설정 ---------- */
+#cfgBar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:15px}
+#btnRun,#btnCalc{background:#1f6feb;border:none;color:#fff;border-radius:7px;padding:7px 17px;font-size:12.5px;font-weight:600;cursor:pointer}
+.note{font-size:11px;color:var(--dim);line-height:1.65;background:var(--pnl);border-left:3px solid var(--acc);border-radius:0 7px 7px 0;padding:10px 14px;margin-top:12px}
+.note b{color:var(--tx)}
+@media (max-width:1500px){ header h1 small{display:none} .tab{padding:7px 10px;font-size:12px} #simInfo{max-width:250px} }
+@media (max-width:1200px){ #simInfo{display:none} }
+
+/* 표 열 접기 — 기본은 핵심 열만 보인다 (2026-08-14) */
+table.hideadv .adv{display:none}
+.colsw{float:right;font-size:11px;color:var(--dim);font-weight:400;display:flex;align-items:center;gap:5px;cursor:pointer}
+.colsw input{accent-color:#1f6feb}
+.subtabs{display:flex;gap:4px;margin:0 0 13px}
+.stab{padding:6px 14px;border-radius:7px;border:1px solid var(--ln);background:var(--pnl);color:var(--dim);cursor:pointer;font-size:12px;font-weight:600}
+.stab.on{background:#1f6feb22;border-color:#1f6feb66;color:var(--acc)}
+.rpane{display:none}.rpane.on{display:block}
+input.refin{background:#0d1117;border:1px solid var(--ln);color:var(--tx);border-radius:5px;padding:3px 6px;
+  font-size:12px;width:82px;text-align:right;font-variant-numeric:tabular-nums}
+input.refin:focus{border-color:var(--acc);outline:none}
+input.refin.chg{border-color:var(--yel);background:#d2992218;color:#e3b341;font-weight:700}
+.undo{background:none;border:none;color:var(--yel);cursor:pointer;font-size:13px;padding:0 4px;visibility:hidden}
+.undo.on{visibility:visible}
+.refgrp{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:12px 14px;margin-bottom:11px}
+.refgrp h4{font-size:12.5px;color:var(--acc);margin-bottom:3px;display:flex;justify-content:space-between;align-items:baseline}
+.refgrp h4 small{color:var(--dim);font-weight:400;font-size:10.5px}
+.refgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:5px 14px;margin-top:8px}
+.refrow{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);padding:2px 0}
+.refrow span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.refrow i{font-style:normal;color:#6e7681;width:24px;font-size:10px}
+.refprev{font-family:Consolas,monospace;font-size:10.5px;color:var(--dim);margin-top:7px;
+  padding-top:7px;border-top:1px solid var(--ln);line-height:1.6}
+.refprev b{color:#fff}
+.toolbar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:12px 15px;margin-bottom:13px}
+.toolbar .f input,.toolbar .f select{width:auto;min-width:110px}
+.hint{font-size:11px;color:var(--dim);padding-bottom:6px;max-width:520px;line-height:1.5}
+button.ghost{background:#2a3444}
+h3 .sub{font-size:11px;color:var(--dim);font-weight:400;margin-left:8px}
+/* ---- 계획 실행 위저드 ---- */
+.wizhero{display:flex;gap:18px;justify-content:space-between;align-items:center;flex-wrap:wrap;
+  background:linear-gradient(90deg,#12233d,#101720);border:1px solid #1f3a5f;border-radius:12px;padding:15px 18px;margin-bottom:14px}
+.wizrun{text-align:right;min-width:250px}
+.wizrun button{font-size:14px;padding:11px 22px}
+.wizrun .hint{padding:6px 0 0;max-width:280px;text-align:left;display:inline-block}
+.wizsteps{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.wstep{flex:1 1 190px;background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:10px 13px;position:relative}
+.wstep .wn{font-size:10px;color:var(--dim);letter-spacing:.5px}
+.wstep .wt{font-size:12.5px;color:#fff;font-weight:600;margin:3px 0 4px}
+.wstep .wv{font-size:11px;color:#9fb4cc;line-height:1.5}
+.wstep.done{border-color:#2ea04366;background:#2ea04310}
+.wstep.done .wn{color:#3fb950}
+.wstep.wait{opacity:.62}
+.wstep.need{border-color:#d2992266;background:#d2992212}
+.wstep.need .wn{color:#e3b341}
+h4.sh{font-size:12px;color:var(--dim);margin:14px 0 7px;text-transform:uppercase;letter-spacing:.5px}
+.tblwrap{max-height:none;overflow:auto;border:1px solid var(--ln);border-radius:9px}
+.mdl{font-size:11.5px;color:var(--tx);background:#12182099;border:1px solid var(--ln);border-radius:9px;padding:10px 14px;margin:11px 0;line-height:1.9}
+.mdl b{color:var(--acc)}.mdl span{color:var(--dim);font-size:11px}
+.warn{font-size:11.5px;background:#3a1d1de0;border-left:3px solid var(--red);border-radius:0 7px 7px 0;padding:9px 13px;margin-bottom:12px;color:#ffc9c4;line-height:1.6}
+.warn b{color:#ff9a92}
+.ok{font-size:11.5px;background:#132a1ae0;border-left:3px solid var(--grn);border-radius:0 7px 7px 0;padding:9px 13px;margin-bottom:12px;color:#a5e6b6}
+.mseq{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:11px}
+.mcard{background:var(--pnl);border:1px solid var(--ln);border-radius:9px;padding:11px 13px}
+.mcard h5{font-size:12px;color:var(--acc);margin-bottom:8px;display:flex;justify-content:space-between}
+.mcard h5 span{color:var(--dim);font-weight:400}
+.mseqbar{display:flex;height:22px;border-radius:4px;overflow:hidden;margin-bottom:7px}
+.mseqbar div{height:100%}
+.mrow{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);padding:1.5px 0;border-bottom:1px solid #1b222c}
+.mrow b{color:var(--tx);font-variant-numeric:tabular-nums;font-weight:500}
+.mrow i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;font-style:normal}
+.imp{color:#7ee787;font-weight:600}
+.wors{color:#ff9a92;font-weight:600}
+#seek{width:190px;accent-color:#1f6feb}
+label.mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;cursor:pointer}
+#btnDice{background:#2a3444;border:none;color:#fff;border-radius:7px;padding:5px 10px;font-size:14px;cursor:pointer;line-height:1}
+#btnDice:hover{background:#36435a}
+.mcbar{height:7px;background:#21262d;border-radius:4px;overflow:hidden;margin-bottom:12px}
+#mcProg{height:100%;width:0;background:linear-gradient(90deg,#1f6feb,#58a6ff);transition:width .1s}
+.hist{background:var(--pnl);border:1px solid var(--ln);border-radius:10px;padding:13px 16px;margin-bottom:13px}
+.hist h4{font-size:12px;color:var(--acc);margin-bottom:10px;display:flex;justify-content:space-between}
+.hist h4 span{color:var(--dim);font-weight:400}
+.hbars{display:flex;align-items:flex-end;gap:2px;height:96px}
+.hbars div{flex:1;background:#1f6feb;border-radius:2px 2px 0 0;min-height:1px;position:relative}
+.hbars div.mid{background:#2ea043}
+.hbars div.hi{background:#da3633}
+.haxis{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);margin-top:5px}
+.hpct{display:flex;gap:16px;font-size:11px;color:var(--dim);margin-top:9px;flex-wrap:wrap}
+.hpct b{color:#fff;font-variant-numeric:tabular-nums}
+.gdl{position:absolute;top:0;bottom:0;width:2px;background:#da3633;z-index:4}
+.gdl.nolbl::after{content:''}
+.gdl::after{content:'마감';position:absolute;top:-1px;left:3px;font-size:9px;color:#ff9a92;white-space:nowrap}
+.gover{position:absolute;top:0;bottom:0;background:#da363314;z-index:1;pointer-events:none}
+.gb.late{outline:2px solid #da3633}
+
+/* ---------- 3D 공장 뷰 (id 는 v3_ 접두어로 2D 와 분리) ---------- */
+#p3D .lgnd{display:flex;gap:10px;font-size:10.5px;color:var(--dim)}
+#p3D .lgnd i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:3px}
+#v3_c3d{position:relative;overflow:hidden}
+#v3_gl{display:block;width:100%;height:100%}
+#v3_hintbar{position:absolute;left:12px;bottom:10px;font-size:10.5px;color:#6e7a8c;background:#0a0e15b0;padding:5px 10px;border-radius:6px}
+#v3_doneCnt{font-size:28px;font-weight:700;color:#2ea043;text-align:center;margin:12px 0 2px}
+#v3_doneLbl{font-size:10.5px;color:var(--dim);text-align:center}
+#v3_logPanel{grid-column:1/-1;background:var(--pnl);border-top:1px solid var(--ln);overflow-y:auto;padding:6px 16px}
+#p3D .lg{font-family:Consolas,monospace;font-size:10.5px;color:#9198a1;padding:1px 0}
+#v3_badges{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+#p3D .bdg{position:absolute;transform:translate(-50%,-50%);background:#0d1117d9;border:1px solid #3d4756;border-radius:11px;
+  padding:2px 8px;font-size:10.5px;font-weight:600;color:#cbd5e1;white-space:nowrap;border-color:#3d4756}
+#p3D .bdg.warm{background:#463109e0;border-color:#a97c1a;color:#ffd76a}
+#p3D .bdg.hot{background:#4a1414e6;border-color:#c04040;color:#ff9a92}
+#p3D .bdg.buf{background:#0d2b2be6;border-color:#2fa6a6;color:#7fe3e3}
+#p3D .bdg.yard{background:#131924e6;border-color:#4a5568;color:#e6edf3;font-size:11px}
+#p3D .bdg.yard.fin{border-color:#2ea043;color:#7ee787}
+#v3_infoPanel{position:absolute;right:14px;top:14px;width:300px;background:#0d1117ee;border:1px solid var(--ln);border-radius:10px;padding:13px 15px;display:none;backdrop-filter:blur(6px)}
+#v3_infoPanel.on{display:block}
+#v3_infoPanel h4{font-size:13.5px;color:var(--acc);margin-bottom:3px;display:flex;justify-content:space-between;align-items:center}
+#v3_infoPanel h4 button{background:none;color:var(--dim);padding:0 2px;font-size:13px}
+#p3D .ir{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);padding:2.5px 0;border-bottom:1px solid #1b2431}
+#p3D .ir b{color:#fff;font-variant-numeric:tabular-nums}
+#p3D .ir.sm{font-size:10.5px;color:#6e7a8c}
+#p3D .ifx{margin-top:9px;font-size:10.5px;color:var(--dim);font-family:Consolas,monospace;line-height:1.6;background:#161d29;border-radius:6px;padding:8px 10px}
+#p3D .ifx b{color:var(--acc);font-family:inherit}
+#p3D .ifx span{color:#7ee787}
+#p3D{flex-direction:column;overflow:hidden}
+#v3_bar{display:flex;align-items:center;gap:10px;padding:8px 18px;background:var(--pnl);border-bottom:1px solid var(--ln);flex-shrink:0;flex-wrap:wrap}
+#v3_bar button{background:#1f6feb;border:none;color:#fff;border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer}
+#v3_bar button.g{background:#21262d;color:var(--dim);border:1px solid var(--ln)}
+#v3_bar button.g:hover{color:var(--tx);border-color:var(--acc)}
+#v3_bar .sep{width:1px;height:18px;background:var(--ln)}
+#v3_bar .mini{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px}
+#v3_spd{width:110px;accent-color:#1f6feb}
+#v3_seek{width:170px;accent-color:#1f6feb}
+#v3_simClock{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:#fff;margin-left:auto}
+#v3_simInfo{font-size:11px;color:var(--dim)}
+#v3_body{flex:1;display:grid;grid-template-columns:1fr 235px;grid-template-rows:1fr 110px;overflow:hidden;min-height:0}
+#v3_side{background:var(--pnl);border-left:1px solid var(--ln);overflow-y:auto;padding:11px}
+#v3_side h2{font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+#v3_logPanel{grid-column:1/-1;background:var(--pnl);border-top:1px solid var(--ln);overflow-y:auto;padding:6px 16px}
+
+/* ---------- 접히는 설명 박스 ----------
+   설명은 처음 한 번만 필요한데 매번 화면의 1/3 을 차지하고 있었다.
+   기본은 한 줄 요약만 보이고, 「자세히」를 누르면 펼쳐진다. (2026-08-14) */
+details.note{padding:0;border-left:3px solid var(--acc);background:var(--pnl);border-radius:0 7px 7px 0;margin-top:12px}
+details.note>summary{list-style:none;cursor:pointer;padding:9px 14px;font-size:11.5px;color:var(--tx);
+  display:flex;align-items:center;gap:8px;user-select:none}
+details.note>summary::-webkit-details-marker{display:none}
+details.note>summary::before{content:'▸';color:var(--acc);font-size:10px;transition:transform .15s}
+details.note[open]>summary::before{transform:rotate(90deg)}
+details.note>summary:hover{background:#ffffff08}
+details.note .more{margin-left:auto;font-size:10px;color:var(--dim);border:1px solid var(--ln);
+  border-radius:4px;padding:1px 6px;flex-shrink:0}
+details.note[open] .more{color:var(--acc);border-color:#1f6feb66}
+details.note .notebody{padding:2px 14px 11px;font-size:11px;color:var(--dim);line-height:1.65}
+details.note .notebody b{color:var(--tx)}
+
+/* ---------- 결과 요약바 ----------
+   가장 중요한 숫자가 우상단 11px 회색 글씨에만 있었다. 헤더 아래에 크게 고정한다. */
+#kpibar{display:flex;align-items:stretch;gap:0;background:var(--pnl);border-bottom:1px solid var(--ln);
+  flex-shrink:0;overflow-x:auto}
+#kpibar .k{padding:9px 20px;border-right:1px solid var(--ln);min-width:132px;white-space:nowrap}
+#kpibar .k b{display:block;font-size:20px;font-weight:700;color:#fff;line-height:1.15;font-variant-numeric:tabular-nums}
+#kpibar .k span{font-size:10.5px;color:var(--dim)}
+#kpibar .k.bn b{color:#ff7b72}
+#kpibar .k.warn b{color:#e3b341}
+#kpibar .k.note2{border-right:none;color:var(--dim);font-size:11px;display:flex;align-items:center}
+@media (max-width:1100px){ #kpibar .k{padding:8px 13px;min-width:104px} #kpibar .k b{font-size:17px} }
+
+/* ---------- 탭 — 기본 4개 + 분석 드롭다운 ---------- */
+.tabmore{position:relative}
+.tabmore>.tab{padding-right:22px}
+.tabmore>.tab::after{content:'▾';position:absolute;right:8px;top:7px;font-size:10px}
+.tabmenu{display:none;position:absolute;top:36px;left:0;z-index:60;background:var(--pnl2);
+  border:1px solid var(--ln);border-radius:9px;padding:5px;min-width:172px;box-shadow:0 8px 26px #0009}
+.tabmore.open .tabmenu{display:block}
+.tabmenu .tab{display:block;width:100%;text-align:left;border-radius:6px;padding:7px 11px;font-weight:500}
+.tabmenu .tab.on{background:#1f6feb22;color:var(--acc)}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <h1>세아제강 JCOE 공정 시뮬레이터<small>POSTECH × 세아제강 · 표준시간 기준 25.12.18</small></h1>
+  <div class="tabs">
+    <div class="tab on" data-p="pWiz">계획 실행</div>
+    <div class="tab" data-p="pFlow">공정 흐름</div>
+    <div class="tab" data-p="p3D">3D 공장</div>
+    <div class="tab" data-p="pRef">기준정보</div>
+    <!-- 매일 쓰는 4개만 남기고 나머지는 드롭다운으로. 종전에는 12개가 한 줄이라
+         무엇이 중요한지 알 수 없었다. (2026-08-14) -->
+    <div class="tabmore" id="tabMore">
+      <div class="tab" id="tabMoreBtn">분석</div>
+      <div class="tabmenu">
+        <div class="tab" data-p="pBn">병목 분석</div>
+        <div class="tab" data-p="pGantt">오더 간트</div>
+        <div class="tab" data-p="pOpt">확관 최적화</div>
+        <div class="tab" data-p="pIO">In · Out</div>
+        <div class="tab" data-p="pCalc">표준시간 계산기</div>
+        <div class="tab" data-p="pVf">산식 검증</div>
+        <div class="tab" data-p="pMC">반복 실행</div>
+        <div class="tab" data-p="pLog">실적 검증</div>
+      </div>
+    </div>
+    <div class="tab" data-p="pCfg">설정</div>
+  </div>
+  <div id="simInfo"></div>
+</header>
+<div id="kpibar"></div>
+<main>
+  <!-- ========== 계획 실행 (원클릭 워크플로우) ========== -->
+  <section class="pane on" id="pWiz"><div class="inner">
+    <div class="wizhero">
+      <div>
+        <h3 style="margin:0 0 6px">조관계획서 한 장으로 끝까지 — 업로드 → 최적화 → 시뮬레이션</h3>
+      </div>
+      <div class="wizrun">
+        <button id="wizRunAll">▶ 전체 자동 실행</button>
+        <div class="hint">현재 계획서 · 현재 제약으로 최적화 엔진을 돌리고, 그 스케줄 그대로 시뮬레이션합니다.</div>
+      </div>
+    </div>
+    <div class="wizsteps" id="wizSteps"></div>
+
+    <h3>1단계 · 조관계획서 불러오기 <span class="sub">건너뛰면 기본 데이터(2026-03 포항공장)로 진행합니다</span></h3>
+    <div id="planLoader"></div>
+    <details class="note"><summary>2026년 3월 포항공장 조관계획서<span class="more">자세히</span></summary><div class="notebody">현재 기본 데이터는 <b>2026년 3월 포항공장 조관계획서</b> 기준 58오더 / 1,446본입니다.
+      다른 계획서를 넣으면 공정 흐름·간트·병목·In/Out·최적화가 모두 새 데이터로 다시 계산됩니다.
+      필요한 열은 <b>외경 · 두께 · 길이 · 수량</b> 네 가지이며, 오더번호·계획 투입일·납기·병목 공정 작업장·원재료내역은 있으면 함께 읽습니다.</div></details>
+<h3>2단계 · 조건 확인 <span class="sub">기본값은 운영 모델 specs.py 기준입니다</span></h3>
+    <div class="kpis" id="wizCond"></div>
+    <div class="toolbar">
+      <button class="ghost" id="wizGoOpt">확관 최적화 탭에서 제약·규칙 바꾸기</button>
+      <button class="ghost" id="wizGoCfg">설정 탭에서 기간·교대 바꾸기</button>
+    </div>
+
+    <h3>3단계 · 최적화 엔진 실행 <span class="sub">z(j,m) 호기 배정 + x(i,j) 투입 순서</span></h3>
+    <div class="toolbar">
+      <button id="wizOpt">최적화 엔진만 실행</button>
+      <div class="hint">배분 규칙이 <b>「최적화 엔진 스케줄」</b>로 바뀌고, 해가 시뮬레이션에 그대로 반영됩니다.</div>
+    </div>
+    <div class="kpis" id="wizOptSum"></div>
+
+    <h3>4단계 · 결과 <span class="sub">최적해 스케줄대로 흘린 전체 공정 시뮬레이션</span></h3>
+    <div class="toolbar">
+      <button id="wizSim">시뮬레이션만 다시 실행</button>
+      <button class="ghost" id="wizGoFlow">공정 흐름 애니메이션 보기</button>
+      <button class="ghost" id="wizGoBn">병목 분석 보기</button>
+    </div>
+    <div class="kpis" id="wizSimSum"></div>
+    <div id="wizDelta"></div>
+  </div></section>
+
+  <!-- ========== 공정 흐름 ========== -->
+  <section class="pane" id="pFlow">
+    <div id="flowbar">
+      <button id="btnPlay">▶</button><button id="btnReset">↺</button>
+      <span style="font-size:11px;color:var(--dim)">배속</span>
+      <input type="range" id="spd" min="0" max="4" step="1" value="1"><span id="spdL" style="font-size:11px;color:var(--acc);width:48px">10분/s</span>
+      <input type="range" id="seek" min="0" max="1000" value="0" title="타임라인 — 끌어서 원하는 시점으로">
+      <label class="mini"><input type="checkbox" id="loopChk">반복</label>
+      <button id="btnDice" title="새 시드로 다시 실행 (변동성 켜져 있을 때 매번 다른 결과)">🎲</button>
+      <div class="lgnd">
+        <span><i style="background:#238636"></i>대기(Idle)</span>
+        <span><i style="background:#1f6feb"></i>가공중</span>
+        <span><i style="background:#d29922"></i>설비 전환</span>
+        <span><i style="background:#da3633"></i>병목</span>
+        <span><i style="background:#3d444d"></i>비가동</span>
+        <span><i style="background:#8957e5"></i>분기</span>
+      </div>
+      <div id="simClock">--</div>
+    </div>
+    <div id="flowbody">
+      <div id="cvwrap"><canvas id="cv"></canvas>
+        <!-- 화면 이동·확대 안내와 원위치 버튼 (2026-08-14) -->
+        <div id="cvctl">
+          <span id="cvZoom">100%</span>
+          <button id="cvReset" title="원래 배치로">원위치</button>
+        </div>
+        <div id="cvhint">끌기 = 이동 · 휠 = 확대/축소 · 더블클릭 = 원위치</div>
+      </div>
+      <div id="side">
+        <h2>공정별 가동률 (최근 3일)</h2><div id="statBars"></div>
+        <div id="doneCnt">0</div><div id="doneLbl">포장 완료 (본)</div>
+      </div>
+      <div id="logPanel"><div id="logBody"></div></div>
+    </div>
+  </section>
+
+  <!-- ========== 계산기 ========== -->
+  <section class="pane" id="pCalc"><div class="inner">
+    <div id="calcForm">
+      <div class="f"><label>외경 OD (mm)</label><input type="number" id="cOD" value="914" step="1"></div>
+      <div class="f"><label>두께 t (mm)</label><input type="number" id="cT" value="9.3" step="0.1"></div>
+      <div class="f"><label>길이 L (m)</label><input type="number" id="cL" value="12.802" step="0.001"></div>
+      <div class="f"><label>수량 (본)</label><input type="number" id="cQ" value="70"></div>
+      <div class="f"><label>재질</label><select id="cGrade"><option value="normal">일반 (X65 이하)</option><option value="high">고강도 (X70 이상)</option><option value="hiMn">고망간강</option></select></div>
+      <div class="f"><label>확관기</label><select id="cExp"><option value="M2">#2호기</option><option value="M1">#1호기</option><option value="RB">RB 라인</option></select></div>
+      <div class="f"><label>RT 종류</label><select id="cRT"><option>450kV</option><option>320kV</option><option>End-RT</option></select></div>
+      <div class="f"><label>수압 유지(초)</label><input type="number" id="cHold" value="60"></div>
+      <div class="f"><label>마킹 사양수</label><select id="cMS"><option value="1">1 (내면 or 외면)</option><option value="2" selected>2 (내/외면)</option></select></div>
+      <div class="f"><label>마킹 관단수</label><select id="cME"><option value="1">1 (선단 or 후단)</option><option value="2" selected>2 (선/후단)</option></select></div>
+      <div class="f"><label>RT 불량 개소</label><input type="number" id="cDF" value="0"></div>
+      <div class="f ck"><input type="checkbox" id="cAPI" checked><label for="cAPI">API 5L (라인 파이프)</label></div>
+      <button id="btnCalc">재계산</button>
+    </div>
+    <div class="kpis" id="calcSum"></div>
+    <h3>공정별 표준 생산시간 (1본 기준, Net Time)</h3>
+    <table><thead><tr><th>공정</th><th style="text-align:right">초</th><th style="text-align:right">분</th><th>상대 부하</th><th>산출식</th></tr></thead>
+    <tbody id="calcRows"></tbody></table>
+    <h3>산출식 항목별 분해</h3>
+    <div id="calcTerms"></div>
+    <details class="note"><summary>NOTE (원자료 기재사항)<span class="more">자세히</span></summary><div class="notebody">
+      <b>NOTE (원자료 기재사항)</b><br>
+      1) 본 공정별 생산 표준 시간은 가동률을 고려하지 않은 <b>Net Time</b> 측정 결과임<br>
+      2) 25T 초과 제품은 면취기에서 목표 시간당 생산 PCS를 만족하지 못하나, Multi Pass 용접으로 인한 Bottle Neck 으로 후처리 Cycle Time 에 영향을 미치지 않음<br>
+      3) Full Length X-RAY 는 1대 운영 기준 Cycle Time (Line Balance 에 따라 Max. 3대까지 운영 가능)<br>
+      4) 수압 미시행 Pipe 는 관단 변형 등을 이유로 충수 후 가압하지 않고 수압 완료<br>
+      5) U.T Calibration 시간: 2.5min/회 &nbsp;|&nbsp; 6) 동일 Size 다회 측정 Pipe 는 1개 결과만 표기
+    </div></details>
+</div></section>
+
+  <!-- ========== In/Out 시간표 ========== -->
+  <section class="pane" id="pIO"><div class="inner">
+    <div id="ioBar" class="toolbar">
+      <div class="f"><label>설비 / 호기</label><select id="ioStation"></select></div>
+      <div class="f"><label>오더</label><select id="ioOrder"></select></div>
+      <div class="f"><label>단위</label><select id="ioUnit">
+        <option value="order">오더 단위 (설비별 요약)</option>
+        <option value="pipe">본 단위 (상세)</option></select></div>
+      <div class="f"><label>표시 행수</label><select id="ioLimit">
+        <option>200</option><option selected>500</option><option>2000</option><option value="999999">전체</option></select></div>
+      <button id="btnIO">조회</button>
+      <button id="btnIOCsv" class="ghost">CSV 내보내기</button>
+    </div>
+    <div class="kpis" id="ioSum"></div>
+    <div class="tblwrap"><table id="ioTable"><thead id="ioHead"></thead><tbody id="ioBody"></tbody></table></div>
+    <details class="note"><summary>Input<span class="more">자세히</span></summary><div class="notebody"><b>Input</b> = 직전 공정 완료(설비 도착) 시각 · <b>착수</b> = 설비 점유 시작 · <b>Output</b> = 가공 완료 시각.<br>
+      <b>대기</b> = Input → 착수(전환 포함) 사이의 정체 시간, <b>전환</b> = 직전 제품과 규격이 달라 발생한 설비 전환 시간.</div></details>
+</div></section>
+
+  <!-- ========== 확관 배분 · 최적화 ========== -->
+  <section class="pane" id="pOpt"><div class="inner">
+    <h3>① 확관기 공정 제약 (적격집합 ℰ)</h3>
+    <div class="tblwrap" style="margin-bottom:12px"><table><thead><tr><th style="width:130px">설비</th><th>공정 제약 (PPT 제약표 원문 — 구버전)</th><th style="width:250px">현재 적용 기준</th></tr></thead><tbody>
+      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능</td><td id="rmR1">L ≤ 14.021m 단독 가능</td></tr>
+      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입</td><td id="rmR2">L ≤ 12.8384m 단독 가능</td></tr>
+      <tr><td>확관 3호기<br><span style="font-size:10px;color:#8b949e">= R/B 라인 (EP102)</span></td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입<br><span style="font-size:10.5px;color:#8b949e">“처음에 설명을 쉽게 드리려고 3호기라고 말씀드렸다” — 2026-08-06 세아제강. 별도 설비가 아니라 R/B 라인입니다.</span></td><td id="rmR3">= R/B 라인 (열처리 HT102 · 배척 제품)</td></tr>
+    </tbody></table></div>
+    <div class="ok" style="margin-bottom:12px" id="eligOk"></div>
+    <div class="toolbar">
+      <div class="f" style="min-width:300px"><label>확관 제약 기준</label><select id="optRuleSet" style="width:100%">
+        <option value="ortools" selected>확관 최적화 운영 모델 specs.py (정본 · L2≤12.8384m)</option>
+        <option value="ppt">공정 다이어그램 · 제약표 (구버전 · L2≤12.8m)</option>
+      </select></div>
+      <div class="f" style="min-width:250px"><label>R/B 라인 투입</label><select id="optRbMode" style="width:100%">
+        <option value="force" selected>열처리·배척 제품만 (현장 기본)</option>
+        <option value="off">R/B 미사용</option>
+        <option value="capable">적격 제품 전량 (증산 What-if · 현장과 다름)</option>
+      </select></div>
+      <div class="f"><label>RB 근무조</label><select id="optRbShift">
+        <option value="1" selected>1교대(고정)</option><option value="2">2교대</option><option value="3">3교대</option></select></div>
+      <div class="f" style="min-width:290px"><label>R/B 후처리</label><select id="cfgRbPost" style="width:100%">
+        <option value="shared" selected>수압 · 2차 U.T 경유 (2026-08-14 회신)</option>
+        <option value="dedicated">R/B 전용 후처리만 (설비 화면 기준)</option>
+      </select></div>
+      <div class="f ck"><input type="checkbox" id="optSameOD" checked><label for="optSameOD">동시 작업 시 동일 외경 제품만 (1호기 제약)</label></div>
+      <div class="hint">바꾸면 즉시 재시뮬레이션합니다.</div>
+    </div>
+    <div id="ruleDiff"></div>
+    <div id="eligWarn"></div>
+
+    <h3>② 배분 규칙 — 두 호기 다 가능한 오더를 어디로 보낼 것인가</h3>
+    <div class="toolbar">
+      <div class="f" style="min-width:280px"><label>배분 규칙</label><select id="optRule"></select></div>
+      <div id="ruleDesc" class="hint"></div>
+      <div class="f ck"><input type="checkbox" id="optApplySeq" checked><label for="optApplySeq">최적화 투입 순서까지 적용</label></div>
+      <button id="btnApplyRule">규칙 적용 · 재시뮬</button>
+    </div>
+
+    <h3>③ 최적화 엔진 <span class="sub">병렬설비 + 순서의존 전환시간 스케줄링</span></h3>
+    <div class="toolbar">
+      <div class="f"><label>Makespan 가중치</label><input type="number" id="wCmax" value="1" step="0.1"></div>
+      <div class="f"><label>전환시간 가중치</label><input type="number" id="wSetup" value="1.4" step="0.1"></div>
+      <div class="f"><label>호기 편차 가중치</label><input type="number" id="wBal" value="0.25" step="0.05"></div>
+      <div class="f"><label>SA 반복수</label><select id="optIters"><option>8000</option><option selected>24000</option><option>60000</option><option>150000</option></select></div>
+      <button id="btnOpt">최적화 엔진 실행</button>
+    </div>
+    <div class="kpis" id="optSum"></div>
+    <div class="mdl"><b>모델</b>&nbsp; min ① &nbsp;s.t.&nbsp; ② Σ<sub>m∈ℳ</sub> z<sub>j,m</sub> = 1 (∀j∈𝒥) &nbsp;·&nbsp;
+      ③ z<sub>j,m</sub> = 0 (∀(j,m)∉ℰ) &nbsp;·&nbsp;
+      ④ S<sub>j</sub> ≥ C<sub>i</sub> + s<sub>ij</sub> − M(1−x<sub>ij</sub>) &nbsp;(∀m∈ℳ, ∀i,j∈𝒥<sub>m</sub>)<br>
+      <span>목적함수 ① = w₁·Makespan + w₂·Σ설비전환시간 + w₃·호기간 부하편차 — 가중치로 조정</span></div>
+    <h4 class="sh">호기별 배정 시퀀스 (최적해)</h4>
+    <div id="optSeq"></div>
+
+    <h3>④ 외부 최적화 스케줄 가져오기 <span class="sub">OR-Tools CP-SAT 결과를 그대로 흘리기</span></h3>
+    <div id="impDrop" class="pl-drop">
+      <b>CP-SAT 스케줄 결과 파일을 여기에 끌어다 놓으세요</b>
+      <span>또는 클릭해서 파일 선택 · .csv / .xlsx / .xls / .json 지원</span><br>
+      <span>OrderNo(판매오더) 와 Machine(Expander#1 / #2 / #RB / Both) 열이 있으면 읽습니다. Ex_Start 가 있으면 투입 순서까지 그대로 재현합니다.</span>
+    </div>
+    <input type="file" id="impFile" accept=".csv,.xlsx,.xls,.json" style="display:none">
+    <div id="impInfo"></div>
+    <div id="impSeq"></div>
+
+    <h3>⑤ 사후분석 — 배분 규칙별 비교</h3>
+    <div class="toolbar"><button id="btnCmp">전체 규칙 비교 실행</button>
+      <div class="hint">규칙 5종을 각각 시뮬레이션해 Makespan · 전환시간 · 호기 부하를 비교합니다.</div></div>
+    <div class="tblwrap"><table><thead><tr><th>배분 규칙</th><th style="text-align:right">Makespan</th>
+      <th style="text-align:right">확관 전환(h)</th><th style="text-align:right">총 전환(h)</th>
+      <th style="text-align:right">확관 가동률</th><th style="text-align:right">#1호기(본)</th><th style="text-align:right">#2호기(본)</th>
+      <th style="text-align:right">부하 편차(h)</th><th>확관 전환시간 비교</th></tr></thead><tbody id="cmpBody">
+      <tr><td colspan="9" style="color:#6e7681">「전체 규칙 비교 실행」을 누르면 결과가 표시됩니다.</td></tr></tbody></table></div>
+    <div id="cmpNote"></div>
+  </div></section>
+
+  <!-- ========== 반복 실행 (몬테카를로) ========== -->
+  <section class="pane" id="pMC"><div class="inner">
+    <h3>① 변동성 설정 <span class="sub">끄면 결정론 — 몇 번을 돌려도 결과가 같습니다</span></h3>
+    <div class="toolbar">
+      <div class="f ck"><input type="checkbox" id="stOn"><label for="stOn"><b>변동성 사용</b></label></div>
+      <div class="f"><label>작업시간 변동 CV</label><input type="number" id="stCvT" value="0.10" step="0.01" min="0" max="0.6"></div>
+      <div class="f"><label>전환시간 변동 CV</label><input type="number" id="stCvS" value="0.20" step="0.01" min="0" max="0.8"></div>
+      <div class="f"><label>불량률 (본당)</label><input type="number" id="stDef" value="0.02" step="0.005" min="0" max="0.3"></div>
+      <div class="f"><label>불량 중 용접문제 비율</label><input type="number" id="stWeld" value="0.65" step="0.05" min="0" max="1"></div>
+      <div class="f"><label>본당 최대 재작업</label><input type="number" id="stMaxRw" value="2" step="1" min="0" max="5"></div>
+      <div class="f"><label>설비 MTBF (h, 0=무고장)</label><input type="number" id="stMtbf" value="0" step="10" min="0"></div>
+      <div class="f"><label>평균 수리 MTTR (h)</label><input type="number" id="stMttr" value="1.5" step="0.5" min="0"></div>
+      <div class="f"><label>Repair (분)</label><input type="number" id="stRep" value="30" step="5" min="0"></div>
+      <div class="f"><label>보수 용접 (분)</label><input type="number" id="stRw" value="60" step="5" min="0"></div>
+      <div class="f"><label>재확관 처리 (분)</label><input type="number" id="stEp" value="45" step="5" min="0"></div>
+      <button id="btnStApply">적용 · 1회 실행</button>
+      <button id="btnStDice" class="ghost">🎲 새 시드로 실행</button>
+    </div>
+    <details class="note"><summary>F-X ray 에서 불량이 실제로 발생<span class="more">자세히</span></summary><div class="notebody">변동성을 켜면 <b>F-X ray 에서 불량이 실제로 발생</b>해 Repair → 보수 용접(재검사) 또는
+      Expander 문제(재확관) 루프를 타게 됩니다. 지금까지 그려만 놓고 아무도 지나가지 않던 경로입니다.
+      작업시간은 로그정규분포로 흔들리고, MTBF 를 넣으면 설비 고장·수리 정지도 발생합니다.</div></details>
+<h3>② 반복 실행</h3>
+    <div class="toolbar">
+      <div class="f"><label>반복 횟수</label><select id="mcN">
+        <option>20</option><option selected>50</option><option>100</option><option>200</option><option>500</option></select></div>
+      <div class="f ck"><input type="checkbox" id="mcAllRules"><label for="mcAllRules">배분 규칙 5종 각각 반복</label></div>
+      <button id="btnMC">반복 실행</button>
+      <div class="hint" id="mcHint">각 실행마다 시드가 달라져 서로 다른 결과가 나옵니다. 분포로 “빠르면 며칠, 나쁘면 며칠”을 봅니다.</div>
+    </div>
+    <div id="mcProgWrap" style="display:none"><div class="mcbar"><div id="mcProg"></div></div></div>
+    <div class="kpis" id="mcSum"></div>
+    <div id="mcHist"></div>
+    <div id="mcTable"></div>
+    <div id="mcRules"></div>
+  </div></section>
+
+  <!-- ========== 간트 ========== -->
+  <section class="pane" id="pGantt"><div class="inner">
+    <h3>오더별 생산 스케줄</h3>
+    <div id="gBar">
+      <label><input type="checkbox" id="gSeg" checked> 막대 안에 <b>시간 구성</b> 표시</label>
+      <span>행을 클릭하면 그 자리에서 <b>시간 구성 · 공정별 대기/전환/가공 · 적용 산식</b>이 펼쳐집니다.</span>
+    </div>
+    <div id="gLegend">
+      <span><i style="background:#2ea043"></i>가공</span>
+      <span><i style="background:#d29922"></i>전환(공구·다이 교체)</span>
+      <span><i style="background:#30363d;border:1px solid #484f58"></i>대기 · 비가동</span>
+      <span style="color:#484f58">— 옅은 바탕이 오더 스팬 전체입니다</span>
+    </div>
+    <div id="gantt"></div>
+  </div></section>
+
+  <!-- ========== 산식 검증 ========== -->
+  <section class="pane" id="pVf"><div class="inner">
+    <div id="vfBar">
+      <div class="f"><label>오더</label><select id="vfOrder" style="min-width:300px"></select></div>
+      <div class="f"><label>오더 내 본 번호</label><input type="number" id="vfK" value="1" min="1" step="1" style="width:90px"></div>
+      <div class="f"><label>전역 누적 본 번호 <span title="포장의 「10본마다 추가 검사」 판정에 쓰입니다">ⓘ</span></label><input type="number" id="vfSeq" value="1" min="1" step="1" style="width:110px"></div>
+      <div class="f"><label>확관 호기</label><select id="vfMach" style="min-width:190px">
+        <option value="">시뮬레이션 배정 그대로</option>
+        <option value="M1">#1호기</option><option value="M2">#2호기</option>
+        <option value="BOTH">#1·#2 동시</option><option value="RB">R/B 라인</option></select></div>
+    </div>
+    <div class="kpis" id="vfSum"></div>
+    <div id="vfBody"></div>
+  </div></section>
+
+  <!-- ========== 병목 ========== -->
+  <section class="pane" id="pBn"><div class="inner">
+    <div class="kpis" id="bnCall"></div>
+    <div id="bnWhy"></div>
+    <h3>공정별 부하 · 가동률 <span class="sub">가동률 = 설비 1대 기준 (병렬 설비는 호기별 최댓값)</span>
+      <label class="colsw"><input type="checkbox" id="bnAdv">자세히 (가공·전환 시간)</label></h3>
+    <div class="tblwrap"><table id="bnTbl"><thead><tr><th>공정</th><th style="text-align:right">대수</th>
+      <th class="adv" style="text-align:right">처리 본수</th>
+      <th class="adv" style="text-align:right">가공(h)</th><th class="adv" style="text-align:right">전환(h)</th>
+      <th class="adv" style="text-align:right">전환비중</th>
+      <th>부하</th><th style="text-align:right">대당 가동률</th><th>병목 유형</th></tr></thead><tbody id="bnTable"></tbody></table></div>
+    <h3>병렬 설비 유닛별 부하</h3><div id="bnUnits"></div>
+    <h3>확관기별 공정 제약 (설비 전환 제약)</h3>
+    <table><thead><tr><th style="width:130px">설비</th><th>공정 제약</th></tr></thead><tbody>
+      <tr><td>확관 1호기</td><td>14m 이상 작업 불가 · 2호기와 동시 작업 시 동일 외경 제품만 가능<br><span id="bnR1" class="hi2"></span></td></tr>
+      <tr><td>확관 2호기</td><td>12.8m 이상 작업 불가 · 외경 48 inch 이상 &amp; 22 inch 이하 우선 투입<br><span id="bnR2" class="hi2"></span></td></tr>
+      <tr><td>확관 3호기 (= RB 라인)</td><td>12.8m 이상 작업 불가 · 열처리 공정 제품 &amp; 배척 제품 우선 투입<br><span id="bnR3" class="hi2"></span></td></tr>
+    </tbody></table>
+    <details class="note"><summary>설비 전환 시간<span class="more">자세히</span></summary><div class="notebody">제품 규격(외경·두께·길이) 변경 시 <b>설비 전환 시간</b>이 발생하며, 확관 공정은 타 공정 대비 전환 시간이 길어 전체 공정의 병목을 유발합니다.
+      동일 규격 오더를 묶어 투입하면 전환 손실을 줄일 수 있습니다 — 위 <b>전환비율</b> 컬럼이 개선 여지를 나타냅니다.</div></details>
+</div></section>
+
+  <!-- ========== 실적 검증 ========== -->
+  <!-- ============================ 3D 공장 ============================ -->
+  <section class="pane" id="p3D">
+    <div id="v3_bar">
+      <button id="v3_btnPlay">▶</button><button id="v3_btnReset">↺</button>
+      <span class="mini">배속</span>
+      <input type="range" id="v3_spd" min="0" max="4" step="1" value="1"><span class="mini" id="v3_spdL">1시간/s</span>
+      <input type="range" id="v3_seek" min="0" max="1000" value="0" title="타임라인 — 끌어서 원하는 시점으로">
+      <label class="mini"><input type="checkbox" id="v3_loopChk">반복</label>
+      <div class="sep"></div>
+      <button class="g" data-view="all">전체</button>
+      <button class="g" data-view="top">평면</button>
+      <button class="g" data-view="form">조관</button>
+      <button class="g" data-view="exp">확관</button>
+      <button class="g" data-view="insp">검사·출하</button>
+      <div class="sep"></div>
+      <div class="lgnd">
+        <span><i style="background:#2ea043"></i>대기</span>
+        <span><i style="background:#2b7fff"></i>가공중</span>
+        <span><i style="background:#e3b341"></i>전환</span>
+        <span><i style="background:#f05252"></i>병목</span>
+        <span><i style="background:#4a5260"></i>비가동</span>
+      </div>
+      <span id="v3_simInfo"></span>
+      <div id="v3_simClock">--</div>
+    </div>
+    <div id="v3_body">
+      <div id="v3_c3d">
+        <canvas id="v3_gl"></canvas>
+        <div id="v3_hintbar">좌 드래그 = 회전 · 우 드래그(또는 Shift) = 이동 · 휠 = 확대/축소 · 설비 클릭 = 상세</div>
+        <div id="v3_badges"></div>
+        <div id="v3_infoPanel"></div>
+      </div>
+      <div id="v3_side">
+        <h2>공정별 가동률</h2><div id="v3_statBars"></div>
+        <div id="v3_doneCnt">0</div><div id="v3_doneLbl">포장 완료 (본)</div>
+      </div>
+      <div id="v3_logPanel"><div id="v3_logBody"></div></div>
+    </div>
+  </section>
+
+  <!-- ============================ 기준정보 ============================ -->
+  <section class="pane" id="pRef"><div class="inner">
+    <div class="kpis" id="refKpi"></div>
+
+    <div class="toolbar">
+      <div class="f ck"><b id="refDirty" style="color:#d29922">변경 없음</b></div>
+      <button class="ghost" id="refRevert">전부 원래대로</button>
+      <button class="ghost" id="refExport">기준정보 내보내기 (.json)</button>
+      <label class="ghost" for="refImport" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid var(--ln);border-radius:6px">불러오기</label>
+      <input type="file" id="refImport" accept=".json,application/json" style="display:none">
+      <div class="hint" id="refPlanWarn" style="color:#d29922"></div>
+      <div class="hint">값을 고치면 <b>바로 다시 계산</b>됩니다. 원래 값과 다른 칸은 노란색으로 표시되고,
+        칸마다 <b>되돌리기(↺)</b> 버튼이 생깁니다. 내보낸 <code>.json</code> 을 다른 사람이 불러오면 똑같은 상태가 됩니다.</div>
+    </div>
+
+    <div class="subtabs" id="refTabs">
+      <div class="stab on" data-r="rCap">설비 대수</div>
+      <div class="stab" data-r="rCo">전환시간</div>
+      <div class="stab" data-r="rStd">표준시간 상수</div>
+      <div class="stab" data-r="rTbl">룩업 표</div>
+    </div>
+
+    <!-- 설비 대수 -->
+    <div class="rpane on" id="rCap">
+      <details class="note"><summary>대수를 바꾸면 완료일과 병목이 어떻게 움직이는지 오른쪽에 바로 나옵니다.<span class="more">자세히</span></summary><div class="notebody">설비를 몇 대로 볼지 정합니다. <b>대수를 바꾸면 완료일과 병목이 어떻게 움직이는지 오른쪽에 바로 나옵니다.</b>
+        확관(Expander)은 <b>#1·#2호기 + R/B 라인</b> 구성이 2026-08-06 자로 확정돼 여기서는 바꾸지 않습니다.</div></details>
+<div class="tblwrap"><table><thead><tr>
+        <th>설비</th><th>공정</th><th style="text-align:right">대수</th><th style="text-align:right">기본</th>
+        <th style="text-align:right">가동률</th><th>영향</th><th></th></tr></thead>
+        <tbody id="refCapBody"></tbody></table></div>
+    </div>
+
+    <!-- 전환시간 -->
+    <div class="rpane" id="rCo">
+      <details class="note"><summary>외경 / 두께 / 길이<span class="more">자세히</span></summary><div class="notebody">직전 본과 <b>외경 / 두께 / 길이</b>가 달라졌을 때 드는 시간[초]입니다.
+        셋 중 <b>가장 큰 값 하나만</b> 적용됩니다. 확관은 실제로는 공구 계층 룰(Drawbar 270분 / Head 150분 / Die 90분)을
+        쓰므로 여기 값은 폴백입니다 — 공구 셋업 시간은 「표준시간 상수 → Expander」 에서 고치십시오.</div></details>
+<div class="tblwrap"><table><thead><tr>
+        <th>공정</th><th style="text-align:right">외경 변경</th><th style="text-align:right">두께 변경</th>
+        <th style="text-align:right">길이 변경</th><th>비고</th><th></th></tr></thead>
+        <tbody id="refCoBody"></tbody></table></div>
+    </div>
+
+    <!-- 표준시간 상수 -->
+    <div class="rpane" id="rStd">
+      <details class="note"><summary>「JCOE 공정 생산 표준 시간 분석」 엑셀 Total Summary<span class="more">자세히</span></summary><div class="notebody">표준시간 산출식의 상수입니다. 출처는 전부 <b>「JCOE 공정 생산 표준 시간 분석」 엑셀 Total Summary</b> 이고,
+        공정마다 엑셀 행 번호를 적어 두었습니다. 값을 고치면 아래 <b>미리보기</b>(OD914 × t9.3 × 12.802m 기준)가 즉시 바뀝니다.</div></details>
+<div id="refStdWrap"></div>
+    </div>
+
+    <!-- 룩업 표 -->
+    <div class="rpane" id="rTbl">
+      <details class="note"><summary>표 값은 「산식 검증」 탭에서 그 자리에서 고칩니다<span class="more">자세히</span></summary><div class="notebody">
+        엑셀에서 뽑아 온 구간 표입니다. 행이 수백 개라 여기서 통째로 펼치면 무엇이 이 제품에 쓰였는지 알 수 없습니다.<br>
+        그래서 <b>「산식 검증」 탭에서 공정 카드의 <code>✎ 편집</code></b> 을 누르면, <b>그 제품이 실제로 짚은 칸</b>만 골라
+        그 자리에서 고칠 수 있게 했습니다 (예: 두께 9.3mm 가 짚은 내면 SAW 속도 한 칸). 고친 칸은 아래에 표시되고
+        <b>내보내기</b> JSON 의 <code>엑셀표재정의</code> 항목에 함께 저장됩니다.<br>
+        표 전체를 갈아 끼우려면 <code>source/data/tables.json</code> 을 바꾸고 <code>python3 source/build.py</code> 를 돌리십시오.</div></details>
+<div class="tblwrap"><table><thead><tr><th>표</th><th>내용</th><th style="text-align:right">행 수</th></tr></thead>
+        <tbody id="refTblBody"></tbody></table></div>
+    </div>
+  </div></section>
+
+  <section class="pane" id="pLog"><div class="inner">
+    <h3>① 실적 로그 업로드 <span class="sub">machine_prod_log — 스냅샷 방식 생산실적 (조관계획서 없음)</span></h3>
+    <div class="toolbar">
+      <input type="file" id="lgFile" accept=".csv,text/csv">
+      <button class="ghost" id="lgClear">해제</button>
+      <div class="hint" id="lgHint">DB 스냅샷 실적 CSV 를 올리면 설비별 실적 본수·실적 사이클타임을 뽑고,
+        같은 규격으로 표준시간 산출식을 다시 계산해 대조합니다.</div>
+    </div>
+    <div class="kpis" id="lgKpi"></div>
+    <div id="lgErr"></div>
+
+    <h3>② 데이터 해석 규칙</h3>
+    <details class="note" id="lgRules"><summary>qty_delta 는 신뢰할 수 없습니다<span class="more">자세히</span></summary><div class="notebody">
+      <b>PROD_QTY_cum 은 (설비 · WO · 작업일 · 근무조) 단위로 리셋</b>됩니다 — 전체 파일 누적으로 읽으면 안 됩니다.<br>
+      <b>qty_delta 는 신뢰할 수 없습니다</b> — 직전 스냅샷을 놓친 구간에서 <code>delta = cum</code> 으로 찍힙니다
+      (예: cum 31 → delta 31). 그래서 본수는 <b>교대별 최대 누적의 합</b>으로 셉니다.<br>
+      <b>오더별 착수 시각은 없습니다</b> — <code>LAST_TIME</code>(마지막 완료 시각)만 있으므로,
+      검증은 <b>완료 간격(본당 소요시간)</b> 대 표준시간 산출식으로 합니다.
+    </div></details>
+<h3>③ 설비별 실적</h3>
+    <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
+      <th style="text-align:right">스냅샷 행</th><th>실적 구간</th><th style="text-align:right">실적 본당</th>
+      <th>시뮬레이터 노드</th></tr></thead><tbody id="lgWC"></tbody></table></div>
+
+    <h3>④ 표준시간 검증 <span class="sub">실적 완료 간격(중위수) ÷ 엑셀 산출식</span></h3>
+    <div class="tblwrap"><table><thead><tr><th>설비</th><th>공정</th><th style="text-align:right">실적 본수</th>
+      <th style="text-align:right">표본</th><th style="text-align:right">실적 본당(s)</th>
+      <th style="text-align:right">페이스(s)</th><th style="text-align:right">표준시간(s)</th>
+      <th style="text-align:right">실적 / 표준</th><th style="text-align:right">여유율</th>
+      <th>판정</th></tr></thead><tbody id="lgVerify"></tbody></table></div>
+    <details class="note"><summary>표준시간보다 큰 것이 정상<span class="more">자세히</span></summary><div class="notebody">실적 간격에는 대기·전환·정지가 모두 섞여 있어 <b>표준시간보다 큰 것이 정상</b>입니다.
+      <b>실적 본당</b>은 처리량 기준(ΣΔt ÷ ΣΔ누적)입니다. 스냅샷 한 간격이 여러 본을 담을 수 있어
+      누적 증가분으로 나눠서 환산합니다. <b>페이스</b>는 그 값의 중위수로, 돌고 있을 때의 속도만 봅니다.
+      <b>표준시간과의 비교에는 페이스가 아니라 실적 본당을 쓰십시오</b> — 페이스는 대기를 통째로 버리기 때문에
+      표준보다 빨라 보이는 착시가 생깁니다(2026-08-14 이 착시로 「포장 산출식이 65% 느리다」고 잘못 보고했습니다).
+      <b>여유율</b>이 0 에 가까울수록 쉬지 않고 돌고 있다는 뜻이라 진짜 병목입니다.</div></details>
+<div class="toolbar">
+      <div class="f ck"><input type="checkbox" id="lgCalib"><label for="lgCalib"><b>실적 보정 적용</b> — 실적이 표준보다 <b>빠른</b> 공정만 표준시간을 실적까지 내려서 재시뮬레이션</label></div>
+      <div class="hint" id="lgCalibHint">한 방향(하향)으로만 보정합니다. 실적 &gt; 표준인 공정은 대기 때문인지 산출식 때문인지 구분할 수 없어 손대지 않습니다.
+        2026-08-14 실적 기준으로는 <b>보정 대상이 하나도 없습니다</b> — 전 공정에서 실적 ≥ 표준입니다.</div>
+    </div>
+    <div class="kpis" id="lgCalibSum"></div>
+
+    <h3>⑤ 실적 오더셋</h3>
+    <div class="toolbar">
+      <button id="lgUse">이 실적을 오더셋으로 시뮬레이션</button>
+      <div class="hint">작업지시(WO)별로 자재내역에서 외경·두께·길이를 뽑고, 포장 실적 본수를 수량으로 씁니다.
+        투입 순서는 <b>최초 완료 시각 순</b>입니다. 자재기호에 <code>C2</code> 가 있으면 옥외 열처리로 보아 R/B 강제 투입 규칙을 태웁니다.</div>
+    </div>
+    <div class="tblwrap"><table><thead><tr><th>WO</th><th>자재내역</th><th style="text-align:right">외경</th>
+      <th style="text-align:right">두께</th><th style="text-align:right">길이(m)</th><th style="text-align:right">포장 본수</th>
+      <th style="text-align:right">최대 본수</th><th>C2(열처리)</th><th>경유 설비</th></tr></thead><tbody id="lgOrders"></tbody></table></div>
+  </div></section>
+
+  <!-- ========== 설정 ========== -->
+  <section class="pane" id="pCfg"><div class="inner">
+    <h3>① 조관계획서 불러오기</h3>
+    <div class="note">계획서 업로드는 <b>「계획 실행」 탭 1단계</b>로 옮겼습니다 — 업로드 → 최적화 → 시뮬레이션이 한 화면에서 이어집니다.
+      <button class="ghost" id="cfgGoWiz" style="margin-left:8px">계획 실행 탭 열기</button></div>
+
+    <h3>② 계획 기간</h3>
+    <div class="toolbar">
+      <div class="f"><label>시작일</label><input type="date" id="cfgStart" value="2026-03-02"></div>
+      <div class="f"><label>계획 마감일 (선택)</label><input type="date" id="cfgDeadline"></div>
+      <div class="f"><label>오더 투입일</label><select id="cfgDateMode">
+        <option value="sheet" selected>계획서 시트 순서대로 (기본)</option>
+        <option value="plan">계획서 날짜 그대로</option>
+        <option value="shift">시작일 기준으로 전체 이동</option>
+        <option value="seq">시작일부터 순차 투입</option></select></div>
+      <div class="f" id="fGap" style="display:none"><label>순차 투입 간격 (h)</label>
+        <input type="number" id="cfgSeqGap" value="6" step="1" min="1"></div>
+      <div class="f ck"><input type="checkbox" id="cfgDueAnalysis"><label for="cfgDueAnalysis">납기 지연 분석</label></div>
+      <button id="btnPeriod">기간 적용</button>
+      <button id="btnPeriodClear" class="ghost">마감일 해제</button>
+      <div class="hint" id="periodHint"></div>
+    </div>
+    <details class="note"><summary>JCOE 시트에 적힌 행 순서 그대로<span class="more">자세히</span></summary><div class="notebody">「계획서 시트 순서대로」는 조관계획서 <b>JCOE 시트에 적힌 행 순서 그대로</b> 시작일부터 흘려보냅니다 —
+      날짜·납기를 쓰지 않고 <b>라인 자체의 처리 능력만으로</b> 어떤 흐름이 나오는지 봅니다 (2026-08-14 세아제강 요청).
+      <b>납기 지연 분석은 기본 해제</b>입니다 — 영업계획납기일이 계획 시작일보다 과거인 행이 많아 지표가 의미를 잃습니다.</div></details>
+<div class="kpis" id="periodSum"></div>
+
+    <h3>③ 시뮬레이션 파라미터</h3>
+    <div id="cfgBar">
+      <div class="f"><label>Shift / 일</label><select id="cfgShifts"><option value="1">1근</option><option value="2" selected>2근</option><option value="2E">2근연장</option><option value="3">3근</option></select></div>
+      <div class="f"><label>실가동 h/Shift</label><input type="number" id="cfgNetH" value="7.5" step="0.5"></div>
+      <!-- 종전에는 이 8줄짜리 설명이 「SHIFT/일」과 「수압 유지」 사이에 끼어 있어
+           컨트롤 줄이 통째로 끊겼다. 컨트롤 아래로 내리고 접는다. (2026-08-14) -->
+      <div class="f"><label>수압 유지(초)</label><input type="number" id="cfgHold" value="60"></div>
+      <div class="f ck"><input type="checkbox" id="cfgWeekend"><label for="cfgWeekend">주말 비가동</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgCO" checked><label for="cfgCO">설비 전환시간 반영</label></div>
+      <div class="f" style="min-width:250px"><label>확관 셋업 산출</label><select id="cfgExpSetup" style="width:100%">
+        <option value="tool" selected>공구 계층 (드로바270 / 헤드150 / 다이90분)</option>
+        <option value="legacy">치수 변화폭 (추정치)</option></select></div>
+      <div class="f" style="min-width:260px"><label>확관 N 산출식</label><select id="cfgExpN" style="width:100%">
+        <option value="ortools" selected>운영 최적화 모델 specs.py (정본)</option>
+        <option value="excel">엑셀 표준시간 분석 (N 홀수 · 대조용)</option></select></div>
+      <div class="f" style="min-width:270px"><label>API 5L 판정 (계획서에 열 없음)</label><select id="cfgApi5l" style="width:100%">
+        <option value="proxy" selected>수량 50본 이상을 API 5L 로 간주</option>
+        <option value="none">API 5L 없음 (Final U.T · 관단 X-ray 미투입)</option></select></div>
+      <div class="f ck"><input type="checkbox" id="cfgRB" checked><label for="cfgRB">RB 라인 활용</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgCP"><label for="cfgCP">Calibration Press 투입</label></div>
+      <div class="f ck"><input type="checkbox" id="cfgPFUT"><label for="cfgPFUT">프로세싱 파이프 Final U.T</label></div>
+      <button id="btnRun">시뮬레이션 실행</button>
+    </div>
+    <details class="note"><summary>교대 시간대는 세아제강 실제 시간표 — 각 7.5h, 기본 2근<span class="more">자세히</span></summary>
+      <div class="notebody">1근 07:00–11:30 · 12:00–15:00 / 2근 15:00–18:00 · 18:30–23:00 / 3근 23:00–02:45 · 03:15–07:00.
+        각 7.5h. 2근연장은 2근에 23:30–03:00(+3.5h)이 붙습니다. <b>근무 형태가 월마다 달라 2근을 기본으로 봅니다.</b><br>
+        「실가동 h/Shift」를 7.5 에서 바꾸면 하루 가동창 전체가 그 비율로 늘거나 줄어듭니다(민감도 분석용).</div>
+    </details>
+    <div style="display:none">
+    </div>
+    <details class="note"><summary>모델 구조<span class="more">자세히</span></summary><div class="notebody">
+      <b>모델 구조</b> — 파이프 1본 단위 FIFO 디스패치 시뮬레이션.<br>
+      · 라우팅: 길이 &gt; 13m → 18M 라인 / 이하 → 12M 라인. 두께 25T 초과 → Gap Press 투입.
+      단일 오더 API 5L 또는 50PCS 이상 → 1차 U.T, 그 외 By-pass.<br>
+      · 확관: 적격 호기 중 배분 규칙에 따라 배정. 길이·외경 제약과 RB 투입 조건은 「확관 최적화」 탭의 <b>확관 제약 기준</b>을 따릅니다.<br>
+      · 교대: Shift당 실가동 7.5H 기준 가동 시간대에만 작업이 진행되며, 비가동 시간대는 작업이 중단·이월됩니다.<br>
+      · 전환시간: 확관 외 설비는 직전 처리 제품과 외경/두께/길이가 다를 때 설비별 툴·다이·클램프 교체 시간을 부가합니다.<br>
+      · 확관 셋업(공구 계층): 호기별 다이 스펙표에서 장착 공구를 판정해 <b>드로바 교체 270분 &gt; 헤드 교체 150분 &gt; 다이 교체 90분 &gt; 동일 0</b>을 적용합니다. (확관 최적화 운영 모델 산출 근거)<br>
+      · API 5L: 조관계획서에 재질·규격 열이 없어 <b>수량 50본 이상</b>을 API 5L 대리변수로 씁니다.
+      다이어그램에서 1차 U.T 는 「API 5L <b>또는</b> 50PCS 이상」, Final U.T·관단 X-ray 는 「API 5L」로 조건이 다릅니다 —
+      대리변수를 쓰면 두 조건이 같아지므로, 끄면 Final U.T·관단 X-ray 물량이 0 이 됩니다. (세아제강 확인 항목)<br>
+      · 확관 N: <b>운영 최적화 모델(specs.py) 산출식이 기본값</b>입니다 — #1호기 <code>round(L / (step−150))</code>, #2호기 <code>ceil((L−500)/step)+2</code>(짝수 보정).
+      「표준시간 분석」 엑셀 산출식(N 홀수)과는 결과가 다르며, 대조용으로 전환해 볼 수 있습니다.
+    </div></details>
+<h3>④ 제품군</h3>
+    <table><thead><tr><th style="width:200px">제품군</th><th>특징</th></tr></thead><tbody>
+      <tr><td>프로세싱 파이프</td><td>A671 / A672 — Final U.T 는 별도 요청 시에만 진행, 관단 X-ray By-pass</td></tr>
+      <tr><td>라인 파이프 (API 5L)</td><td>열처리 공정 없음 — Final U.T + 관단 X-ray 필수, 1차 U.T 대상</td></tr>
+    </tbody></table>
+  </div></section>
+</main>
+</div>
+<script>
+const T = __TABLES__;
+let ORDERS = __ORDERS__;
+const ORDERS_DEFAULT = ORDERS.slice();
+</script>
+<script>__XLSX__</script>
+<script>__THREE__</script>
+<script>__PLANLOAD__</script>
+<script>__ENGINE__</script>
+<script>__FLOW__</script>
+<script>__PRODLOG__</script>
+<script>__SCENE3D__</script>
+<script>__UI__</script>
+<script>boot();</script>
+</body>
+</html>

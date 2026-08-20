@@ -3287,28 +3287,31 @@ function pipeTimeSplit(SIM, no, k) {
   const kk = Math.max(1, Math.min(kMax, Math.round(k || 1)));
   const ev = all.filter(e => e.k === kk).sort((a, b) => a.s - b.s);
   if (!ev.length) return null;
-  const cal = calOf(SIM, ev);
   const s0 = ev[0].r, e0 = ev[ev.length - 1].e;
   const total = e0 - s0;
-  const open = cal.capBetween(s0, e0);
-  let work = 0, setup = 0;
+  let work = 0, setup = 0, wait = 0;
+  let anyRB = false;
   const rows = ev.map(e => {
-    work += e.d; setup += e.co;
-    return {
-      nid: e.n, mach: e.mach, u: e.u,
-      /* ★ 대기 = 「이 본이 준비된 시각(r)」 ~ 「설비를 잡은 시각(cs)」 의 **가동시간**.
-         종전에는 `s − co` 를 설비를 잡은 시각으로 썼는데, 전환(co)은 **가동시간 안에서만**
-         소비되므로 교대가 끼면 벽시계로는 co 보다 길게 걸린다.
-         그래서 공정별 표의 대기 합이 총 대기와 어긋났다 (1,446본 중 49본, 최대 1.3h).
-         이벤트가 이미 cs(설비 확보 시각)를 들고 있으므로 그것을 쓴다. (2026-08-20) */
-      wait: Math.max(0, cal.capBetween(e.r, Math.max(e.r, e.cs))),
-      setup: e.co, work: e.d,
-      r: e.r, cs: e.cs, s: e.s, e: e.e,
-    };
+    /* ★ 캘린더는 **공정마다** 다르다.
+       R/B 라인 노드(RB·RBEF·RBRT·PACKRB)는 1근무조라 본류와 가동창이 다른데,
+       R/B 를 타는 본도 수압(HY106)·2차 U.T(UT110) 는 **본류 설비**를 쓴다.
+       한 본이 두 캘린더를 섞어 쓰므로(본류 12공정 + R/B 4공정), 본 전체에 캘린더 하나를
+       적용하면 어긋난다 — R/B 'capable' 모드에서 1,446본 중 827본, 최대 3.1시간 틀렸다.
+       (2026-08-20 전수 검증) */
+    const cal = RB_LINE.has(e.n) ? (SIM.calRB || SIM.cal) : SIM.cal;
+    if (RB_LINE.has(e.n)) anyRB = true;
+    /* 대기 = 「준비된 시각(r)」 ~ 「설비를 잡은 시각(cs)」 의 가동시간.
+       전환(co)은 가동시간 안에서만 소비되므로 `s − co` 를 시각으로 쓰면 안 된다. */
+    const w = Math.max(0, cal.capBetween(e.r, Math.max(e.r, e.cs)));
+    work += e.d; setup += e.co; wait += w;
+    return { nid: e.n, mach: e.mach, u: e.u, wait: w, setup: e.co, work: e.d,
+             r: e.r, cs: e.cs, s: e.s, e: e.e };
   });
-  const wait = Math.max(0, open - work - setup);
-  return { k: kk, s: s0, e: e0, total, open, closed: Math.max(0, total - open),
-           work, setup, wait, rows, calRB: cal === SIM.calRB };
+  /* 한 본의 시간축은 [r₁,cs₁]·[cs₁,s₁]·[s₁,e₁]·[r₂,cs₂]·… 로 **빈틈 없이 이어진다**
+     (e_i = r_{i+1}). 그래서 비가동을 잔여로 두면 네 조각의 합이 항상 정확히 리드타임이 된다. */
+  const closed = Math.max(0, total - work - setup - wait);
+  return { k: kk, s: s0, e: e0, total, open: work + setup + wait, closed,
+           work, setup, wait, rows, calRB: anyRB };
 }
 
 /* ====================================================================
