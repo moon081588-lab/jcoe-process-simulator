@@ -116,7 +116,7 @@ const ok = (n, c, e) => { if (!c) fail++; console.log(`${c ? 'PASS' : 'FAIL'}  $
     const first = P.rows[0].wait, later = P.wait - first;
     const t = el.textContent.replace(/\s+/g, ' ');
     return { hasSplit: /투입 대기/.test(t) && /공정 간 대기/.test(t),
-             hasTop: /가장 오래 기다린 공정/.test(t),
+             hasTop: /최장 대기 공정/.test(t),
              hasBn: new RegExp(SIM.stats[0].label.replace('\n',' ')).test(t),
              ok: first >= 0 && later >= 0 && Math.abs(first + later - P.wait) < 1 };
   });

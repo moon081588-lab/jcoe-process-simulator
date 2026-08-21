@@ -291,13 +291,13 @@ const EXP_MACHINES = [
    -------------------------------------------------------------------- */
 const EXP_RULESET = {
   ortools: {
-    label: '확관 최적화 운영 모델 (정본)',
+    label: '현행 기준',
     L1: 14.021, L2: 12.8384,       // specs.BOTH_LENGTH_THRESHOLD / optimizer_grouped.py:85
     m2Exclusive: true,             // 외경 48"↑/22"↓ 는 #2호기 "전용"(hard)
     rb: 'ortools',                 // RB: 다이표 외경 & 9≤t≤25.4 & L≤12.8
   },
   ppt: {
-    label: '공정 다이어그램 · 제약표 (구버전)',
+    label: '제약표 기준',
     L1: 14.0, L2: 12.8,            // [m] 초과 시 작업 불가
     m2Exclusive: false,            // 외경 48"↑/22"↓ 는 "우선 투입"(soft)
     rb: 'ppt',                     // RB: 두께 25T 이하 & 외경 24" 이하 (전부 만족)

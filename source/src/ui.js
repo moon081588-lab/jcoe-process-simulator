@@ -90,13 +90,13 @@ function runSim() {
   /* 핵심 수치는 헤더 아래 요약바(renderKpiBar)가 크게 보여준다.
      여기는 기간·계산시간 같은 부가 정보만 남긴다. (2026-08-14) */
   $('simInfo').textContent =
-    `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)} · ${(performance.now()-t).toFixed(0)}ms`
+    `${fmtT(SIM.t0)} → ${fmtT(SIM.tEnd)}`
     + (SIM.kpi.stochOn ? ` · 재작업 ${SIM.kpi.rework}본` : '')
     + (SIM.kpi.deadline ? ` · 마감 ${CFG.deadline} 달성률 ${pct(SIM.kpi.doneInPeriod, SIM.kpi.doneInPeriod+SIM.kpi.overflow)}` : '')
     + (CALIB ? ` · 실적 보정 ON` : '')
     /* 라우트 상한에 걸려 완주하지 못한 본수 — 종전에는 조용히 사라졌다 */
-    + (SIM.kpi.routeAborted ? ` · ⚠ 미완주 ${SIM.kpi.routeAborted}본` : '')
-    + (PLAN_WARN.length ? ` · ⚠ 스케줄 경고 ${PLAN_WARN.length}건` : '');
+    + (SIM.kpi.routeAborted ? ` · 미완주 ${SIM.kpi.routeAborted}본` : '')
+    + (PLAN_WARN.length ? ` · 스케줄 경고 ${PLAN_WARN.length}건` : '');
   animT = SIM.t0; evIdx = 0; completed = 0; logs.length = 0; doneSet.clear();
   for (const n of NODES) { nodeState[n.id] = { active:[], q:0, done:0 }; }
   calcBnMark();
@@ -112,7 +112,7 @@ function runSim() {
   if($('periodSum')) renderPeriod();
   if($('wizSteps')) renderWiz();
   if($('seek')) $('seek').value=0;
-  $('logBody').innerHTML='<div class="lg">▶ 를 눌러 시뮬레이션을 재생하세요.</div>';
+  $('logBody').innerHTML='';
 }
 
 /* ================= 캔버스 ================= */
@@ -288,9 +288,9 @@ function draw() {
 
   /* 구역 배경 */
   const zones = [
-    [45, 48, 1360, 240, '조관 (Forming) — JCOE', '#1f6feb'],
-    [45, 296, 1520, 190, '확관 (Expansion) — 전환시간 최대 구간', '#8957e5'],
-    [45, 498, 1520, 372, '검사 · 보수 · 출하 (Inspection & Shipping)', '#238636'],
+    [45, 48, 1360, 240, '조관', '#1f6feb'],
+    [45, 296, 1520, 190, '확관', '#8957e5'],
+    [45, 498, 1520, 372, '검사 · 보수 · 출하', '#238636'],
   ];
   for (const [x,y,w,h,t,c] of zones) {
     ctx.fillStyle = c+'14'; roundRect(x,y,w,h,10); ctx.fill();
@@ -326,13 +326,6 @@ function draw() {
     /* 병목 강조는 **시뮬레이션 결과**로 — 가동률 1위 빨강, 전환 1위 주황 (2026-08-19) */
     const bnk = BN_MARK[n.id];
     ctx.strokeStyle = bnk ? bnk.c : col; ctx.lineWidth = bnk ? 3 : 1.4; ctx.stroke();
-    if (bnk) {
-      ctx.save();
-      ctx.font = '700 10px "Segoe UI","Malgun Gothic",sans-serif';
-      ctx.fillStyle = bnk.c; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillText(bnk.t, b.x + b.w/2, b.y - 4);
-      ctx.restore();
-    }
 
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle = (n.kind!=='dec' && s.active.length) ? '#fff' : C.text;
@@ -379,15 +372,12 @@ function draw() {
   /* 주석은 현재 「확관 제약 기준」 을 따라간다 — 고정 문구로 두면 기준을 바꿔도 안 바뀐다 */
   const RS = expRules(CFG || {});
   const notes = [
-    '* 태그 웰딩: 간이 용접, 본 수 = PCS = 후판 수      * SAW: 서브머지드 아크 용접',
-    `RB 라인 투입 조건(전부 만족): ${RS.rb === 'ortools'
+    `RB 라인 투입 조건: ${RS.rb === 'ortools'
         ? 'RB 다이표 외경(24"~48") · 두께 9~25.4mm · 길이 12.8m 이하'
         : '두께 25T 이하 · 외경 24" 이하'}`,
     `확관 #1호기: ${RS.L1}m 초과 작업 불가 / #2호기 동시 작업 시 동일 외경만 가능`,
     `${RS.L2}m 초과 ~ ${RS.L1}m → #1호기만 가동  ·  ${RS.L1}m 초과 → #1·#2호기 가동`
       + (RS.m2Exclusive ? '  ·  외경 48"↑/22"↓ → #2호기 전용' : '  ·  외경 48"↑/22"↓ → #2호기 우선'),
-    `기준: ${RS.label}   (「확관 최적화」 탭에서 전환)`,
-    '제품군 ① 프로세싱 파이프(A671/A672) ② 라인 파이프(API 5L) — 열처리 공정 없음',
   ];
   notes.forEach((t,i)=>ctx.fillText(t, 1150, 640+i*16));
 
@@ -400,9 +390,9 @@ function draw() {
       L.push(`가공 ${st.busyH.toFixed(1)}h · 전환 ${st.setupH.toFixed(1)}h`);
       L.push(`가동률 ${st.util.toFixed(1)}%`);
       st.units.forEach(u=>L.push(`  ${u.id} : ${u.jobs}본 / ${(u.busyH+u.setupH).toFixed(1)}h`));
-    } else if (hover.kind==='dec') L.push('분기 조건 (Decision)');
-    else if (hover.kind==='buf') L.push('버퍼 · 최대 4,000톤 적재');
-    else L.push('표준시간 측정 대상 외 공정');
+    } else if (hover.kind==='dec') L.push('분기 조건');
+    else if (hover.kind==='buf') L.push('버퍼');
+    else L.push('');
     ctx.font='11px "Segoe UI",sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
     const w = Math.max(...L.map(t=>ctx.measureText(t).width))+20, h=L.length*16+14;
     const b0=box(hover); let tx=b0.x+b0.w+10, ty=b0.y;
@@ -452,11 +442,11 @@ function stepAnim(dt) {
     if (e.n==='PACK'){ completed++; }
     if (logs.length<300) {
       if (e.co > 0)
-        logs.unshift(`${fmtT(e.cs)}  ⚙ 설비 전환  ${NODE[e.n].label.replace('\n',' ')}  ${(e.co/60).toFixed(0)}분  → 오더 ${e.o}`);
+        logs.unshift(`${fmtT(e.cs)}  설비 전환  ${NODE[e.n].label.replace('\n',' ')}  ${(e.co/60).toFixed(0)}분  → 오더 ${e.o}`);
       else if (e.n==='PACK' && e.k%10===0)
-        logs.unshift(`${fmtT(e.s)}  ✔ 포장 완료  오더 ${e.o} #${e.k}`);
+        logs.unshift(`${fmtT(e.s)}  포장 완료  오더 ${e.o} #${e.k}`);
       else if (e.n==='EXP' && e.k%25===0)
-        logs.unshift(`${fmtT(e.s)}  ▸ 확관 #${e.u+1}호기 착수  오더 ${e.o} #${e.k}`);
+        logs.unshift(`${fmtT(e.s)}  확관 #${e.u+1}호기 착수  오더 ${e.o} #${e.k}`);
     }
     evIdx++;
   }
@@ -728,7 +718,7 @@ function invalidatePlan(){
     $('optRule').value='EAT';
     if($('ruleDesc')) $('ruleDesc').textContent=DISPATCH_RULES.EAT.desc;
   }
-  if($('optSum')) $('optSum').innerHTML=`<div class="kpi bn"><b>재실행 필요</b><span>제약이 바뀌어 이전 최적화 해는 무효입니다</span></div>`;
+  if($('optSum')) $('optSum').innerHTML=`<div class="kpi bn"><b>재실행 필요</b><span>조건이 바뀌었습니다</span></div>`;
   if($('optSeq')) $('optSeq').innerHTML='';
   /* 규칙 비교표·반복 실행 결과도 이전 조건의 것이다 — 같이 지운다.
      종전에는 남아 있어서 조건을 바꾼 뒤에도 옛 조건의 Makespan 이 "현재 값" 처럼 보였다. */
@@ -777,16 +767,11 @@ function renderEligWarn(){
        「적격 제품 전량」은 증산 What-if 시나리오이므로 그 사실을 화면에 알린다. */
     if ((cfg.rbMode || 'force') === 'capable')
       return `<div class="note" style="border-left-color:#d29922">
-        <b>증산 What-if</b> — 세아제강 확인(2026-08-14) 기준 <b>R/B 라인은 현장에서 거의 가동하지 않습니다.</b>
-        실적 로그(2026-07-16~22) 에도 EP102 실적이 0 건입니다. 이 모드의 결과는 현장 재현이 아니라
-        「R/B 를 전면 가동하면 어떻게 되는가」에 대한 가정 시나리오로 읽으십시오.</div>`;
+        <b>증산 가정</b> — R/B 라인을 전면 가동했을 때의 결과입니다. 현재 현장 운영과는 다릅니다.</div>`;
     if ((cfg.rbMode || 'force') !== 'force') return '';
     const hasBn = ORDERS.some(o => o.bottleneck), hasRaw = ORDERS.some(o => o.rawL > 0);
     if (hasBn || hasRaw) return '';
-    return `<div class="warn"><b>RB 라인 투입이 「Force_RB 만」 인데 판정 근거가 없습니다.</b><br>
-      현재 오더 데이터에 <b>병목 공정 작업장</b>(HT102=열처리)과 <b>원재료 내역</b>(배척 판정용) 열이 없어
-      RB 통과 물량이 0본이 됩니다. 계획서·설정 탭에서 두 열이 포함된 조관계획서를 불러오거나,
-      RB 라인 투입을 「적격 제품 전량 RB」 로 되돌리세요.</div>`;
+    return `<div class="warn"><b>R/B 통과 물량이 0본입니다.</b> 계획서에 병목 공정 작업장·원재료 내역 열이 없습니다.</div>`;
   })();
   /* 어떤 사유로 단일 호기에 묶였는지는 제약 기준에 따라 달라진다 (길이 / 외경) */
   const fixedWhy = () => {
@@ -833,38 +818,20 @@ function renderRuleDiff(){
   if($('rmR1')) $('rmR1').textContent = r1;
   if($('rmR2')) $('rmR2').textContent = r2;
   if($('rmR3')) $('rmR3').textContent = r3;
-  if($('bnR1')) $('bnR1').textContent = '→ 적용: ' + r1;
-  if($('bnR2')) $('bnR2').textContent = '→ 적용: ' + r2;
-  if($('bnR3')) $('bnR3').textContent = '→ 적용: ' + r3;
-  if($('eligOk')) $('eligOk').innerHTML = cur === 'ortools'
-    ? `<b>확관 최적화 운영 모델(specs.py) 기준 — 정본</b>을 적용 중입니다. #2호기 상한 ${R.L2}m, #1호기 상한 ${R.L1}m,
-       외경 48"↑/22"↓ 는 #2호기 전용(hard), RB 는 다이표 외경(24"~48") · 두께 9~25.4mm.<br>
-       <b>12.802m 제품은 #1·#2호기 모두 투입 가능</b>합니다 — 세아제강 실제 생산 로그에서 Expander #2호기 작업 이력이 확인되었습니다 (2026-08-06 세아제강 확인).`
-    : `<b>구버전(PPT 공정 다이어그램 · 제약표) 기준</b>으로 보고 있습니다 — 대조용입니다.
-       이 기준에서는 <b>${R.L2}m 초과 ~ ${R.L1}m 제품이 #1호기 전용</b>("Only #1 Expander 가동")이 되는데,
-       실제 로그에서는 12.802m 제품이 #2호기에서 생산된 이력이 있어 <b>현장과 맞지 않습니다.</b>`;
+  if($('bnR1')) $('bnR1').textContent = r1;
+  if($('bnR2')) $('bnR2').textContent = r2;
+  if($('bnR3')) $('bnR3').textContent = r3;
+  if($('eligOk')) $('eligOk').innerHTML =
+    `<b>현재 적용 중</b> — #1호기 L ≤ ${R.L1}m · #2호기 L ≤ ${R.L2}m · 외경 48"↑/22"↓ 는 #2호기 전용 ·
+     R/B 는 외경 24"~48" · 두께 9~25.4mm`
+    + (cur === 'ortools' ? '' : ' <b>(제약표 기준)</b>');
   const a=sum('ppt'), b=sum('ortools');
   const row=(lbl,ka)=>`<tr><td>${lbl}</td><td class="num">${a[ka].toLocaleString()}</td><td class="num">${b[ka].toLocaleString()}</td></tr>`;
   el.innerHTML=`<div class="${cur==='ortools'?'ok':'warn'}" style="margin-bottom:10px">
-    <b>확관 제약 — 정본 확정 (2026-08-06 세아제강 피드백)</b>
-    <div style="margin-top:6px">PPT 자료와 운영 모델(ortools) 안의 <code>specs.py</code> 가 다르면 <b>specs.py 가 정본</b>입니다
-      (PPT 제작 이후 계속 수정됐고, PPT 에는 생략된 내용도 있습니다).<br>
-      12.802m 제품은 <b>#1·#2호기 모두 투입 가능</b>합니다 — 실제 생산 로그에 Expander #2호기 이력이 있습니다.</div>
-    <table style="margin-top:8px"><thead><tr><th>항목</th><th>PPT 다이어그램·제약표 (구버전)</th><th>운영 모델 specs.py (정본)</th></tr></thead><tbody>
-      <tr><td>#2호기 길이 상한</td><td>12.8m 이상 불가</td><td class="hi2">12.8384m 초과 불가</td></tr>
-      <tr><td>#1호기 길이 상한</td><td>14m 이상 불가</td><td>14.021m 초과 불가</td></tr>
-      <tr><td>외경 48"↑ / 22"↓</td><td>#2호기 <b>우선</b> 투입</td><td class="hi2">#2호기 <b>전용</b> (hard)</td></tr>
-      <tr><td>RB 투입 조건</td><td>두께 25T 이하 &amp; 외경 24" 이하</td><td class="hi2">RB 다이표 외경(24"~48") &amp; 9≤t≤25.4</td></tr>
-      <tr><td>RB 강제 투입</td><td>(제약표) 열처리 &amp; 배척 제품 우선</td><td>병목공정 HT102 · 원재료/제품 길이비 ≥ 1.8</td></tr>
-      <tr><td>확관 횟수 N</td><td>(엑셀 표준시간 분석) N 항상 홀수</td><td class="hi2">#1 round(L/(step−150)) · #2 짝수 보정</td></tr>
-    </tbody></table>
-    <div style="margin-top:9px">현재 오더셋 <b>${ORDERS.reduce((x,o)=>x+o.qty,0).toLocaleString()}본</b>을 기준별로 분류하면:</div>
-    <table style="margin-top:6px"><thead><tr><th>구분 (본)</th><th style="text-align:right">구버전 기준</th><th style="text-align:right">정본 기준</th></tr></thead><tbody>
-      ${row('#1호기 전용','M1')}${row('#2호기 전용','M2')}${row('두 호기 다 가능 — 배분 규칙 대상','FREE')}${row('#1·#2 동시 가동','BOTH')}${row('RB 라인','RB')}
-    </tbody></table>
-    <div style="margin-top:9px">12.802m 제품(전체의 66%)이 정본 기준에서 <b>두 호기 다 가능</b>으로 바뀌면서 호기 편중이 사라집니다.
-      구버전 기준에서 내렸던 “호기 부하 편차는 배분 규칙이 아니라 제품 길이 구성 때문” 이라는 진단은 <b>더 이상 유효하지 않습니다.</b><br>
-      현재 적용 기준: <b>${cur==='ortools'?'운영 모델 specs.py (정본)':'PPT 다이어그램 · 제약표 (구버전 · 대조용)'}</b></div></div>`;
+    <b>기준별 확관 물량 배분 (${ORDERS.reduce((x,o)=>x+o.qty,0).toLocaleString()}본)</b>
+    <table style="margin-top:6px"><thead><tr><th>구분 (본)</th><th style="text-align:right">제약표 기준</th><th style="text-align:right">현행 기준</th></tr></thead><tbody>
+      ${row('#1호기 전용','M1')}${row('#2호기 전용','M2')}${row('두 호기 다 가능 — 배분 규칙 대상','FREE')}${row('#1·#2 동시 가동','BOTH')}${row('R/B 라인','RB')}
+    </tbody></table></div>`;
 }
 
 /* ================= 외부 최적화 스케줄 가져오기 (OR-Tools CP-SAT) ================= */
@@ -909,9 +876,7 @@ function readImport(file){
 function renderImport(){
   const info=$('impInfo'), seqEl=$('impSeq'); if(!info) return;
   if(!IMP_PLAN){
-    info.innerHTML=`<div class="note">확관 최적화 모델(<code>optimizer_grouped.solve_integrated_schedule</code>)이 만든 결과 DataFrame 을
-      CSV/XLSX 로 저장해 올리면, <b>호기 배정과 투입 순서를 그대로</b> 시뮬레이션에 반영합니다.
-      「최적화 엔진 스케줄(내장 SA)」 과 나란히 비교해 볼 수 있습니다.</div>`;
+    info.innerHTML=`<div class="note">외부에서 짠 확관 스케줄을 올리면 <b>호기 배정과 투입 순서를 그대로</b> 시뮬레이션에 반영합니다.</div>`;
     if(seqEl) seqEl.innerHTML=''; return;
   }
   const P=IMP_PLAN, matched=P.seq.filter(no=>ORDERS.some(o=>String(o.no)===String(no))).length;
@@ -920,11 +885,10 @@ function renderImport(){
       <div class="kpi"><b>${P.nOrders.toLocaleString()}</b><span>가져온 오더 (행 ${P.nRows.toLocaleString()}건)</span></div>
       <div class="kpi"><b>${matched} / ${P.nOrders}</b><span>현재 오더셋과 매칭</span></div>
       <div class="kpi"><b>${P.count.M1}/${P.count.M2}/${P.count.RB}/${P.count.BOTH}</b><span>#1 / #2 / RB / 동시</span></div>
-      ${P.spanH?`<div class="kpi"><b>${(P.spanH/24).toFixed(1)}일</b><span>CP-SAT Makespan (${P.unit==='sec'?'초':'분'} 단위 해석)</span></div>`:''}
-      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?esc(IMP_SRC):'배분 규칙을 「외부 최적화 스케줄」 로 바꾸세요'}</span></div>
+      ${P.spanH?`<div class="kpi"><b>${(P.spanH/24).toFixed(1)}일</b><span>확관 완료까지</span></div>`:''}
+      <div class="kpi ${applied?'':'bn'}"><b>${applied?'적용 중':'미적용'}</b><span>${applied?esc(IMP_SRC):'미적용'}</span></div>
     </div>
-    ${matched===0?`<div class="warn"><b>매칭된 오더가 0건입니다.</b> 파일의 OrderNo(판매오더)와 시뮬레이터 오더번호 체계가 다릅니다.
-      계획서 탭에서 같은 조관계획서를 먼저 불러오면 매칭됩니다.</div>`:''}
+    ${matched===0?`<div class="warn"><b>매칭된 오더가 0건입니다.</b> 판매오더 번호 체계가 현재 계획서와 다릅니다.</div>`:''}
     ${P.warn.length?`<div class="warn"><b>경고 ${P.warn.length}건</b><br>${P.warn.slice(0,8).map(esc).join('<br>')}${P.warn.length>8?'<br>…':''}</div>`:''}`;
   if(seqEl){
     const byM={};
@@ -953,13 +917,12 @@ function runOptimizer(){
 function optKpiHtml(ms){
   const P=PLAN;
   return `
-    <div class="kpi"><b>${P.nJobs}</b><span>확관 대상 오더 (작업 j)</span></div>
+    <div class="kpi"><b>${P.nJobs}</b><span>확관 대상 오더</span></div>
     <div class="kpi"><b>${P.nFree} / ${P.nFixed} / ${P.nBoth}</b><span>선택가능 / 단일호기 전용 / 동시가동</span></div>
-    <div class="kpi"><b>${P.cmaxH.toFixed(1)} h</b><span>확관 Makespan (Cmax)</span></div>
-    <div class="kpi bn"><b>${P.setupH.toFixed(1)} h</b><span>확관 전환시간 Σs<sub>ij</sub></span></div>
+    <div class="kpi"><b>${P.cmaxH.toFixed(1)} h</b><span>확관 완료까지</span></div>
+    <div class="kpi bn"><b>${P.setupH.toFixed(1)} h</b><span>확관 전환시간 합계</span></div>
     <div class="kpi"><b>${P.balH.toFixed(1)} h</b><span>호기간 부하 편차</span></div>
-    <div class="kpi"><b>${P.machines.map((m,i)=>`#${i+1} ${(P.loadH[m]||0).toFixed(0)}h`).join(' / ')}</b><span>호기별 부하</span></div>
-    <div class="kpi"><b>${(ms||0).toFixed(0)} ms</b><span>SA ${P.iters.toLocaleString()}회 탐색</span></div>`;
+    <div class="kpi"><b>${P.machines.map((m,i)=>`#${i+1} ${(P.loadH[m]||0).toFixed(0)}h`).join(' / ')}</b><span>호기별 부하</span></div>`;
 }
 function renderOptResultInto(id, ms){
   const el=$(id); if(!el||!PLAN) return;
@@ -1006,8 +969,8 @@ function runCompare(){
     const d=(a,b)=>{const p=(a-b)/b*100; return p<-0.5?`<span class="imp">${p.toFixed(1)}%</span>`:p>0.5?`<span class="wors">+${p.toFixed(1)}%</span>`:'—';};
     return `<tr class="${x.r===$('optRule').value?'bnrow':''}">
       <td>${x.label}</td>
-      <td class="num">${(x.mk/24).toFixed(1)}일 ${x.mk===bestMk?'★':''}<br><span style="color:#6e7681;font-size:10px">${d(x.mk,baseRow.mk)}</span></td>
-      <td class="num"><b>${x.exp.toFixed(1)}</b> ${x.exp===bestExp?'★':''}<br><span style="color:#6e7681;font-size:10px">${d(x.exp,baseRow.exp)}</span></td>
+      <td class="num">${(x.mk/24).toFixed(1)}일 <br><span style="color:#6e7681;font-size:10px">${d(x.mk,baseRow.mk)}</span></td>
+      <td class="num"><b>${x.exp.toFixed(1)}</b> <br><span style="color:#6e7681;font-size:10px">${d(x.exp,baseRow.exp)}</span></td>
       <td class="num">${x.tot.toFixed(0)}</td>
       <td class="num">${x.util.toFixed(1)}%</td>
       <td class="num">${x.u1.toLocaleString()}</td><td class="num">${x.u2.toLocaleString()}${x.u3?` / ${x.u3}`:''}</td>
@@ -1015,13 +978,8 @@ function runCompare(){
       <td class="bar"><div style="width:${maxExp?x.exp/maxExp*100:0}%;background:${x.exp===bestExp?C.done:x.exp>maxExp*0.8?C.bneck:C.accent}"></div></td></tr>`;
   }).join('');
   const opt=rows.find(x=>x.r==='OPT'), eat=baseRow;
-  $('cmpNote').innerHTML=`<div class="note">
-    <b>해석</b> — 최적화 엔진 적용 시 확관 설비 전환시간이 <b>${eat.exp.toFixed(1)}h → ${opt.exp.toFixed(1)}h
-    (${delta(opt.exp, eat.exp)})</b>, 호기간 부하 편차가
-    <b>${eat.bal.toFixed(1)}h → ${opt.bal.toFixed(1)}h</b> 로 개선됩니다.
-    Makespan 개선폭(${delta(opt.mk, eat.mk, 1)})이 상대적으로 작은 이유는
-    현재 계획의 전체 병목이 확관이 아니라 <b>${SIM.stats[0].label.replace('\n',' ')}(가동률 ${SIM.stats[0].util.toFixed(0)}%)</b> 이기 때문입니다.
-    확관 최적화의 실질 효과는 <b>전환 손실 감소 · 재공(WIP) 감소 · 호기 부하 균형</b>에서 나타납니다.</div>`;
+  $('cmpNote').innerHTML=`<div class="note">최적화 적용 시 확관 전환시간 <b>${eat.exp.toFixed(1)}h → ${opt.exp.toFixed(1)}h (${delta(opt.exp, eat.exp)})</b> ·
+    호기간 부하 편차 <b>${eat.bal.toFixed(1)}h → ${opt.bal.toFixed(1)}h</b></div>`;
 }
 
 /* ================= 간트 ================= */
@@ -1058,7 +1016,7 @@ function renderGantt(){
     return `<div class="gr" data-vf="${esc(no)}" title="클릭 → 이 오더의 시간 구성과 산식을 아래에 펼칩니다">
       <div class="gl"><b>${esc(no)}</b>${late?' <span style="color:#ff7b72;font-size:9px">지연</span>':''}
         <span>OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(1)}m · ${v.qty}본 · ${v.line}</span></div>
-      <div class="gvbtn">${GV_OPEN===String(no)?'▼ 닫기':'▸ 펼치기'}</div>
+      <div class="gvbtn">${GV_OPEN===String(no)?'닫기':'펼치기'}</div>
       <div class="gt">${marks}
         <div class="gb${late?' late':''}${seg?' seg':''}" style="left:${(v.s-t0)/span*100}%;width:${Math.max(0.4,(v.e-v.s)/span*100)}%;background:${colorOf(v.od)}"
           title="${tt}">${inner}</div>
@@ -1126,19 +1084,16 @@ function waitWhyHtml(P){
   const bn = SIM.stats[0];
   const sheet = !CFG || (CFG.dateMode || 'sheet') === 'sheet';
   return `<div class="wwhy">
-    <div class="vfcap" style="margin:0 0 5px">대기 ${hSec(P.wait)} 는 어디서 생겼나</div>
+    <div class="vfcap" style="margin:0 0 5px">대기 ${hSec(P.wait)} 내역</div>
     <table class="vfp" style="margin-bottom:5px">
-      <tr><td>투입 대기 <span style="color:#6e7681">— 첫 공정(${esc((NODE[P.rows[0]?P.rows[0].nid:'']||{label:'—'}).label.replace(/\n/g,' '))}) 앞에서 내 차례를 기다린 시간</span></td>
+      <tr><td>투입 대기 <span style="color:#6e7681">— 첫 공정 앞</span></td>
         <td class="v">${hSec(first)}</td><td class="src">${(first/P.wait*100).toFixed(0)}%</td></tr>
-      <tr><td>공정 간 대기 <span style="color:#6e7681">— 착수 뒤 앞 공정·설비 점유로 기다린 시간</span></td>
+      <tr><td>공정 간 대기 <span style="color:#6e7681">— 앞 공정·설비 점유</span></td>
         <td class="v">${hSec(later)}</td><td class="src">${(later/P.wait*100).toFixed(0)}%</td></tr>
     </table>
     <div class="vfwarn" style="color:var(--dim);margin-top:0">
-      가장 오래 기다린 공정 — ${top.map(x=>`<b>${esc(x.n)} ${hSec(x.w)}</b>`).join(' · ') || '없음'}<br>
-      라인 전체 1위 병목은 <b>${esc(bn.label.replace(/\n/g,' '))} 가동률 ${bn.util.toFixed(1)}%</b> 입니다 —
-      이 설비가 상한이라 나머지 본은 어딘가에서 기다릴 수밖에 없습니다.
-      ${sheet ? `<br><b style="color:#e3b341">지금은 계획서 ${ORDERS.length}오더 ${ORDERS.reduce((a,o)=>a+o.qty,0).toLocaleString()}본이 전부 같은 시각에 투입</b>돼 있습니다.
-        「설정 → 오더 투입일 → <b>시작일부터 순차 투입</b>」로 바꾸면 <b>완료일은 그대로 두고</b> 대기·재공만 줄일 수 있습니다.` : ''}
+      최장 대기 공정 — ${top.map(x=>`<b>${esc(x.n)} ${hSec(x.w)}</b>`).join(' · ') || '없음'}<br>
+      라인 1위 병목 <b>${esc(bn.label.replace(/\n/g,' '))} 가동률 ${bn.util.toFixed(1)}%</b>
     </div></div>`;
 }
 const TS_KEYS = [['work','가공','#2ea043'],['setup','전환(공구·다이 교체)','#d29922'],
@@ -1163,26 +1118,17 @@ function renderGanttDetail(){
   box.innerHTML = `<div class="gdinner">
     <div class="gdhd"><b>${esc(no)}</b>
       <span class="vfsub">OD${v.od} × t${v.t} × ${(v.L/1000).toFixed(3)}m · ${qty}본 · ${esc(v.line)} · ${fmtT(T.s)} → ${fmtT(T.e)}</span>
-      <button class="vfbtn" id="gvBig">산식 검증 탭에서 크게 보기 ▸</button>
-      <button class="vfbtn" id="gvClose">✕ 닫기</button></div>
+      <button class="vfbtn" id="gvBig">산식 검증 탭에서 보기</button>
+      <button class="vfbtn" id="gvClose">닫기</button></div>
 
     <div class="gdgrid">
       <div class="gdcard">
-        <div class="vfcap">이 막대(${hSec(T.total)})가 무엇으로 채워져 있나 — 오더 전체</div>
+        <div class="vfcap">오더 전체 (${hSec(T.total)})</div>
         ${splitBar(T, TS_KEYS)}
-        <div class="vfwarn" style="color:var(--dim)">
-          «가공» 은 이 오더의 파이프 중 <b>하나라도</b> 설비에 물려 있던 시간입니다(${T.pipes}본이 겹쳐 흐릅니다).
-          «대기» 는 공장이 도는데 이 오더가 아무 설비도 못 잡은 시간 — 앞 공정이 안 끝났거나 설비가 다른 오더에 물린 경우입니다.
-          네 값의 합은 막대 길이와 정확히 같습니다.${T.calRB?' (R/B 근무조 기준)':''}
-        </div>
       </div>
       <div class="gdcard">
-        <div class="vfcap">본 1개가 겪는 시간 — <b>${P?P.k:1}번째 본</b> (${P?hSec(P.total):'—'})</div>
+        <div class="vfcap">본 1개 리드타임 — <b>${P?P.k:1}번째 본</b> (${P?hSec(P.total):'—'})</div>
         ${P ? splitBar(P, TS_KEYS) : '<div class="vfform">기록 없음</div>'}
-        <div class="vfwarn" style="color:var(--dim)">
-          한 본이 첫 공정에 도착해 포장까지 끝나는 데 걸린 실제 시간입니다.
-          표준시간(가공)은 ${P?hSec(P.work):'—'} 인데 실제 리드타임이 ${P?hSec(P.total):'—'} 인 이유가 여기 다 있습니다.
-        </div>
         ${P ? waitWhyHtml(P) : ''}
       </div>
     </div>
@@ -1199,7 +1145,7 @@ function renderGanttDetail(){
         <td class="v"><b>가공</b></td><td class="src"><b>실행 구간</b></td></tr>${procRows}</table>
     </div>
 
-    <div class="vfcap" style="margin:14px 0 6px">공정별 적용 산식 · 파라미터 · 계산 <span style="color:var(--dim);font-weight:400">— 카드의 ✎ 편집으로 그 자리에서 값을 고칠 수 있습니다</span></div>
+    <div class="vfcap" style="margin:14px 0 6px">공정별 적용 산식</div>
     <div id="gvf"></div>
   </div>`;
   if ($('gvMach')) $('gvMach').value = VFS.mach || '';
@@ -1337,7 +1283,7 @@ function vfSecHtml(st){
   return `${Math.round(st.sec).toLocaleString()} s <span style="font-size:10px;color:var(--dim)">(${(st.sec/60).toFixed(1)}분)</span>`;
 }
 function vfNoteHtml(st){
-  return (st.calib ? `<div class="vfwarn">⚠ 실적 보정 계수 ×${st.calib.toFixed(3)} 적용 → ${Math.round(st.sec)} s</div>` : '')
+  return (st.calib ? `<div class="vfwarn">실적 보정 ×${st.calib.toFixed(3)} → ${Math.round(st.sec)} s</div>` : '')
        + (st.co ? `<div class="vfwarn" style="color:var(--dim)">이 오더의 설비 전환시간 합계 ${(st.co/60).toFixed(1)}분 (표준시간과 별도로 스케줄에 더해짐)</div>` : '');
 }
 function vfSumHtml(V){
@@ -1368,8 +1314,8 @@ function vfReconHtml(V){
   }).join('');
   return `<table class="vfp"><tr><td><b>공정</b></td><td class="v"><b>산식(s)</b></td><td class="v"><b>시뮬 실행(s)</b></td><td class="v"><b>차이</b></td></tr>${rows}</table>`
     + `<div class="vfwarn" style="color:${diff ? '#f0a252' : 'var(--dim)'}">${diff
-        ? `${diff}개 공정이 다릅니다 — 변동성(로그정규 CV) 또는 실적 보정이 켜져 있다는 뜻입니다. 둘 다 끄면 전부 0% 가 됩니다.`
-        : '전 공정 일치 — 이 화면의 산식이 시뮬레이션이 실제로 쓴 값과 같습니다.'}</div>`;
+        ? `${diff}개 공정 차이 — 변동성 또는 실적 보정이 켜져 있습니다.`
+        : '전 공정 일치'}</div>`;
 }
 
 /** 값만 제자리에서 갱신한다 — 편집 패널·입력 포커스는 건드리지 않는다.
@@ -1402,9 +1348,7 @@ function vfMarkEdited(){
   const n = refCount();
   /* 버튼은 **항상 만들어 두고** 숨기기만 한다 — 있다 없다 하는 id 는 정적 검사(verify_static ②)에서
      "존재하지 않는 참조" 로 잡히고, 무엇보다 클릭 핸들러를 매번 다시 걸어야 해서 사고가 난다. */
-  el.innerHTML = (n
-      ? `<b style="color:#e3b341">기준값 ${n}개를 고친 상태</b>입니다 — 시뮬레이션 결과도 이 값으로 다시 계산됐습니다.`
-      : '기준값을 고치지 않은 원래 상태입니다.')
+  el.innerHTML = (n ? `<b style="color:#e3b341">기준값 ${n}개 수정됨</b>` : '기본값')
     + `<button id="vfResetAll" class="vfbtn"${n ? '' : ' style="display:none"'}>전부 원래대로</button>`
     + `<button id="vfExport2" class="vfbtn"${n ? '' : ' style="display:none"'}>JSON 내보내기</button>`;
   if ($('vfResetAll')) $('vfResetAll').onclick = () => {
@@ -1453,7 +1397,7 @@ function renderVerify(force){
   const rowsHtml = V.steps.map((st, i) => `<div class="vfstep" data-i="${i}" data-nid="${esc(st.nid)}" data-st="${esc(st.st||'')}">
       <div class="vfhd"><div class="vfno">${i+1}</div>
         <div><b>${esc(st.label.replace(/\n/g,' '))}</b>${st.sub?` <span class="vfsub">${esc(st.sub)}</span>`:''}${st.machine?` <span class="vfsub">· ${esc(VF_MACH_LBL[V.machine]||V.machine)}</span>`:''}</div>
-        <button class="vfbtn vfedit" data-i="${i}">✎ 편집</button>
+        <button class="vfbtn vfedit" data-i="${i}">편집</button>
         <div class="vfsec" data-f="sec">${vfSecHtml(st)}</div></div>
       <div class="vfbody">
         <div class="vfcap">적용 산식</div>
@@ -1467,14 +1411,13 @@ function renderVerify(force){
         <div class="vfedbox" data-f="edit" hidden></div>
       </div></div>`).join('');
 
-  const recon = (inTab && V._act && V._act.evSec) ? `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값과 대사</b>
-        <span class="vfsub">${esc(V.no)} 의 <b>${V.k}번째 본</b>이 실제로 각 공정에 머문 시간 vs 위 산식 결과 (${V._act.pipes}개 공정)</span></div>
+  const recon = (inTab && V._act && V._act.evSec) ? `<div class="vfstep"><div class="vfhd"><b>시뮬레이션 실행값 대조</b>
+        <span class="vfsub">${V._act.pipes}개 공정</span></div>
       <div class="vfbody"><div data-f="recon">${vfReconHtml(V)}</div></div></div>` : '';
 
   /* #vfDirty 는 「산식 검증」 탭에만 둔다 — 간트 안에 또 만들면 id 가 중복된다 */
   const head = inTab ? `<div class="note" style="margin:0 0 12px">
-      <b>${esc(V.no)}</b> · 오더 내 <b>${V.k}번째 본</b> (전역 누적 ${V.seqGlobal}본째) 기준입니다.
-      표준시간은 <b>가동률을 고려하지 않은 Net Time</b>이며, 설비 전환시간·대기시간은 여기에 포함되지 않습니다.
+      <b>${esc(V.no)}</b> · 오더 내 ${V.k}번째 본 (전역 누적 ${V.seqGlobal}본째)
       <div id="vfDirty" style="margin-top:6px"></div>
     </div>` : '';
   box.innerHTML = head + rowsHtml + recon;
@@ -1511,8 +1454,8 @@ function vfToggleEdit(i){
   const card = ($(VF_BOX) || $('vfBody')).querySelector(`.vfstep[data-i="${i}"]`); if (!card) return;
   const box = card.querySelector('[data-f="edit"]');
   const btn = card.querySelector('.vfedit');
-  if (!box.hidden) { box.hidden = true; VF_OPEN.delete(i); btn.textContent = '✎ 편집'; btn.classList.remove('on'); return; }
-  box.hidden = false; VF_OPEN.add(i); btn.textContent = '✕ 닫기'; btn.classList.add('on');
+  if (!box.hidden) { box.hidden = true; VF_OPEN.delete(i); btn.textContent = '편집'; btn.classList.remove('on'); return; }
+  box.hidden = false; VF_OPEN.add(i); btn.textContent = '닫기'; btn.classList.add('on');
   vfBuildEdit(i, box);
 }
 function vfBuildEdit(i, box){
@@ -1547,17 +1490,13 @@ function vfBuildEdit(i, box){
   const fixed = st.vars.filter(v => !(v[3] && v[3].key)).map(v => v[0]);
 
   box.innerHTML =
-    (stdHtml ? `<div class="vfcap">기준정보 상수 — 산식에 박힌 값 (「기준정보」 탭과 같은 값입니다)</div>
+    (stdHtml ? `<div class="vfcap">기준정보 상수</div>
        <div class="refgrid" data-sec="std">${stdHtml}</div>` : '')
-  + (tblHtml ? `<div class="vfcap" style="margin-top:11px">엑셀 표에서 조회된 값 — 이 제품이 짚은 칸만</div>
+  + (tblHtml ? `<div class="vfcap" style="margin-top:11px">엑셀 표 조회값</div>
        <div class="refgrid" data-sec="tbl">${tblHtml}</div>` : '')
-  + (!stdHtml && !tblHtml ? '<div class="vfwarn" style="color:var(--dim)">이 공정에는 고칠 수 있는 상수가 없습니다 (고정 시간).</div>' : '')
+  + (!stdHtml && !tblHtml ? '<div class="vfwarn" style="color:var(--dim)">고칠 수 있는 상수가 없습니다.</div>' : '')
   + (fixed.length ? `<div class="vfwarn" style="color:var(--dim);margin-top:9px">
-       고칠 수 없는 값 — ${esc(fixed.join(' · '))}<br>
-       계획서에서 읽은 값이거나 위 값들로부터 계산되는 값입니다. 계획서를 고치면 따라 바뀝니다.</div>` : '')
-  + `<div class="vfwarn" style="color:var(--dim);margin-top:7px">
-       고치면 <b>시뮬레이션 전체가 곧바로 다시 계산</b>됩니다. ↺ 로 그 값만 되돌릴 수 있고,
-       바꾼 내용은 「기준정보」 탭의 <b>내보내기</b>로 JSON 한 장에 저장됩니다.</div>`;
+       계획서에서 읽는 값 — ${esc(fixed.join(' · '))}</div>` : '');
   refBind();
 }
 /* ================= 병목 분석 ================= */
@@ -1593,59 +1532,16 @@ function renderBottleneck(){
   $('bnCall').innerHTML = `
     <div class="kpi bn"><b>${top.label.replace('\n',' ')}</b><span>가공 병목 · 대당 가동률 ${top.util.toFixed(1)}%</span></div>
     ${setupTop?`<div class="kpi" style="border-color:#d2992266;background:#d2992214"><b style="color:#e3b341">${setupTop.label.replace('\n',' ')}</b><span>전환 병목 · ${setupTop.setupH.toFixed(1)}h (전체 전환의 ${pct(setupTop.setupH, totSetup)})</span></div>`:''}
-    ${eligTop?`<div class="kpi" style="border-color:#8957e566;background:#8957e514"><b style="color:#a77bff">${eligTop.label.replace('\n',' ')}</b><span>제약 병목 · 호기 편차 ${eligTop.imbalance.toFixed(0)}%p</span></div>`:'<div class="kpi"><b>없음</b><span>제약 병목 — 호기 편중이 유의하지 않습니다</span></div>'}
+    ${eligTop?`<div class="kpi" style="border-color:#8957e566;background:#8957e514"><b style="color:#a77bff">${eligTop.label.replace('\n',' ')}</b><span>제약 병목 · 호기 편차 ${eligTop.imbalance.toFixed(0)}%p</span></div>`:'<div class="kpi"><b>없음</b><span>제약 병목 — 호기 편중 없음</span></div>'}
     <div class="kpi"><b>${totSetup.toFixed(0)} h</b><span>총 설비 전환 시간</span></div>`;
 
-  /* 대표 규격 1본 유효 CT 를 실제 산출식으로 다시 계산해 보여준다 (고정 문구 금지) */
-  const ctSample = () => {
-    const rep = ORDERS.slice().sort((a,b)=>b.qty-a.qty)[0];
-    if(!rep) return '';
-    /* 시뮬 본체와 같은 specOf 를 써야 재질·API 5L 판정이 어긋나지 않는다 */
-    const sp = specOf(rep, CFG||readCfg());
-    const line = rep.L/1000 > 13 ? '18M' : '12M';
-    const list = [['포장', STD.Packing(sp,line,1).sec], ['수압', STD.HydroTest(sp).sec],
-                  ['슬러그 제거', STD.OuterBead(sp).sec], ['면취기', STD.EndFacing(sp).sec],
-                  ['확관 #1호기', STD.Expander(sp,'M1').sec]].sort((a,b)=>b[1]-a[1]);
-    const expRank = list.findIndex(x=>x[0].startsWith('확관')) + 1;
-    return `대표 규격 <b>OD${rep.od}×t${rep.t}×${(rep.L/1000).toFixed(3)}m</b>(${rep.qty}본) 기준 1본 소요는 `
-      + list.map(x=>`${x[0]} ${x[1].toFixed(0)}초`).join(' · ')
-      + ` 로, <b>확관은 ${expRank}위</b>입니다. 순수 가공 속도만 보면 확관이 가장 느린 공정은 아닙니다.`;
-  };
-  /* 단일 호기 전용 물량 비중도 제약 기준에 따라 달라지므로 매번 계산 */
-  const eligShare = () => {
-    const cfg = CFG || readCfg();
-    let fixedQ = 0, tot = 0;
-    for(const o of ORDERS){
-      const sp={no:o.no,od:o.od,t:o.t,L:o.L,qty:o.qty};
-      const sv=SIM.orderSpan[o.no]; if(!sv || !sv.route.includes('EXP')) continue;
-      tot += o.qty;
-      const em = expanderMode(sp,cfg);
-      if(em.mode==='SINGLE' && em.list.length===1) fixedQ += o.qty;
-    }
-    return tot ? `현재 제약 기준에서 단일 호기 전용 물량은 <b>${fixedQ.toLocaleString()}본 (확관 통과분의 ${(fixedQ/tot*100).toFixed(0)}%)</b> 입니다.` : '';
-  };
-  /* 종전에는 이 해설이 항상 펼쳐져 병목 분석 탭 상단 1/3 을 먹었다.
-     한 줄 결론만 보이고 근거는 접는다. (2026-08-14) */
-  $('bnWhy').innerHTML = `<details class="note">
-    <summary>병목은 세 종류 — 가공(${esc(top.label.replace('\n',' '))}) · 전환(${setupTop?esc(setupTop.label.replace('\n',' ')):'—'}) · 제약(호기 편차 ${exp.imbalance.toFixed(0)}%p)<span class="more">왜 그런가요?</span></summary>
-    <div class="notebody">
-    <b style="color:#ff7b72">① 가공 병목</b> — <b>${top.label.replace('\n',' ')} ${top.util.toFixed(0)}%</b>.
-    1본당 소요가 길고 설비가 ${top.cap}대뿐이라 물리적으로 가장 느립니다.
-    ${ctSample()}<br><br>
-    <b style="color:#e3b341">② 전환 병목</b> — ${setupTop?`<b>${setupTop.label.replace('\n',' ')} ${setupTop.setupH.toFixed(0)}h</b>,
-    전체 설비 전환의 ${pct(setupTop.setupH, totSetup)}가 여기서 발생합니다. 다이·헤드 교체 때문에 규격이 바뀔 때마다 멈춥니다.`:'전환시간이 반영되지 않아 판정할 수 없습니다.'}
-    <b>PPT가 말한 “확관 병목”은 이쪽</b>입니다 — “타 공정 대비 긴 설비 전환 시간이 전체 공정의 병목을 유발”.<br><br>
-    <b style="color:#a77bff">③ 제약 병목</b> — 확관 호기 간 가동률 차이 <b>${exp.imbalance.toFixed(0)}%p</b>
-    (${exp.unitUtil.map(v=>v.toFixed(0)+'%').join(' / ')}).
-    ${eligShare()}
-    대수 평균으로 보면 낮아 보이지만 <b>가장 바쁜 호기만 보면 상위권</b>입니다.<br><br>
-    정리하면 <b>납기를 좌우하는 것은 포장·슬러그 제거 같은 가공 병목</b>이고,
-    <b>확관은 전환·제약 병목</b>이라 개선 수단이 다릅니다. 앞은 설비 증설이나 사이클타임 단축,
-    뒤는 <b>오더 시퀀싱(같은 규격 묶기)과 호기 배분</b>으로 풉니다 — 「확관 최적화」 탭이 그 도구입니다.
-    </div></details>`;
+  $('bnWhy').innerHTML = `<div class="note">
+    <b>가공 병목</b> ${esc(top.label.replace('\n',' '))} ${top.util.toFixed(0)}% (${top.cap}대) &nbsp;·&nbsp;
+    <b>전환 병목</b> ${setupTop?esc(setupTop.label.replace('\n',' '))+' '+setupTop.setupH.toFixed(0)+'h':'—'} &nbsp;·&nbsp;
+    <b>확관 호기 편차</b> ${exp.imbalance.toFixed(0)}%p (${exp.unitUtil.map(v=>v.toFixed(0)+'%').join(' / ')})</div>`;
 
   $('bnUnits').innerHTML = s.filter(x=>x.cap>1).map(x=>`
-    <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap} units)</h4>
+    <div class="uc"><h4>${x.label.replace('\n',' ')} (${x.cap}대)</h4>
       ${x.units.map((u,i)=>`<div class="tr2"><span>${x.id==='EXP'?('확관 #'+(i+1)+'호기'):u.id}</span>
         <b>${u.jobs.toLocaleString()}본 · ${(u.busyH+u.setupH).toFixed(1)}h · ${u.util.toFixed(0)}%</b></div>`).join('')}
     </div>`).join('');
@@ -1791,18 +1687,17 @@ function renderWiz(){
   const optOn = !!PLAN && rule === 'OPT';
 
   const step = (n, title, val, cls) =>
-    `<div class="wstep ${cls}"><div class="wn">${cls==='done'?'✓ ':''}${n}단계</div><div class="wt">${title}</div><div class="wv">${val}</div></div>`;
+    `<div class="wstep ${cls}"><div class="wn">${n}단계</div><div class="wt">${title}</div><div class="wv">${val}</div></div>`;
   $('wizSteps').innerHTML =
     step(1,'계획서', `${PLAN_SRC ? esc(PLAN_SRC) : '기본 데이터'} · <b>${ORDERS.length}오더 / ${qty.toLocaleString()}본</b>`, 'done')
   + step(2,'제약 · 조건', `${esc(R.label)}<br>배분 규칙: ${esc(DISPATCH_RULES[rule].label)}`, 'done')
   + step(3,'최적화 엔진', optOn
-        ? `해 적용중 · 확관 Cmax ${PLAN.cmaxH.toFixed(1)}h · 전환 ${PLAN.setupH.toFixed(1)}h`
-        : (PLAN ? '해는 있으나 배분 규칙이 다릅니다' : '아직 실행하지 않았습니다'), optOn?'done':'need')
+        ? `적용중 · 확관 완료 ${PLAN.cmaxH.toFixed(1)}h · 전환 ${PLAN.setupH.toFixed(1)}h`
+        : (PLAN ? '배분 규칙이 다릅니다' : '미실행'), optOn?'done':'need')
   + step(4,'시뮬레이션', `${(SIM.kpi.makespanH/24).toFixed(1)}일 · 확관 전환 ${SIM.kpi.expSetupH.toFixed(1)}h`, 'done');
 
   $('wizCond').innerHTML =
     `<div class="kpi"><b>${esc(R.label.replace(/\s*\(.*\)$/,''))}</b><span>확관 제약 기준 — #1 ≤ ${R.L1}m · #2 ≤ ${R.L2}m</span></div>
-     <div class="kpi"><b>${cfg.expNMode==='ortools'?'운영 모델 N식':'엑셀 N식'}</b><span>확관 횟수 산출 근거</span></div>
      <div class="kpi"><b>${cfg.shifts}교대 × ${cfg.netHoursPerShift}h</b><span>가용 시간${cfg.skipWeekend?' · 주말 비가동':''}</span></div>
      <div class="kpi"><b>${cfg.startDate}</b><span>계획 시작일${cfg.deadline?` · 마감 ${cfg.deadline}`:''}</span></div>
      <div class="kpi"><b>${esc(DISPATCH_RULES[rule].label)}</b><span>확관 배분 규칙</span></div>`;
@@ -1810,21 +1705,21 @@ function renderWiz(){
   const k = SIM.kpi;
   const top = SIM.stats.slice().sort((a,b)=>b.util-a.util)[0];
   $('wizSimSum').innerHTML =
-    `<div class="kpi"><b>${(k.makespanH/24).toFixed(1)}일</b><span>Makespan (${fmtT(SIM.tEnd)} 완료)</span></div>
+    `<div class="kpi"><b>${(k.makespanH/24).toFixed(1)}일</b><span>완료까지 (${fmtT(SIM.tEnd)})</span></div>
      <div class="kpi bn"><b>${top?top.label:'—'} ${top?top.util.toFixed(0)+'%':''}</b><span>1위 병목 설비</span></div>
      <div class="kpi"><b>${k.expSetupH.toFixed(1)}h</b><span>확관 전환시간</span></div>
      <div class="kpi"><b>${k.expBalanceH.toFixed(1)}h</b><span>확관 호기 부하 편차</span></div>
-     <div class="kpi"><b>${k.expUtil.toFixed(1)}%</b><span>확관 가동률 (최다 1대)</span></div>`
+     <div class="kpi"><b>${k.expUtil.toFixed(1)}%</b><span>확관 가동률</span></div>`
    + (k.deadline ? `<div class="kpi"><b>${pct(k.doneInPeriod, k.doneInPeriod+k.overflow)}</b><span>마감 ${esc(cfg.deadline||'')} 내 달성률</span></div>` : '');
 
   if(PLAN && rule==='OPT') renderOptResultInto('wizOptSum');
   else $('wizOptSum').innerHTML =
-    `<div class="kpi bn"><b>미실행</b><span>「전체 자동 실행」 또는 「최적화 엔진만 실행」을 눌러 주세요</span></div>`;
+    `<div class="kpi"><b>—</b><span>최적화 미실행</span></div>`;
 
   const B=WIZ_BASE;
   $('wizDelta').innerHTML = (B && optOn && B.rule!=='OPT')
-    ? `<div class="note"><b>최적화 전후</b> — 배분 규칙 「${esc(DISPATCH_RULES[B.rule].label)}」 대비:
-        Makespan ${(B.mk/24).toFixed(1)}일 → <b>${(k.makespanH/24).toFixed(1)}일</b> (${delta(k.makespanH,B.mk)}) ·
+    ? `<div class="note"><b>최적화 전후</b> — 「${esc(DISPATCH_RULES[B.rule].label)}」 대비:
+        완료 ${(B.mk/24).toFixed(1)}일 → <b>${(k.makespanH/24).toFixed(1)}일</b> (${delta(k.makespanH,B.mk)}) ·
         확관 전환 ${B.setup.toFixed(1)}h → <b>${k.expSetupH.toFixed(1)}h</b> (${delta(k.expSetupH,B.setup)}) ·
         호기 부하 편차 ${B.bal.toFixed(1)}h → <b>${k.expBalanceH.toFixed(1)}h</b> (${delta(k.expBalanceH,B.bal)})</div>`
     : '';
@@ -1845,7 +1740,7 @@ function initMCTab(){
 function renderStNote(){
   if(!SIM) return;
   $('mcHint').innerHTML = SIM.kpi.stochOn
-    ? `현재 seed <b style="color:#58a6ff">${SIM.kpi.seed}</b> · 이번 실행 재작업 ${SIM.kpi.rework}본 · 고장 ${SIM.kpi.breakdowns}회`
+    ? `재작업 ${SIM.kpi.rework}본 · 고장 ${SIM.kpi.breakdowns}회`
     : '변동성이 꺼져 있습니다. 위 「변동성 사용」을 켜야 실행할 때마다 다른 결과가 나옵니다.';
 }
 function runMC(){
@@ -1906,7 +1801,7 @@ function renderMC(results, rules, n){
   $('mcSum').innerHTML = `
     <div class="kpi"><b>${R.makespanD.p50.toFixed(1)} 일</b><span>완료 소요 중앙값 (P50)</span></div>
     <div class="kpi bn"><b>${R.makespanD.p90.toFixed(1)} 일</b><span>보수적 계획 기준 (P90)</span></div>
-    <div class="kpi"><b>± ${(spread/2).toFixed(1)} 일</b><span>P10~P90 폭 — 계획 불확실성</span></div>
+    <div class="kpi"><b>± ${(spread/2).toFixed(1)} 일</b><span>P10~P90 폭</span></div>
     <div class="kpi"><b>${R.rework.p50.toFixed(0)} 본</b><span>재작업 발생 (중앙값)</span></div>
     <div class="kpi"><b>${R.thru.p50.toFixed(0)} 본/일</b><span>일 평균 산출</span></div>
     <div class="kpi"><b>${R.downtimeH.p50.toFixed(0)} h</b><span>설비 고장 정지 (중앙값)</span></div>`;
@@ -1929,7 +1824,7 @@ function renderMC(results, rules, n){
   if(rules.length>1){
     const best = Math.min(...rules.map(r=>results[r].makespanD.p50));
     const bestS = Math.min(...rules.map(r=>results[r].expSetupH.p50));
-    $('mcRules').innerHTML = `<h4 class="sh">배분 규칙별 분포 비교 — 변동성을 감안해도 차이가 유의한가</h4>
+    $('mcRules').innerHTML = `<h4 class="sh">배분 규칙별 분포 비교</h4>
       <div class="tblwrap"><table><thead><tr><th>배분 규칙</th>
         <th style="text-align:right">완료일 P50</th><th style="text-align:right">P10~P90</th>
         <th style="text-align:right">확관 전환 P50</th><th style="text-align:right">± 편차</th>
@@ -1937,14 +1832,13 @@ function renderMC(results, rules, n){
       ${rules.map(r=>{const o=results[r];
         return `<tr class="${o.makespanD.p50===best?'bnrow':''}">
           <td>${DISPATCH_RULES[r].label}</td>
-          <td class="num"><b>${o.makespanD.p50.toFixed(1)}일</b>${o.makespanD.p50===best?' ★':''}</td>
+          <td class="num"><b>${o.makespanD.p50.toFixed(1)}일</b></td>
           <td class="num">${o.makespanD.p10.toFixed(1)}~${o.makespanD.p90.toFixed(1)}</td>
-          <td class="num">${o.expSetupH.p50.toFixed(1)}h${o.expSetupH.p50===bestS?' ★':''}</td>
+          <td class="num">${o.expSetupH.p50.toFixed(1)}h</td>
           <td class="num">± ${o.expSetupH.sd.toFixed(1)}</td>
           <td class="num">${o.rework.p50.toFixed(0)}</td></tr>`;}).join('')}
       </tbody></table></div>
-      <div class="note">규칙 간 차이가 <b>P10~P90 폭보다 작다면</b> 그 차이는 변동성에 묻힙니다.
-        전환시간처럼 폭이 좁은 지표에서 규칙 차이가 크게 벌어질수록 개선 효과가 확실합니다.</div>`;
+      `;
   } else $('mcRules').innerHTML='';
 }
 
@@ -2049,7 +1943,7 @@ function renderLog(){
   const inLog=new Set(L.wcStat.map(w=>w.node).filter(Boolean));
   const missing=NODES.filter(n=>n.kind==='proc' && n.st && !n.free && !inLog.has(n.id));
   if(missing.length) $('lgWC').innerHTML += `<tr><td colspan="7" style="color:#d29922">
-    로그에 실적이 없는 시뮬레이터 공정 — ${missing.map(n=>esc(n.label)).join(' · ')} (이번 주에 가동 기록이 없거나 집계 대상이 아님)</td></tr>`;
+    로그에 실적이 없는 시뮬레이터 공정 — ${missing.map(n=>esc(n.label)).join(' · ')}</td></tr>`;
 
   const V=verifyProdLog(L, readCfg());
   $('lgVerify').innerHTML = V.length ? V.map(v=>{
@@ -2255,7 +2149,7 @@ function refApply(full = false) {
   const refPaneOpen = $('pRef') && $('pRef').classList.contains('on');
   if (full || !refPaneOpen) renderRef(); else { renderRefKpi(); renderRefPreviews(); refMarkDirty(); }
   if (hadPlan && $('refPlanWarn'))
-    $('refPlanWarn').textContent = '※ 확관 최적화 해는 상수가 바뀌어 무효가 됐고, 배분 규칙이 EAT 로 되돌아갔습니다.';
+    $('refPlanWarn').textContent = '※ 기준값이 바뀌어 확관 최적화 결과가 초기화됐습니다.';
 }
 
 /** 표준시간 상수 탭의 미리보기 줄만 다시 계산한다 (입력칸은 건드리지 않는다) */
@@ -2277,7 +2171,7 @@ function renderRefPreviews() {
 function refMarkDirty() {
   if (!$('refDirty')) return;
   const n = refCount();
-  $('refDirty').textContent = n ? `변경 ${n}개 — 내보내기로 저장하십시오` : '변경 없음';
+  $('refDirty').textContent = n ? `변경 ${n}개` : '변경 없음';
   $('refDirty').style.color = n ? '#d29922' : '#6e7681';
 }
 function refCount() {
@@ -2415,8 +2309,8 @@ function renderKpiBar(){
     + k(SIM.kpi.expSetupH.toFixed(1)+'h', '확관 전환 손실', SIM.kpi.expSetupH>60?'warn':'')
     + k(qty.toLocaleString()+'본', `${ORDERS.length}오더`)
     + (CALIB ? k('ON','실적 보정','warn') : '')
-    + (SIM.kpi.routeAborted ? k(SIM.kpi.routeAborted+'본','⚠ 미완주','bn') : '')
-    + `<div class="k note2">${PLAN_SRC?esc(PLAN_SRC)+' · ':''}${SIM.kpi.stochOn?`변동 seed ${SIM.kpi.seed} · `:''}${esc(DISPATCH_RULES[CFG.dispatchRule]?DISPATCH_RULES[CFG.dispatchRule].label.replace(/\s*\(.*\)/,''):'')}</div>`;
+    + (SIM.kpi.routeAborted ? k(SIM.kpi.routeAborted+'본','미완주','bn') : '')
+    + `<div class="k note2">${PLAN_SRC?esc(PLAN_SRC)+' · ':''}배분 규칙 ${esc(DISPATCH_RULES[CFG.dispatchRule]?DISPATCH_RULES[CFG.dispatchRule].label.replace(/\s*\(.*\)/,''):'')}</div>`;
 }
 
 function renderRefKpi() {
@@ -2435,7 +2329,7 @@ function renderRefKpi() {
     + `<div class="kpi bn"><b>${esc(b.label)} ${b.util.toFixed(1)}%</b><span>1위 병목</span></div>`
     + delta
     + `<div class="kpi"><b>${n}개</b><span>기본값과 다른 항목</span></div>`;
-  $('refDirty').textContent = n ? `변경 ${n}개 — 내보내기로 저장하십시오` : '변경 없음';
+  $('refDirty').textContent = n ? `변경 ${n}개` : '변경 없음';
   $('refDirty').style.color = n ? '#d29922' : '#6e7681';
 }
 
@@ -2549,7 +2443,7 @@ function refExport() {
     _포맷: 'JCOE 시뮬레이터 기준정보',
     _버전: 1,
     _저장시각: new Date().toISOString().slice(0, 19).replace('T', ' '),
-    _설명: '이 파일을 시뮬레이터 「기준정보」 탭에서 불러오면 같은 상태가 됩니다. 기본값과 다른 항목만 담겨 있습니다.',
+    _설명: '「기준정보」 탭에서 불러오면 같은 상태가 됩니다.',
     설비대수: REF_EDIT.cap,
     전환시간: REF_EDIT.co,
     표준시간상수: REF_EDIT.std,
